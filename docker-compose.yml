@@ -7,6 +7,8 @@ services:
     # Enables the web UI and tells Traefik to listen to docker
     environment:
       - TRAEFIK_API_INSECURE=${TRAEFIK_API_INSECURE-true}
+      - TRAEFIK_ENTRYPOINTS_WEB=true
+      - TRAEFIK_ENTRYPOINTS_WEB_ADDRESS=:80
       - TRAEFIK_ENTRYPOINTS_WEBSECURE=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_ADDRESS=:443
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
