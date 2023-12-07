@@ -1,10 +1,18 @@
 version: '3'
 
 services:
-  reverse-proxy:
+  traefik:
     # The official v2 Traefik docker image
     image: traefik:v2.10
     # Enables the web UI and tells Traefik to listen to docker
+    environment:
+      - TRAEFIK_API_INSECURE={$TRAEFIK_API_INSECURE-true}
+      - TRAEFIK_PROVIDERS_DOCKER=true
+      - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=falsex
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-v02.api.letsencrypt.org/directory}
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
     ports:
       # The HTTP(s) ports
       - "80:80"
@@ -14,7 +22,8 @@ services:
     volumes:
       # So that Traefik can listen to the Docker events
       - /var/run/docker.sock:/var/run/docker.sock
-      - $PWD/traefik.yml:/etc/traefik/traefik.yml
+      # LE storage
+      - ./.devopsy/letsencrypt:/letsencrypt
 
 networks:
   default:
