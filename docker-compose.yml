@@ -1,6 +1,31 @@
 version: '3'
 
 services:
+  dockerproxy:
+    # See https://github.com/wollomatic/socket-proxy
+    # See https://github.com/wollomatic/traefik2-hardened
+    image: wollomatic/socket-proxy:1
+    command:
+      # with this configuration socket-proxy acts similar to the tecnativa proxy. For additional hardening
+      # please refer to the documentation of the wollomatic/socket-proxy image
+      - '-loglevel=info' # set to debug for far more logging
+      - '-allowfrom=0.0.0.0/0'
+      - '-listenip=0.0.0.0'
+      - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)' # this regexp allows readonly access only for requests that traefik needs
+      - '-shutdowngracetime=5'
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    # On osx, at least with OrbStack, this get mounted always as root
+    user: 65534:${DEVOPSY_DOCKER_GID-0} # replace <<docker-gid>> with the docker gid on your host system
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - dockerproxy
+
   traefik:
     # The official v2 Traefik docker image
     image: traefik:v2.10
@@ -14,6 +39,7 @@ services:
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=letsencrypt1
       - TRAEFIK_PROVIDERS_DOCKER=true
+      - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1=true
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for letsencrypt}
@@ -21,6 +47,7 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
       - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL-ERROR}
+    user: "${DEVOPSY_TRAEFIK_UID:?Please provide an uid to run traefik}:${DEVOPSY_TRAEFIK_GID:?Please provide a gid to run traefik}"
     ports:
       # The HTTP(s) ports
       - "${DEVOPSY_HTTP_PORT-80}:80"
@@ -29,10 +56,15 @@ services:
       - "${DEVOPSY_API_PORT-8080}:8080"
     volumes:
       # So that Traefik can listen to the Docker events
-      - /var/run/docker.sock:/var/run/docker.sock
+      # - /var/run/docker.sock:/var/run/docker.sock
       # LE storage
       - ./.devopsy/letsencrypt:/letsencrypt
+    networks:
+      - default
+      - dockerproxy
 
 networks:
   default:
     name: traefik
+  dockerproxy:
+    internal: true
