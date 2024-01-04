@@ -1,7 +1,7 @@
 version: '3'
 
 services:
-  dockerproxy:
+  devopsy-traefik-dockerproxy:
     # See https://github.com/wollomatic/socket-proxy
     # See https://github.com/wollomatic/traefik2-hardened
     image: wollomatic/socket-proxy:1
@@ -26,7 +26,7 @@ services:
     networks:
       - dockerproxy
 
-  traefik:
+  devopsy-traefik:
     # The official v2 Traefik docker image
     image: traefik:v2.10
     # Enables the web UI and tells Traefik to listen to docker
@@ -39,7 +39,7 @@ services:
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=letsencrypt1
       - TRAEFIK_PROVIDERS_DOCKER=true
-      - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
+      - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://devopsy-traefik-dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1=true
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for letsencrypt}
@@ -65,6 +65,6 @@ services:
 
 networks:
   default:
-    name: traefik
+    name: devopsy-traefik
   dockerproxy:
     internal: true
