@@ -47,7 +47,7 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
       - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL-ERROR}
-    user: "${DEVOPSY_UID:-$EUID}:${DEVOPSY_GID-$EUID}"
+    user: "${DEVOPSY_UID:?Please provide an uid to run traefik, you could prepend your docker compose command with DEVOPSY_UID=$$EUID or set it on your .env file}:${DEVOPSY_GID:?Please provide an uid to run traefik, you could prepend your docker compose command with DEVOPSY_GID=$$EUID or set it on your .env file}"
     ports:
       # The HTTP(s) ports
       - "${DEVOPSY_HTTP_PORT-80}:80"
