@@ -1,4 +1,5 @@
 version: '3'
+name: traefik-${DEVOPSY_ENVIRONMENT-main}
 
 services:
   dockerproxy:
