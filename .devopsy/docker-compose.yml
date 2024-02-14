@@ -3,6 +3,7 @@ name: traefik-${DEVOPSY_ENVIRONMENT-main}
 
 services:
   dockerproxy:
+    restart: unless-stopped
     # See https://github.com/wollomatic/socket-proxy
     # See https://github.com/wollomatic/traefik2-hardened
     image: wollomatic/socket-proxy:1
@@ -14,7 +15,6 @@ services:
       - '-listenip=0.0.0.0'
       - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)' # this regexp allows readonly access only for requests that traefik needs
       - '-shutdowngracetime=5'
-    restart: unless-stopped
     read_only: true
     cap_drop:
       - ALL
@@ -28,6 +28,7 @@ services:
       - dockerproxy
 
   traefik:
+    restart: unless-stopped
     # The official v2 Traefik docker image
     image: traefik:v2.10
     # Enables the web UI and tells Traefik to listen to docker
