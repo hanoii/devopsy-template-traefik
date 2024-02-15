@@ -1,0 +1,3 @@
+devopsy build
+devopsy down
+devopsy up -d
