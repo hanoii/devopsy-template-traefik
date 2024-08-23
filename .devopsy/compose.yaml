@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     # See https://github.com/wollomatic/socket-proxy
     # See https://github.com/wollomatic/traefik2-hardened
-    image: wollomatic/socket-proxy:1.2.0
+    image: wollomatic/socket-proxy:1.4.0
     command:
       # with this configuration socket-proxy acts similar to the tecnativa proxy. For additional hardening
       # please refer to the documentation of the wollomatic/socket-proxy image
