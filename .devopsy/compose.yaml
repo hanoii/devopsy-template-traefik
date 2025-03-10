@@ -46,6 +46,9 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for letsencrypt}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
+      # Use the TLS-ALPN-01 challenge to generate and renew ACME certificates by provisioning a TLS certificate.
+      # https://doc.traefik.io/traefik/https/acme/#tlschallenge
+      # https://letsencrypt.org/docs/challenge-types/
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
       - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL-ERROR}
       - TRAEFIK_CORE_DEFAULTRULESYNTAX=v2
