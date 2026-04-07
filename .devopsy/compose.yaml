@@ -4,8 +4,8 @@ services:
   dockerproxy:
     restart: unless-stopped
     # See https://github.com/wollomatic/socket-proxy
-    # See https://github.com/wollomatic/traefik2-hardened
-    image: wollomatic/socket-proxy:1.10.0
+    # See https://github.com/wollomatic/traefik-hardened
+    image: wollomatic/socket-proxy:1.11.4
     command:
       # with this configuration socket-proxy acts similar to the tecnativa proxy. For additional hardening
       # please refer to the documentation of the wollomatic/socket-proxy image
@@ -14,6 +14,7 @@ services:
       - '-listenip=0.0.0.0'
       - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)' # this regexp allows readonly access only for requests that traefik needs
       - '-shutdowngracetime=5'
+      - '-allowHEAD=/_ping'
     read_only: true
     cap_drop:
       - ALL
@@ -28,7 +29,7 @@ services:
 
   traefik:
     restart: unless-stopped
-    image: traefik:v3.5.3
+    image: traefik:v3.6.12
     # Enables the web UI and tells Traefik to listen to docker
     environment:
       - TRAEFIK_API_INSECURE=${TRAEFIK_API_INSECURE-true}
