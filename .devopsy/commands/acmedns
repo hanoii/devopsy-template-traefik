@@ -21,6 +21,7 @@ printf '  %s.  A   %s\n' "ns-$domain" "${ip:-<public IPv4 of this server>}"
 printf '  %s.  NS  %s.\n' "$domain" "ns-$domain"
 echo
 echo "Port 53 (UDP and TCP) must be open to the Internet."
+echo "How it works: https://github.com/hanoii/devopsy-traefik#acme-dns"
 echo
 
 accounts=$DEVOPSY_PROJECT_DIR/mnt/letsencrypt/acme-dns-accounts.json
