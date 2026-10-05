@@ -110,8 +110,10 @@ This is how hosting panels like Forge do DNS validation.
    _acme-challenge.client.org.  CNAME  5400f461-...acme-vm1.example.com.
    ```
 
-   Once it exists, the next retry gets the certificate, and renewals need
-   nothing more.
+   Once it exists, make Traefik try again. It only retries when the site's
+   router changes, and recreating an identical container does not count, so
+   take the site down and up: `devopsy down && devopsy up -d` in the site's
+   project. Renewals need nothing more.
 
 Each domain's credentials can only change its own challenge record, so
 nothing here can touch real DNS records. acme-dns does not resolve other
