@@ -92,7 +92,11 @@ This is how hosting panels like Forge do DNS validation.
    ```dotenv
    COMPOSE_PROFILES=acmedns
    DEVOPSY_ACMEDNS_DOMAIN=acme-vm1.example.com
+   DEVOPSY_ACMEDNS_IP=203.0.113.10
    ```
+
+   `DEVOPSY_ACMEDNS_IP` is the server's public IPv4. acme-dns listens only
+   there, which avoids clashing with systemd-resolved on 127.0.0.53:53.
 
 2. Run `devopsy up -d`, then `devopsy acmedns`. It prints two records to
    create once in `example.com`: an A record for `ns-acme-vm1.example.com`

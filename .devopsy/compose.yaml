@@ -179,9 +179,11 @@ services:
       - ALL
     security_opt:
       - no-new-privileges
+    # Bound to the public IP when set: binding 0.0.0.0:53 fails where
+    # systemd-resolved holds 127.0.0.53:53, as on many cloud images.
     ports:
-      - "${DEVOPSY_ACMEDNS_PORT-53}:53/udp"
-      - "${DEVOPSY_ACMEDNS_PORT-53}:53/tcp"
+      - "${DEVOPSY_ACMEDNS_IP:-0.0.0.0}:${DEVOPSY_ACMEDNS_PORT-53}:53/udp"
+      - "${DEVOPSY_ACMEDNS_IP:-0.0.0.0}:${DEVOPSY_ACMEDNS_PORT-53}:53/tcp"
     volumes:
       - ./mnt/acmedns:/var/lib/acme-dns
     networks:
