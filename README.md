@@ -31,10 +31,16 @@ Required in `.env`:
 - `DEVOPSY_DOCKER_GID`: the group of `/var/run/docker.sock`
   (`stat -c %g /var/run/docker.sock`).
 
-Certificates come from Let's Encrypt **staging** until you set
-`TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER` to
-`https://acme-v02.api.letsencrypt.org/directory`. Check that routing works
-before switching, as production has strict rate limits.
+Without a CA server in `.env`, certificates come from Let's Encrypt
+**staging**. Switch every resolver with:
+
+```sh
+devopsy letsencrypt production   # or staging; no argument shows the current one
+```
+
+It sets the CA server in `.env` (and `dns.env`), moves the old environment's
+accounts and certificates aside so they are not served until renewal, keeps
+the acme-dns registrations, and restarts Traefik.
 
 `devopsy restart` pulls newer images and recreates what changed.
 

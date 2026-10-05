@@ -9,7 +9,8 @@ devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
 - `.env.example`: the variables a server sets in `.devopsy/.env`.
 - `dns.env.example`: the optional Cloudflare DNS-01 resolver, loaded from
   `.devopsy/dns.env` when it exists.
-- `commands/`: devopsy custom commands (POSIX `sh`).
+- `commands/`: devopsy custom commands (POSIX `sh`): `restart`, `acmedns`,
+  `letsencrypt`.
 - `mnt/letsencrypt/`: ACME storage, never committed except `.gitkeep`.
 
 Read `README.md` for the user-facing behavior; keep it in sync with any change
