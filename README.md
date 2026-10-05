@@ -74,13 +74,52 @@ in `.env` changes the default, or the router picks one with
   `dns.env.example` and set a Cloudflare API token. Works with the proxy on,
   before DNS points at this server, and for wildcards.
 
-DNS-01 also covers domains whose DNS is not on Cloudflare. Create once, at the
-domain's DNS host, a CNAME from `_acme-challenge.<domain>` to a name in a zone
-the token can edit, for example `<domain>.acme.example.com`. Traefik follows
-it and writes the challenge record there, so renewals stay automatic.
+### Cloudflare API token
 
-Give the token Zone > DNS > Edit on only the zones that receive the
-challenge records.
+Create a custom token in Cloudflare (My Profile > API Tokens > Create Token >
+Custom token) with:
+
+- **Permissions:** Zone > Zone > Read, and Zone > DNS > Edit. Read finds the
+  zone of a record and Edit writes the challenge TXT record. Nothing else.
+- **Zone resources:** Include > Specific zone, only the zones that receive
+  challenge records. Not "All zones".
+- **Client IP filtering:** optionally the server's IP, so the token is useless
+  anywhere else.
+
+Use one token per server: a leaked token then only exposes that server's
+zones. It is unrelated to any token your applications use, for example to
+purge Cloudflare's cache.
+
+### DNS-01 for any domain: CNAME delegation
+
+Let's Encrypt checks a TXT record at `_acme-challenge.<domain>`. It follows a
+CNAME there, and so does Traefik when it writes the record. So a domain can
+hand its challenge to a zone you control, without giving you access to its
+DNS:
+
+1. Add a dedicated domain to Cloudflare as its own zone, used only for
+   challenges, for example `example-acme.com`. The free plan is enough. Use a
+   separate domain rather than a subdomain of a zone you already have: a
+   token's scope is a whole zone, so a subdomain would mean giving the token
+   that entire zone.
+2. At the domain's DNS host, create once:
+
+   ```
+   _acme-challenge.client.org.  CNAME  client.org.example-acme.com.
+   ```
+
+   For a wildcard certificate the same record covers `*.client.org`.
+3. Route the site with the `cloudflare` resolver. Traefik follows the CNAME,
+   writes the TXT record at `client.org.example-acme.com` and removes it once
+   validated. Renewals need nothing more.
+
+The token then only needs the challenge zone, however many domains delegate
+to it. The zones the sites live in stay out of its reach, even when they are
+on Cloudflare too, which makes this the safest setup and not only the one for
+outside domains.
+
+Keep the CNAME as long as the site uses the `cloudflare` resolver. Removing it
+breaks the next renewal, about 30 days before expiry.
 
 ## Dashboard
 
