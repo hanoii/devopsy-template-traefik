@@ -1,0 +1,43 @@
+#!/bin/sh
+# Prints the DNS records the acmedns resolver needs: the one-time delegation
+# of DEVOPSY_ACMEDNS_DOMAIN to this server, and one CNAME per domain Traefik
+# has registered with acme-dns. See README.md.
+set -eu
+
+domain=${DEVOPSY_ACMEDNS_DOMAIN:-}
+if [ -z "$domain" ]; then
+  echo "DEVOPSY_ACMEDNS_DOMAIN is not set in .devopsy/.env" >&2
+  exit 1
+fi
+
+ip=${DEVOPSY_ACMEDNS_IP:-}
+if [ -z "$ip" ]; then
+  ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
+fi
+
+echo "Once, in the zone that contains $domain:"
+echo
+printf '  %s.  A   %s\n' "ns-$domain" "${ip:-<public IPv4 of this server>}"
+printf '  %s.  NS  %s.\n' "$domain" "ns-$domain"
+echo
+echo "Port 53 (UDP and TCP) must be open to the Internet."
+echo
+
+accounts=$DEVOPSY_PROJECT_DIR/mnt/letsencrypt/acme-dns-accounts.json
+if [ ! -s "$accounts" ]; then
+  echo "No domains registered yet. Route a site with the acmedns resolver,"
+  echo "then run this again."
+  exit 0
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required to read $accounts" >&2
+  exit 1
+fi
+
+echo "Once per domain, at its DNS host:"
+echo
+jq -r 'to_entries[] | "\(.key | ltrimstr("*.")) \(.value.fulldomain)"' "$accounts" \
+  | sort -u \
+  | while read -r name target; do
+    printf '  _acme-challenge.%s.  CNAME  %s.\n' "$name" "$target"
+  done

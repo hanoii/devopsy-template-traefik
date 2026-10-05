@@ -88,6 +88,21 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_HTTPCHALLENGE_ENTRYPOINT=web
+
+      # DNS-01 through the optional acme-dns server below. Always defined; it
+      # only works once the acmedns profile runs. Same account and CA as
+      # letsencrypt1. acme-dns answers updates at once, so no propagation
+      # checks (they would also query this host through its public IP).
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL}
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS_ACME_STORAGE=/letsencrypt/acme-acmedns.json
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS_ACME_DNSCHALLENGE_PROVIDER=acmedns
+      - TRAEFIK_CERTIFICATESRESOLVERS_ACMEDNS_ACME_DNSCHALLENGE_PROPAGATION_DISABLECHECKS=true
+      - ACME_DNS_API_BASE=http://acmedns
+      # Per-domain acme-dns accounts. `devopsy acmedns` reads it to list the
+      # CNAME records to create.
+      - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
     # Optional DNS-01 resolver through Cloudflare, only when dns.env exists.
     env_file:
       - path: ./dns.env
@@ -108,6 +123,69 @@ services:
     networks:
       - default
       - dockerproxy
+      - acmedns
+
+  # Optional acme-dns server for the acmedns resolver: DNS-01 for any domain
+  # after a one-time CNAME, without DNS provider tokens. Runs only with
+  # COMPOSE_PROFILES=acmedns. Its API is only reachable from Traefik.
+  # https://github.com/joohoi/acme-dns
+  acmedns:
+    profiles: [acmedns]
+    restart: unless-stopped
+    image: joohoi/acme-dns:v2.0.2
+    environment:
+      - ACMEDNS_DOMAIN=${DEVOPSY_ACMEDNS_DOMAIN-}
+    # acme-dns only reads a config file: write it from the environment.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        set -eu
+        [ -n "$$ACMEDNS_DOMAIN" ] || { echo "Set DEVOPSY_ACMEDNS_DOMAIN in .env" >&2; exit 1; }
+        cat > /tmp/config.cfg <<EOF
+        [general]
+        listen = "0.0.0.0:53"
+        protocol = "both4"
+        domain = "$$ACMEDNS_DOMAIN"
+        nsname = "ns-$$ACMEDNS_DOMAIN"
+        nsadmin = "hostmaster.$$ACMEDNS_DOMAIN"
+        records = ["$$ACMEDNS_DOMAIN. NS ns-$$ACMEDNS_DOMAIN."]
+        debug = false
+        [database]
+        engine = "sqlite"
+        connection = "/var/lib/acme-dns/acme-dns.db"
+        [api]
+        ip = "0.0.0.0"
+        port = "80"
+        tls = "none"
+        disable_registration = false
+        corsorigins = []
+        use_header = false
+        [logconfig]
+        loglevel = "warn"
+        logtype = "stdout"
+        logformat = "text"
+        EOF
+        exec acme-dns -c /tmp/config.cfg
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/health']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    user: "${DEVOPSY_UID}:${DEVOPSY_GID}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    ports:
+      - "${DEVOPSY_ACMEDNS_PORT-53}:53/udp"
+      - "${DEVOPSY_ACMEDNS_PORT-53}:53/tcp"
+    volumes:
+      - ./mnt/acmedns:/var/lib/acme-dns
+    networks:
+      - acmedns
 
 networks:
   # The network every routed container joins, as an external network.
@@ -115,3 +193,5 @@ networks:
     name: traefik-${DEVOPSY_ENVIRONMENT-main}
   dockerproxy:
     internal: true
+  # Traefik and acme-dns only, so projects cannot reach the acme-dns API.
+  acmedns: {}

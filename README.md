@@ -63,16 +63,62 @@ Router names must be unique on the host. Prefix them with the project name.
 
 ## Certificates
 
-Two resolvers. Every router uses `letsencrypt1` unless `DEVOPSY_CERTRESOLVER`
+Three resolvers. Every router uses `letsencrypt1` unless `DEVOPSY_CERTRESOLVER`
 in `.env` changes the default, or the router picks one with
 `traefik.http.routers.<name>.tls.certresolver=<resolver>`.
 
 - **`letsencrypt1`, HTTP-01.** Always available. Works for any domain that
   points at this server, with or without a CDN proxy like Cloudflare in
   front. Traefik answers the challenge on port 80 before the HTTPS redirect.
+- **`acmedns`, DNS-01 through this server's own acme-dns.** No DNS provider
+  token: each domain needs one CNAME, created once by whoever manages its
+  DNS. See below.
 - **`cloudflare`, DNS-01.** Only when `.devopsy/dns.env` exists: copy
-  `dns.env.example` and set a Cloudflare API token. Works with the proxy on,
-  before DNS points at this server, and for wildcards.
+  `dns.env.example` and set a Cloudflare API token.
+
+Both DNS-01 resolvers work with a CDN proxy on, before DNS points at this
+server, and for wildcard certificates.
+
+### acme-dns
+
+[acme-dns](https://github.com/joohoi/acme-dns) is a small DNS server that only
+serves ACME challenge records. Each server runs its own, for its own
+subdomain, and Traefik updates it through an API that only Traefik can reach.
+This is how hosting panels like Forge do DNS validation.
+
+1. In `.devopsy/.env`, pick a subdomain of a domain you control, unique per
+   server, and turn the service on:
+
+   ```dotenv
+   COMPOSE_PROFILES=acmedns
+   DEVOPSY_ACMEDNS_DOMAIN=acme-vm1.example.com
+   ```
+
+2. Run `devopsy up -d`, then `devopsy acmedns`. It prints two records to
+   create once in `example.com`: an A record for `ns-acme-vm1.example.com`
+   and an NS record delegating `acme-vm1.example.com` to it.
+3. Open port 53, UDP and TCP, in your provider's firewall.
+4. Route a site with the `acmedns` resolver. Its first attempt registers the
+   domain and fails with a "CNAME required" error in Traefik's log. Run
+   `devopsy acmedns` again: it lists the CNAME each domain needs, like
+
+   ```
+   _acme-challenge.client.org.  CNAME  5400f461-...acme-vm1.example.com.
+   ```
+
+   Once it exists, the next retry gets the certificate, and renewals need
+   nothing more.
+
+Each domain's credentials can only change its own challenge record, so
+nothing here can touch real DNS records. acme-dns does not resolve other
+names, so port 53 is not an open resolver.
+
+The registrations live in `mnt/letsencrypt/acme-dns-accounts.json`. A site
+moving to another server registers again there and needs its CNAME changed to
+the new server's name. Do that before switching the site's DNS: the old
+server's certificate stays valid meanwhile.
+
+`devopsy acmedns` needs `jq` to list the CNAMEs.
 
 ### Cloudflare API token
 

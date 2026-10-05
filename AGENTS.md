@@ -4,7 +4,8 @@ devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
 [devopsy-cli](https://github.com/hanoii/devopsy-cli). Everything lives in
 `.devopsy/`:
 
-- `compose.yaml`: Traefik and socket-proxy.
+- `compose.yaml`: Traefik, socket-proxy and the optional acme-dns service
+  (Compose profile `acmedns`).
 - `.env.example`: the variables a server sets in `.devopsy/.env`.
 - `dns.env.example`: the optional Cloudflare DNS-01 resolver, loaded from
   `.devopsy/dns.env` when it exists.
@@ -27,8 +28,8 @@ to that behavior.
   (https://doc.traefik.io/traefik/migrate/v3/) for every version in between.
   When upgrading socket-proxy, read its release notes.
 - Changes must not break projects already routed by this Traefik: the
-  `traefik-main` network name, the `letsencrypt1` and `cloudflare` resolver
-  names and the `web`/`websecure` entrypoints are a public interface.
+  `traefik-main` network name, the `letsencrypt1`, `acmedns` and
+  `cloudflare` resolver names and the `web`/`websecure` entrypoints are a public interface.
 
 ## Checks
 
@@ -40,7 +41,11 @@ DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy up -d --wait
 ```
 
-Check both containers are healthy, `http://` redirects, `https://` reaches
+For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
+`DEVOPSY_ACMEDNS_DOMAIN` and `DEVOPSY_ACMEDNS_PORT=15353`, then query it with
+`dig @127.0.0.1 -p 15353 <domain> SOA`.
+
+Check all containers are healthy, `http://` redirects, `https://` reaches
 whoami, and the Traefik log has no new warnings. Then `devopsy down`.
 
 ## Commits
