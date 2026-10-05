@@ -184,13 +184,21 @@ breaks the next renewal, about 30 days before expiry.
 With a public domain for the server, like `vm1.example.com`, every project
 gets a URL next to its own domains: `<project>.vm1.example.com`. devopsy-cli
 reads `DEVOPSY_PUBLIC_DOMAIN` from `/etc/devopsy/devopsy.env` (devopsy-server
-writes it) and gives compose files `DEVOPSY_PROJECT_NAME` and
-`DEVOPSY_PUBLIC_HOST`:
+writes it) and gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
+`DEVOPSY_HOST_RULE`:
 
 ```yaml
 labels:
   - traefik.enable=true
-  - traefik.http.routers.${DEVOPSY_PROJECT_NAME}.rule=Host(`${DEVOPSY_PUBLIC_HOST}`) || Host(`example.org`)
+  - traefik.http.routers.${DEVOPSY_PROJECT_NAME:-app}.rule=${DEVOPSY_HOST_RULE:-Host(`app.localhost`)}
+```
+
+`DEVOPSY_HOST_RULE` matches the public host plus `DEVOPSY_DOMAINS`, the
+environment's own domains, set in its `.env` (on a server, the target's
+`shared/.env`):
+
+```dotenv
+DEVOPSY_DOMAINS="example.org www.example.org"
 ```
 
 Without a public domain, `DEVOPSY_PUBLIC_HOST` is `<project>.localhost`,
