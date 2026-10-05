@@ -1,3 +1,5 @@
+#!/bin/sh
+# Pull newer images and recreate whatever changed.
+set -eu
 devopsy pull
-devopsy down
-devopsy up -d
+devopsy up -d --remove-orphans
