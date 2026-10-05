@@ -34,6 +34,38 @@ to that behavior.
   `traefik-main` network name, the `letsencrypt1`, `acmedns` and
   `cloudflare` resolver names and the `web`/`websecure` entrypoints are a public interface.
 
+## Design decisions and gotchas
+
+The workspace README (`../devopsy/README.md` locally) describes how the repos
+fit together, and `../devopsy/ROADMAP.md` the open ideas, like `devopsy
+forget` and the Cloudflare real client IP plugin.
+
+- `letsencrypt1` uses HTTP-01, not TLS-ALPN: it also works behind a CDN
+  proxy, and Traefik's ACME challenge router has top priority, ahead of the
+  HTTPS redirect.
+- Traefik only requests or retries a certificate when a router's
+  configuration changes. Recreating an identical container does not count:
+  take the site down and up to retry.
+- Traefik checks all certificates in its store, from any resolver, and a
+  wildcard covers a host: per-host HTTP-01 requests stop once the public
+  wildcard exists.
+- Traefik renews every stored certificate, routed or not, and only reads its
+  ACME files at startup, writing its in-memory copy back on changes. Editing
+  `mnt/letsencrypt/*.json` takes a stop or restart around the edit.
+- The same holds for acme-dns registrations (`acme-dns-accounts.json`):
+  lego loads them once. That is why there is no "pre-register a domain"
+  command: it would need a Traefik restart per domain.
+- acme-dns: binds the public IP only (`DEVOPSY_ACMEDNS_IP`), because
+  systemd-resolved holds 127.0.0.53:53 on many cloud images, and Docker
+  cannot publish 0.0.0.0:53 then. Its log level is `warn`, not `warning`.
+  It runs as `DEVOPSY_UID`, so `mnt/acmedns` must exist owned by that user
+  (shipped with `.gitkeep`); otherwise registration fails with
+  "no such table: records", which Traefik reports as EOF.
+- Cloudflare does not allow NS and A records on the same name, hence the
+  nameserver `ns-<acme-dns domain>`. The A record must not be proxied.
+- The wildcard router matches one reserved name only, so other hosts keep the
+  usual 404 instead of the noop service's 418.
+
 ## Checks
 
 Run it locally on other ports with a test environment name, and route a
