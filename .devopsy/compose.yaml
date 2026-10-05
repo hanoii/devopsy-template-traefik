@@ -78,6 +78,11 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik-${DEVOPSY_ENVIRONMENT-main}
 
+      # Extra dynamic configuration, like the public wildcard certificate:
+      # files in mnt/dynamic (see dynamic.example/).
+      - TRAEFIK_PROVIDERS_FILE_DIRECTORY=/dynamic
+      - TRAEFIK_PROVIDERS_FILE_WATCH=true
+
       # Let's Encrypt with the HTTP-01 challenge on port 80. It works with or
       # without a CDN proxy in front, and Traefik answers the challenge path
       # before the HTTPS redirect. Staging by default; set the CA server to
@@ -120,6 +125,7 @@ services:
       - "${DEVOPSY_API_PORT-127.0.0.1:8080}:8080"
     volumes:
       - ./mnt/letsencrypt:/letsencrypt
+      - ./mnt/dynamic:/dynamic:ro
     networks:
       - default
       - dockerproxy

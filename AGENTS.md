@@ -12,6 +12,8 @@ devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
 - `commands/`: devopsy custom commands (POSIX `sh`): `restart`, `acmedns`,
   `letsencrypt`.
 - `mnt/letsencrypt/`: ACME storage, never committed except `.gitkeep`.
+- `mnt/dynamic/`: Traefik file provider directory; `dynamic.example/` has
+  templates for it, like the public wildcard certificate.
 
 Read `README.md` for the user-facing behavior; keep it in sync with any change
 to that behavior.

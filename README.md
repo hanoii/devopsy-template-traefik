@@ -179,6 +179,33 @@ outside domains.
 Keep the CNAME as long as the site uses the `cloudflare` resolver. Removing it
 breaks the next renewal, about 30 days before expiry.
 
+## Public URLs
+
+With a public domain for the server, like `vm1.example.com`, every project
+gets a URL next to its own domains: `<project>.vm1.example.com`. devopsy-cli
+reads `DEVOPSY_PUBLIC_DOMAIN` from `/etc/devopsy/devopsy.env` (devopsy-server
+writes it) and gives compose files `DEVOPSY_PROJECT_NAME` and
+`DEVOPSY_PUBLIC_HOST`:
+
+```yaml
+labels:
+  - traefik.enable=true
+  - traefik.http.routers.${DEVOPSY_PROJECT_NAME}.rule=Host(`${DEVOPSY_PUBLIC_HOST}`) || Host(`example.org`)
+```
+
+Without a public domain, `DEVOPSY_PUBLIC_HOST` is `<project>.localhost`,
+which browsers resolve to the local machine.
+
+DNS: one wildcard record, `*.vm1.example.com A <server IP>`. Each public URL
+then gets its own HTTP-01 certificate. To use one wildcard certificate
+instead, which also avoids Let's Encrypt's limit of 50 certificates per domain
+a week, copy `dynamic.example/public-wildcard.yaml` to `mnt/dynamic/` with the
+domain filled in. It needs a DNS-01 resolver: with `acmedns`, `devopsy
+acmedns` then lists the CNAME for `_acme-challenge.vm1.example.com`.
+
+Files in `mnt/dynamic/` are Traefik dynamic configuration (file provider), for
+anything else that does not belong to a project.
+
 ## Dashboard
 
 It is published on `127.0.0.1:8080`. From your machine:

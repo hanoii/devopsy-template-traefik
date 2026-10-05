@@ -1,0 +1,19 @@
+# One wildcard certificate for every project's public URL,
+# <project>.<DEVOPSY_PUBLIC_DOMAIN>. Copy to mnt/dynamic/ and replace
+# vm1.example.com with the server's public domain.
+#
+# Wildcards need a DNS-01 resolver: acmedns or cloudflare. Without this file
+# each public URL gets its own HTTP-01 certificate, which also works.
+#
+# The router only exists to request the certificate: its rule matches one
+# reserved name, so other hosts keep Traefik's usual 404.
+http:
+  routers:
+    devopsy-public-wildcard:
+      rule: 'Host(`devopsy-wildcard.vm1.example.com`)'
+      entryPoints: [websecure]
+      service: noop@internal
+      tls:
+        certResolver: acmedns
+        domains:
+          - main: '*.vm1.example.com'
