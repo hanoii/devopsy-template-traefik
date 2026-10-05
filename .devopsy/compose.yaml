@@ -64,7 +64,9 @@ services:
       - TRAEFIK_ENTRYPOINTS_WEBSECURE=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_ADDRESS=:443
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
-      - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=letsencrypt1
+      # Default resolver for every router: letsencrypt1, or cloudflare (see
+      # dns.env.example). A router can pick another with its own label.
+      - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=${DEVOPSY_CERTRESOLVER-letsencrypt1}
       # On every entrypoint, drop headers that alias others for PHP and
       # similar backends (X_Forwarded_For vs X-Forwarded-For), so clients
       # cannot spoof the headers Traefik sets.
@@ -76,15 +78,20 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik-${DEVOPSY_ENVIRONMENT-main}
 
-      # Let's Encrypt with the TLS-ALPN-01 challenge. Staging by default; set
-      # the CA server to https://acme-v02.api.letsencrypt.org/directory for
-      # real certificates.
-      # https://doc.traefik.io/traefik/https/acme/#tlschallenge
+      # Let's Encrypt with the HTTP-01 challenge on port 80. It works with or
+      # without a CDN proxy in front, and Traefik answers the challenge path
+      # before the HTTPS redirect. Staging by default; set the CA server to
+      # https://acme-v02.api.letsencrypt.org/directory for real certificates.
+      # https://doc.traefik.io/traefik/https/acme/#httpchallenge
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1=true
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for Let's Encrypt}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
-      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_HTTPCHALLENGE_ENTRYPOINT=web
+    # Optional DNS-01 resolver through Cloudflare, only when dns.env exists.
+    env_file:
+      - path: ./dns.env
+        required: false
     healthcheck:
       test: ['CMD', 'traefik', 'healthcheck', '--ping']
       interval: 10s
