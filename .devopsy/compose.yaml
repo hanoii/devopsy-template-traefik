@@ -1,27 +1,40 @@
 name: traefik-${DEVOPSY_ENVIRONMENT-main}
 
 services:
+  # Read-only, filtered access to the Docker API for Traefik, so Traefik never
+  # mounts the Docker socket itself.
+  # https://github.com/wollomatic/socket-proxy
   dockerproxy:
     restart: unless-stopped
-    # See https://github.com/wollomatic/socket-proxy
-    # See https://github.com/wollomatic/traefik-hardened
-    image: wollomatic/socket-proxy:1.11.4
+    image: wollomatic/socket-proxy:1.13.1
     command:
-      # with this configuration socket-proxy acts similar to the tecnativa proxy. For additional hardening
-      # please refer to the documentation of the wollomatic/socket-proxy image
-      - '-loglevel=info' # set to debug for far more logging
-      - '-allowfrom=0.0.0.0/0'
+      - '-loglevel=info' # debug for far more logging
       - '-listenip=0.0.0.0'
-      - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)' # this regexp allows readonly access only for requests that traefik needs
-      - '-shutdowngracetime=5'
+      # Only the traefik container may connect.
+      - '-allowfrom=traefik'
+      # Read-only endpoints Traefik's Docker provider needs.
+      - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)'
       - '-allowHEAD=/_ping'
+      - '-shutdowngracetime=5'
+      # Exit if the socket goes away (Docker upgrade, for example) so the
+      # restart policy brings it back with a fresh connection.
+      - '-watchdoginterval=3600'
+      - '-stoponwatchdog'
+      - '-allowhealthcheck'
+    healthcheck:
+      test: ['CMD', './healthcheck']
+      interval: 10s
+      timeout: 5s
+      retries: 2
     read_only: true
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges
-    # On osx, at least with OrbStack, this get mounted always as root
-    user: 65534:${DEVOPSY_DOCKER_GID-0} # replace <<docker-gid>> with the docker gid on your host system
+    # nobody, in the group that owns the Docker socket on the host
+    # (`stat -c %g /var/run/docker.sock`). On macOS with OrbStack the socket
+    # is always mounted as root, so the default of 0 works there.
+    user: 65534:${DEVOPSY_DOCKER_GID-0}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -29,46 +42,68 @@ services:
 
   traefik:
     restart: unless-stopped
-    image: traefik:v3.6.12
-    # Enables the web UI and tells Traefik to listen to docker
+    image: traefik:v3.7.13
+    depends_on:
+      dockerproxy:
+        condition: service_healthy
     environment:
+      # Dashboard and API on port 8080, published on localhost only (see
+      # ports). Reach it with an SSH tunnel.
       - TRAEFIK_API_INSECURE=${TRAEFIK_API_INSECURE-true}
+      - TRAEFIK_PING=true
+      - TRAEFIK_ENTRYPOINTS_TRAEFIK_ADDRESS=:8080
+      - TRAEFIK_ENTRYPOINTS_TRAEFIK_HTTP_ALIASHEADERSSTRATEGY=delete
+      - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL-ERROR}
+
+      # HTTP redirects everything to HTTPS.
       - TRAEFIK_ENTRYPOINTS_WEB=true
       - TRAEFIK_ENTRYPOINTS_WEB_ADDRESS=:80
+      - TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_TO=websecure
+      - TRAEFIK_ENTRYPOINTS_WEB_HTTP_REDIRECTIONS_ENTRYPOINT_SCHEME=https
+      - TRAEFIK_ENTRYPOINTS_WEB_HTTP_ALIASHEADERSSTRATEGY=delete
       - TRAEFIK_ENTRYPOINTS_WEBSECURE=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_ADDRESS=:443
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=letsencrypt1
+      # On every entrypoint, drop headers that alias others for PHP and
+      # similar backends (X_Forwarded_For vs X-Forwarded-For), so clients
+      # cannot spoof the headers Traefik sets.
+      - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_ALIASHEADERSSTRATEGY=delete
+
+      # Containers opt in with traefik.enable=true and must join this network.
       - TRAEFIK_PROVIDERS_DOCKER=true
       - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
+      - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik-${DEVOPSY_ENVIRONMENT-main}
+
+      # Let's Encrypt with the TLS-ALPN-01 challenge. Staging by default; set
+      # the CA server to https://acme-v02.api.letsencrypt.org/directory for
+      # real certificates.
+      # https://doc.traefik.io/traefik/https/acme/#tlschallenge
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1=true
-      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for letsencrypt}
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:?A valid email is required for Let's Encrypt}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_STORAGE=/letsencrypt/acme.json
-      # Use the TLS-ALPN-01 challenge to generate and renew ACME certificates by provisioning a TLS certificate.
-      # https://doc.traefik.io/traefik/https/acme/#tlschallenge
-      # https://letsencrypt.org/docs/challenge-types/
       - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_TLSCHALLENGE=true
-      - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL-ERROR}
-      - TRAEFIK_CORE_DEFAULTRULESYNTAX=v2
-    user: "${DEVOPSY_UID:?Please provide an uid to run traefik, you could prepend your docker compose command with DEVOPSY_UID=$$EUID or set it on your .env file}:${DEVOPSY_GID:?Please provide an uid to run traefik, you could prepend your docker compose command with DEVOPSY_GID=$$EUID or set it on your .env file}"
+    healthcheck:
+      test: ['CMD', 'traefik', 'healthcheck', '--ping']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # Unprivileged. It owns mnt/letsencrypt, where acme.json lives.
+    user: "${DEVOPSY_UID:?Set DEVOPSY_UID in .env (the uid that owns mnt/letsencrypt)}:${DEVOPSY_GID:?Set DEVOPSY_GID in .env (the gid that owns mnt/letsencrypt)}"
     ports:
-      # The HTTP(s) ports
       - "${DEVOPSY_HTTP_PORT-80}:80"
       - "${DEVOPSY_HTTPS_PORT-443}:443"
-      # The Web UI (enabled by --api.insecure=true)
       - "${DEVOPSY_API_PORT-127.0.0.1:8080}:8080"
     volumes:
-      # So that Traefik can listen to the Docker events
-      # - /var/run/docker.sock:/var/run/docker.sock
-      # LE storage
       - ./mnt/letsencrypt:/letsencrypt
     networks:
       - default
       - dockerproxy
 
 networks:
+  # The network every routed container joins, as an external network.
   default:
     name: traefik-${DEVOPSY_ENVIRONMENT-main}
   dockerproxy:
