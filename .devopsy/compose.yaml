@@ -64,6 +64,10 @@ services:
       - TRAEFIK_ENTRYPOINTS_WEBSECURE=true
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_ADDRESS=:443
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS=true
+      # How long a request may take to arrive, body included. Traefik's 60s
+      # default cuts large uploads, like image layers pushed to a registry;
+      # 0 disables it.
+      - TRAEFIK_ENTRYPOINTS_WEBSECURE_TRANSPORT_RESPONDINGTIMEOUTS_READTIMEOUT=${DEVOPSY_READ_TIMEOUT-60s}
       # Default resolver for every router: letsencrypt1, or cloudflare (see
       # dns.env.example). A router can pick another with its own label.
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=${DEVOPSY_CERTRESOLVER-letsencrypt1}
