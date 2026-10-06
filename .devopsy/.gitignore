@@ -3,4 +3,5 @@
 /docker-compose.override.y*ml
 /compose.override.y*ml
 /dns.env
-/cloudflare-proxy.env
+/realip.env
+/realip.conf

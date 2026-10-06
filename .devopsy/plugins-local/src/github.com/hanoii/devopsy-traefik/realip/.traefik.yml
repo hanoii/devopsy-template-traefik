@@ -1,0 +1,13 @@
+displayName: devopsy real client IP
+type: middleware
+import: github.com/hanoii/devopsy-traefik/realip
+summary: >-
+  Behind any HTTP proxy or CDN (Cloudflare, Fastly, a load balancer...), makes
+  the visitor's IP from the proxy's header the request's client IP, for
+  requests from that proxy's ranges only. Others lose those headers.
+testData:
+  proxies:
+    - name: cloudflare
+      header: CF-Connecting-IP
+      trustedIPs:
+        - 173.245.48.0/20

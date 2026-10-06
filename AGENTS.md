@@ -14,19 +14,16 @@ devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
 - `mnt/letsencrypt/`: ACME storage, never committed except `.gitkeep`.
 - `mnt/dynamic/`: Traefik file provider directory; `dynamic.example/` has
   templates for it, like the public wildcard certificate.
-- `plugins-local/`: local Traefik plugins (Yaegi: standard library only),
-  like the Cloudflare real client IP middleware, enabled by
-  `devopsy cloudflare-proxy on` through `cloudflare-proxy.env` (plugin and
-  entrypoint middleware) and `mnt/dynamic/cloudflare-real-ip.yaml` (ranges;
-  refreshing them needs no restart). Both are written together: an
-  entrypoint referencing a missing middleware breaks every router. Unit-test
-  plugins with `go test` in their directory.
-
-Read `README.md` for the user-facing behavior; keep it in sync with any change
-to that behavior.
-
-## Rules
-
+- `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
+  `realip` maps a request from a trusted proxy's ranges to the visitor's IP
+  from that proxy's header. `devopsy realip` keeps the proxies in
+  `realip.conf` and writes `mnt/dynamic/realip.yaml` (middleware and ranges;
+  changes need no restart) and `realip.env` (plugin, websecure middleware,
+  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies), always
+  the middleware first: an entrypoint referencing a missing middleware breaks
+  every router. It migrates the first, Cloudflare-only version
+  (`cloudflare-proxy.env`). Unit-test plugins with `go test` in their
+  directory.
 - Configure Traefik with `TRAEFIK_*` environment variables in
   `compose.yaml`, not static config files.
 - Anything a server may need to change is a variable with a default, and goes
@@ -70,10 +67,12 @@ forget` and the Cloudflare real client IP plugin.
   "no such table: records", which Traefik reports as EOF.
 - Cloudflare does not allow NS and A records on the same name, hence the
   nameserver `ns-<acme-dns domain>`. The A record must not be proxied.
-- The Cloudflare plugin changes the request's remote address; Traefik then
-  builds X-Forwarded-For from it (verified on v3.7.13). Test it locally by
-  adding Docker's gateway range with `DEVOPSY_CLOUDFLARE_EXTRA_RANGES` and
-  sending `Cf-Connecting-Ip` through a whoami.
+- The realip plugin changes the request's remote address; Traefik then
+  builds X-Forwarded-For from it (verified on v3.7.13). Traefik strips
+  X-Forwarded-For and X-Real-Ip from untrusted peers before middlewares run,
+  hence the forwarded-headers trust for proxies using them. Test locally by
+  adding a proxy for Docker's gateway range (`192.168.0.0/16` on OrbStack)
+  and sending its header through a whoami.
 - The wildcard router matches one reserved name only, so other hosts keep the
   usual 404 instead of the noop service's 418.
 

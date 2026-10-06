@@ -214,28 +214,41 @@ acmedns` then lists the CNAME for `_acme-challenge.vm1.example.com`.
 Files in `mnt/dynamic/` are Traefik dynamic configuration (file provider), for
 anything else that does not belong to a project.
 
-## Real client IPs behind Cloudflare
+## Real client IPs behind proxies and CDNs
 
-Behind Cloudflare's proxy, Traefik sees Cloudflare's IPs, so applications
-would log and rate-limit those instead of visitors. Turn on the bundled local
-plugin (`plugins-local/`, standard library only, nothing downloaded):
+Behind a proxy (Cloudflare, Fastly, a load balancer, another nginx...),
+Traefik sees the proxy's IPs, so applications would log and rate-limit those
+instead of visitors. The bundled local plugin (`plugins-local/`, standard
+library only, nothing downloaded) fixes that for any number of proxies, each
+with its ranges and the header it passes the visitor in:
 
 ```sh
-devopsy cloudflare-proxy on        # fetch Cloudflare's ranges, enable (restarts Traefik)
-devopsy cloudflare-proxy refresh   # fetch the ranges again (no restart)
-devopsy cloudflare-proxy off
+devopsy realip add cloudflare                        # preset: its published ranges, CF-Connecting-IP
+devopsy realip add fastly Fastly-Client-IP https://example.com/fastly-ranges.txt
+devopsy realip add lb X-Forwarded-For 10.0.0.0/16    # your own load balancer
+devopsy realip                                       # list
+devopsy realip refresh                               # fetch URL ranges again (no restart)
+devopsy realip remove lb
 ```
 
-For a request from Cloudflare's ranges, the plugin makes the visitor's IP
-(`CF-Connecting-IP`, which Cloudflare always sets) the client IP: Traefik then
-sends it as `X-Forwarded-For` and `X-Real-Ip`, so applications keep trusting
-only Traefik. Requests from anywhere else lose any `CF-Connecting-IP`, so it
-cannot be spoofed by reaching the server directly. Both direct and proxied
-sites work on the same server.
+Ranges are CIDRs, or `https` URLs listing one per line. For a request from a
+proxy's ranges, the visitor's IP (for `X-Forwarded-For`, the rightmost address
+that is not a trusted proxy) becomes the client IP: Traefik sends it as
+`X-Forwarded-For` and `X-Real-Ip`, so applications keep trusting only
+Traefik. Any other request loses the proxies' headers, so they cannot be
+spoofed by reaching the server directly. Proxied and direct sites work on the
+same server: each request is judged by who connected.
 
-devopsy-server can turn it on and refresh the ranges weekly
-(`DEVOPSY_CLOUDFLARE_PROXY=1`). Local plugins are still marked experimental
-in Traefik; this one is a few lines of standard-library Go.
+The proxies are kept in `.devopsy/realip.conf`. Adding the first proxy,
+removing the last one, or changing the ranges of an `X-Forwarded-For` or
+`X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
+restarts Traefik; anything else does not. devopsy-server can add Cloudflare
+and refresh the ranges weekly (`DEVOPSY_CLOUDFLARE_PROXY=1`).
+
+Load balancers that pass TCP connections with the PROXY protocol (HAProxy, most
+cloud network load balancers) need no plugin: Traefik supports it natively,
+for example `TRAEFIK_ENTRYPOINTS_WEBSECURE_PROXYPROTOCOL_TRUSTEDIPS` in a
+compose override.
 
 ## Dashboard
 
