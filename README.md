@@ -260,6 +260,23 @@ ssh -L 8080:127.0.0.1:8080 your-server
 
 Then open <http://localhost:8080>.
 
+## From your machine
+
+devopsy's commands here (`proxies`, `acmedns`, `letsencrypt`, `restart`, logs)
+run from anywhere with a user-level target pointing at the server's clone:
+
+```yaml
+# ~/.config/devopsy/targets.yaml
+vm1-traefik:
+  host: devopsy@203.0.113.10
+  path: /srv/traefik
+```
+
+```sh
+devopsy @vm1-traefik proxies add cloudflare
+devopsy @vm1-traefik acmedns
+```
+
 ## Customizing
 
 Put changes in `.devopsy/compose.override.yaml`, which is not committed.
