@@ -214,6 +214,29 @@ acmedns` then lists the CNAME for `_acme-challenge.vm1.example.com`.
 Files in `mnt/dynamic/` are Traefik dynamic configuration (file provider), for
 anything else that does not belong to a project.
 
+## Real client IPs behind Cloudflare
+
+Behind Cloudflare's proxy, Traefik sees Cloudflare's IPs, so applications
+would log and rate-limit those instead of visitors. Turn on the bundled local
+plugin (`plugins-local/`, standard library only, nothing downloaded):
+
+```sh
+devopsy cloudflare-proxy on        # fetch Cloudflare's ranges, enable (restarts Traefik)
+devopsy cloudflare-proxy refresh   # fetch the ranges again (no restart)
+devopsy cloudflare-proxy off
+```
+
+For a request from Cloudflare's ranges, the plugin makes the visitor's IP
+(`CF-Connecting-IP`, which Cloudflare always sets) the client IP: Traefik then
+sends it as `X-Forwarded-For` and `X-Real-Ip`, so applications keep trusting
+only Traefik. Requests from anywhere else lose any `CF-Connecting-IP`, so it
+cannot be spoofed by reaching the server directly. Both direct and proxied
+sites work on the same server.
+
+devopsy-server can turn it on and refresh the ranges weekly
+(`DEVOPSY_CLOUDFLARE_PROXY=1`). Local plugins are still marked experimental
+in Traefik; this one is a few lines of standard-library Go.
+
 ## Dashboard
 
 It is published on `127.0.0.1:8080`. From your machine:

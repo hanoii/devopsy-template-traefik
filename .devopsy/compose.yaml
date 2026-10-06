@@ -109,8 +109,12 @@ services:
       # CNAME records to create.
       - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
     # Optional DNS-01 resolver through Cloudflare, only when dns.env exists.
+    # Optional real client IPs behind Cloudflare's proxy, only when
+    # cloudflare-proxy.env exists (`devopsy cloudflare-proxy on`).
     env_file:
       - path: ./dns.env
+        required: false
+      - path: ./cloudflare-proxy.env
         required: false
     healthcheck:
       test: ['CMD', 'traefik', 'healthcheck', '--ping']
@@ -126,6 +130,8 @@ services:
     volumes:
       - ./mnt/letsencrypt:/letsencrypt
       - ./mnt/dynamic:/dynamic:ro
+      # Local Traefik plugins (Traefik reads ./plugins-local from /).
+      - ./plugins-local:/plugins-local:ro
     networks:
       - default
       - dockerproxy
