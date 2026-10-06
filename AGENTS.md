@@ -75,6 +75,16 @@ forget` and the Cloudflare real client IP plugin.
   and sending its header through a whoami.
 - The wildcard router matches one reserved name only, so other hosts keep the
   usual 404 instead of the noop service's 418.
+- A wildcard requested before its DNS existed fails until a router changes:
+  `devopsy @<server>-traefik domains --retry` (devopsy-cli) asks again
+  without a restart. A restart works too, and also requests HTTP-01
+  certificates for routed hosts that had none; Traefik then serves those
+  exact matches instead of the wildcard. Both are valid.
+- `DEVOPSY_READ_TIMEOUT` is the websecure entrypoint's `readTimeout`: how long
+  a request, body included, may take to arrive (Traefik v3 defaults to 60s,
+  which cuts large uploads like registry layers). Entrypoints are static
+  configuration, so projects cannot change it with labels; raise it per
+  server, where a registry runs.
 
 ## Checks
 
