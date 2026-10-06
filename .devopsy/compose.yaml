@@ -109,12 +109,12 @@ services:
       # CNAME records to create.
       - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
     # Optional DNS-01 resolver through Cloudflare, only when dns.env exists.
-    # Optional real client IPs behind proxies and CDNs, only when realip.env
-    # exists (`devopsy realip add ...`).
+    # Optional real client IPs behind proxies and CDNs, only when proxies.env
+    # exists (`devopsy proxies add ...`).
     env_file:
       - path: ./dns.env
         required: false
-      - path: ./realip.env
+      - path: ./proxies.env
         required: false
     healthcheck:
       test: ['CMD', 'traefik', 'healthcheck', '--ping']

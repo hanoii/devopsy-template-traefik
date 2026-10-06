@@ -1,4 +1,5 @@
 #!/bin/sh
+## Description: Show or switch Let's Encrypt between staging and production
 # Shows or switches the Let's Encrypt environment of every resolver:
 #
 #   devopsy letsencrypt              show the current one

@@ -1,4 +1,5 @@
 #!/bin/sh
+## Description: DNS records the acmedns resolver needs (delegation and per-domain CNAMEs)
 # Prints the DNS records the acmedns resolver needs: the one-time delegation
 # of DEVOPSY_ACMEDNS_DOMAIN to this server, and one CNAME per domain Traefik
 # has registered with acme-dns. See README.md.

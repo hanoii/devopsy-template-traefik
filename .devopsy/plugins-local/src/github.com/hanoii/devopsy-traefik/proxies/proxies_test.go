@@ -1,4 +1,4 @@
-package realip
+package proxies
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 func serve(t *testing.T, h http.Handler, remote string, headers map[string]string) *http.Request {
 	t.Helper()
 	var got *http.Request
-	h.(*RealIP).next = http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) { got = req })
+	h.(*Proxies).next = http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) { got = req })
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = remote
 	for k, v := range headers {
@@ -20,7 +20,7 @@ func serve(t *testing.T, h http.Handler, remote string, headers map[string]strin
 	return got
 }
 
-func TestRealIP(t *testing.T) {
+func TestProxies(t *testing.T) {
 	h, err := New(context.Background(), nil, &Config{Proxies: []Proxy{
 		{Name: "cloudflare", Header: "CF-Connecting-IP", TrustedIPs: []string{"162.158.0.0/15"}},
 		{Name: "fastly", Header: "Fastly-Client-IP", TrustedIPs: []string{"151.101.0.0/16"}},

@@ -1,13 +1,15 @@
 #!/bin/sh
-# Real client IPs behind HTTP proxies and CDNs, through the local realip
+## Description: Trusted proxies and CDNs, for real client IPs (add cloudflare, list, remove, refresh)
+#
+# Real client IPs behind HTTP proxies and CDNs, through the local proxies
 # plugin in plugins-local/. Each proxy has a name, the header it passes the
 # visitor in, and its ranges: CIDRs, or https URLs listing one per line.
 #
-#   devopsy realip                           list the proxies
-#   devopsy realip add cloudflare            Cloudflare's published ranges and header
-#   devopsy realip add <name> <header> <range-or-url>...
-#   devopsy realip remove <name>
-#   devopsy realip refresh                   fetch URL ranges again
+#   devopsy proxies                           list the proxies
+#   devopsy proxies add cloudflare            Cloudflare's published ranges and header
+#   devopsy proxies add <name> <header> <range-or-url>...
+#   devopsy proxies remove <name>
+#   devopsy proxies refresh                   fetch URL ranges again
 #
 # Requests from a proxy's ranges get the visitor from its header; any other
 # request loses those headers. Proxies using X-Forwarded-For or X-Real-Ip are
@@ -17,12 +19,12 @@
 set -eu
 
 dir=$DEVOPSY_PROJECT_DIR
-conf=$dir/realip.conf
-env_file=$dir/realip.env
-dynamic=$dir/mnt/dynamic/realip.yaml
+conf=$dir/proxies.conf
+env_file=$dir/proxies.env
+dynamic=$dir/mnt/dynamic/proxies.yaml
 
 die() {
-  echo "realip: $*" >&2
+  echo "proxies: $*" >&2
   exit 1
 }
 
@@ -69,16 +71,16 @@ apply() {
       devopsy up -d --wait
     fi
     rm -f "$dynamic"
-    echo "realip: off"
+    echo "proxies: none, real client IPs are off"
     return
   fi
 
-  yaml="# Written by 'devopsy realip' from realip.conf.
+  yaml="# Written by 'devopsy proxies' from proxies.conf.
 http:
   middlewares:
-    realip:
+    proxies:
       plugin:
-        realip:
+        proxies:
           proxies:
 "
   forwarded=
@@ -98,9 +100,9 @@ $(printf '%s\n' "$r" | sed 's/^/                - /')
 $(proxies)
 EOT
 
-  env="# Written by 'devopsy realip'. Proxies are in realip.conf.
-TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_REALIP_MODULENAME=github.com/hanoii/devopsy-traefik/realip
-TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=realip@file
+  env="# Written by 'devopsy proxies'. Proxies are in proxies.conf.
+TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
+TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=proxies@file
 "
   if [ -n "$forwarded" ]; then
     env="${env}TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=$(printf '%s' "$forwarded" | tr -s ' \n' ',' | sed 's/^,//; s/,$//')
@@ -109,13 +111,13 @@ TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=realip@file
 
   # The middleware exists before the entrypoint references it.
   if write_if_changed "$dynamic" "$yaml"; then
-    echo "realip: wrote mnt/dynamic/realip.yaml"
+    echo "proxies: wrote mnt/dynamic/proxies.yaml"
   fi
   if write_if_changed "$env_file" "$env" || [ "${migrated:-0}" = 1 ]; then
-    echo "realip: restarting Traefik to apply realip.env"
+    echo "proxies: restarting Traefik to apply proxies.env"
     devopsy up -d --wait
   fi
-  proxies | while read -r name header _; do echo "realip: $name ($header)"; done
+  proxies | while read -r name header _; do echo "proxies: $name ($header)"; done
 }
 
 valid_name() {
@@ -127,7 +129,7 @@ valid_name() {
 if [ -f "$dir/cloudflare-proxy.env" ]; then
   grep -q '^cloudflare ' "$conf" 2>/dev/null || echo "cloudflare CF-Connecting-IP https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6" >>"$conf"
   rm -f "$dir/cloudflare-proxy.env" "$dir/mnt/dynamic/cloudflare-real-ip.yaml"
-  echo "realip: migrated the cloudflare-proxy setup"
+  echo "proxies: migrated the cloudflare-proxy setup"
   migrated=1
   apply
 fi
@@ -135,21 +137,21 @@ fi
 case "${1:-}" in
   '')
     if [ -z "$(proxies)" ]; then
-      echo "No proxies: realip is off."
+      echo "No trusted proxies: real client IPs are off."
       exit 0
     fi
     proxies | while read -r name header sources; do printf '%s\t%s\t%s\n' "$name" "$header" "$sources"; done
     ;;
   add)
     shift
-    [ $# -ge 1 ] || die "usage: devopsy realip add cloudflare | <name> <header> <range-or-url>..."
+    [ $# -ge 1 ] || die "usage: devopsy proxies add cloudflare | <name> <header> <range-or-url>..."
     if [ $# -eq 1 ]; then
       case $1 in
         cloudflare) set -- cloudflare CF-Connecting-IP https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 ;;
         *) die "no preset named $1: give a header and ranges" ;;
       esac
     fi
-    [ $# -ge 3 ] || die "usage: devopsy realip add <name> <header> <range-or-url>..."
+    [ $# -ge 3 ] || die "usage: devopsy proxies add <name> <header> <range-or-url>..."
     name=$1
     header=$2
     valid_name "$name"
@@ -165,7 +167,7 @@ case "${1:-}" in
     apply
     ;;
   remove)
-    [ $# -eq 2 ] || die "usage: devopsy realip remove <name>"
+    [ $# -eq 2 ] || die "usage: devopsy proxies remove <name>"
     proxies | awk -v n="$2" '$1 == n { found = 1 } END { exit !found }' || die "no proxy named $2"
     proxies | awk -v n="$2" '$1 != n' >"$conf.tmp"
     mv "$conf.tmp" "$conf"
@@ -175,6 +177,6 @@ case "${1:-}" in
     apply
     ;;
   *)
-    die "usage: devopsy realip [add <name> ... | remove <name> | refresh]"
+    die "usage: devopsy proxies [add <name> ... | remove <name> | refresh]"
     ;;
 esac

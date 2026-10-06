@@ -223,12 +223,12 @@ library only, nothing downloaded) fixes that for any number of proxies, each
 with its ranges and the header it passes the visitor in:
 
 ```sh
-devopsy realip add cloudflare                        # preset: its published ranges, CF-Connecting-IP
-devopsy realip add fastly Fastly-Client-IP https://example.com/fastly-ranges.txt
-devopsy realip add lb X-Forwarded-For 10.0.0.0/16    # your own load balancer
-devopsy realip                                       # list
-devopsy realip refresh                               # fetch URL ranges again (no restart)
-devopsy realip remove lb
+devopsy proxies add cloudflare                        # preset: its published ranges, CF-Connecting-IP
+devopsy proxies add fastly Fastly-Client-IP https://example.com/fastly-ranges.txt
+devopsy proxies add lb X-Forwarded-For 10.0.0.0/16    # your own load balancer
+devopsy proxies                                       # list
+devopsy proxies refresh                               # fetch URL ranges again (no restart)
+devopsy proxies remove lb
 ```
 
 Ranges are CIDRs, or `https` URLs listing one per line. For a request from a
@@ -239,7 +239,7 @@ Traefik. Any other request loses the proxies' headers, so they cannot be
 spoofed by reaching the server directly. Proxied and direct sites work on the
 same server: each request is judged by who connected.
 
-The proxies are kept in `.devopsy/realip.conf`. Adding the first proxy,
+The proxies are kept in `.devopsy/proxies.conf`. Adding the first proxy,
 removing the last one, or changing the ranges of an `X-Forwarded-For` or
 `X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
 restarts Traefik; anything else does not. devopsy-server can add Cloudflare

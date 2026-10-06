@@ -3,5 +3,5 @@
 /docker-compose.override.y*ml
 /compose.override.y*ml
 /dns.env
-/realip.env
-/realip.conf
+/proxies.env
+/proxies.conf

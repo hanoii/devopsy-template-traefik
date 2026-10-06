@@ -1,4 +1,4 @@
-// Package realip is a Traefik middleware plugin (run by Traefik's Yaegi
+// Package proxies is a Traefik middleware plugin (run by Traefik's Yaegi
 // interpreter: standard library only) for sites behind HTTP proxies or CDNs.
 //
 // Each configured proxy has its ranges and the header it passes the visitor
@@ -9,7 +9,7 @@
 // spoofed by reaching the server directly. Traefik already strips
 // X-Forwarded-For and X-Real-Ip from untrusted connections, so proxies using
 // those must also be in the entrypoint's forwardedHeaders.trustedIPs.
-package realip
+package proxies
 
 import (
 	"context"
@@ -44,8 +44,8 @@ type proxy struct {
 	nets   []*net.IPNet
 }
 
-// RealIP is the middleware.
-type RealIP struct {
+// Proxies is the middleware.
+type Proxies struct {
 	next    http.Handler
 	proxies []proxy
 	// headers are the proxies' own headers (not X-Forwarded-For or
@@ -58,7 +58,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	if len(config.Proxies) == 0 {
 		return nil, fmt.Errorf("%s: no proxies", name)
 	}
-	r := &RealIP{next: next}
+	r := &Proxies{next: next}
 	seen := map[string]bool{}
 	for _, p := range config.Proxies {
 		h := http.CanonicalHeaderKey(strings.TrimSpace(p.Header))
@@ -83,7 +83,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 }
 
 // proxyFor returns the proxy whose ranges contain ip.
-func (r *RealIP) proxyFor(ip net.IP) *proxy {
+func (r *Proxies) proxyFor(ip net.IP) *proxy {
 	for i := range r.proxies {
 		for _, n := range r.proxies[i].nets {
 			if n.Contains(ip) {
@@ -95,7 +95,7 @@ func (r *RealIP) proxyFor(ip net.IP) *proxy {
 }
 
 // visitor reads the visitor's IP from p's header.
-func (r *RealIP) visitor(p *proxy, req *http.Request) net.IP {
+func (r *Proxies) visitor(p *proxy, req *http.Request) net.IP {
 	value := req.Header.Get(p.header)
 	if p.header != "X-Forwarded-For" {
 		return net.ParseIP(strings.TrimSpace(value))
@@ -115,7 +115,7 @@ func (r *RealIP) visitor(p *proxy, req *http.Request) net.IP {
 	return nil
 }
 
-func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (r *Proxies) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	host, port, err := net.SplitHostPort(req.RemoteAddr)
 	peer := net.ParseIP(host)
 	var p *proxy

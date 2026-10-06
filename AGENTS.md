@@ -9,16 +9,16 @@ devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
 - `.env.example`: the variables a server sets in `.devopsy/.env`.
 - `dns.env.example`: the optional Cloudflare DNS-01 resolver, loaded from
   `.devopsy/dns.env` when it exists.
-- `commands/`: devopsy custom commands (POSIX `sh`): `restart`, `acmedns`,
-  `letsencrypt`.
+- `commands/`: devopsy custom commands (POSIX `sh`, each with a
+  `## Description:` line): `restart`, `acmedns`, `letsencrypt`, `proxies`.
 - `mnt/letsencrypt/`: ACME storage, never committed except `.gitkeep`.
 - `mnt/dynamic/`: Traefik file provider directory; `dynamic.example/` has
   templates for it, like the public wildcard certificate.
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
-  `realip` maps a request from a trusted proxy's ranges to the visitor's IP
-  from that proxy's header. `devopsy realip` keeps the proxies in
-  `realip.conf` and writes `mnt/dynamic/realip.yaml` (middleware and ranges;
-  changes need no restart) and `realip.env` (plugin, websecure middleware,
+  `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
+  from that proxy's header. `devopsy proxies` keeps the proxies in
+  `proxies.conf` and writes `mnt/dynamic/proxies.yaml` (middleware and ranges;
+  changes need no restart) and `proxies.env` (plugin, websecure middleware,
   forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies), always
   the middleware first: an entrypoint referencing a missing middleware breaks
   every router. It migrates the first, Cloudflare-only version
@@ -67,7 +67,7 @@ forget` and the Cloudflare real client IP plugin.
   "no such table: records", which Traefik reports as EOF.
 - Cloudflare does not allow NS and A records on the same name, hence the
   nameserver `ns-<acme-dns domain>`. The A record must not be proxied.
-- The realip plugin changes the request's remote address; Traefik then
+- The proxies plugin changes the request's remote address; Traefik then
   builds X-Forwarded-For from it (verified on v3.7.13). Traefik strips
   X-Forwarded-For and X-Real-Ip from untrusted peers before middlewares run,
   hence the forwarded-headers trust for proxies using them. Test locally by

@@ -1,4 +1,5 @@
 #!/bin/sh
+## Description: Pull newer images and recreate what changed
 # Pull newer images and recreate whatever changed.
 set -eu
 devopsy pull

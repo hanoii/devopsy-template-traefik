@@ -1,6 +1,6 @@
-displayName: devopsy real client IP
+displayName: devopsy trusted proxies
 type: middleware
-import: github.com/hanoii/devopsy-traefik/realip
+import: github.com/hanoii/devopsy-traefik/proxies
 summary: >-
   Behind any HTTP proxy or CDN (Cloudflare, Fastly, a load balancer...), makes
   the visitor's IP from the proxy's header the request's client IP, for
