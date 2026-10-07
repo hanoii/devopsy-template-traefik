@@ -229,7 +229,8 @@ breaks the next renewal, about 30 days before expiry.
 With a public domain for the server, like `vm1.example.com`, every project
 gets a URL next to its own domains: `<project>.vm1.example.com`. Each
 project target sets `DEVOPSY_PUBLIC_DOMAIN` (in `targets.yaml`'s `env`, or
-its `.env`), next to its host: both describe the server. devopsy-cli then
+in the server's `shared/.env` with `--vars`), next to its host: both
+describe the server. devopsy-cli then
 gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
 `DEVOPSY_HOST_RULE`:
 
