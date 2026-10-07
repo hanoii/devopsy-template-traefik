@@ -238,8 +238,12 @@ gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
 ```yaml
 labels:
   - traefik.enable=true
-  - traefik.http.routers.${DEVOPSY_PROJECT_NAME:-app}.rule=${DEVOPSY_HOST_RULE:-Host(`app.localhost`)}
+  - traefik.http.routers.${DEVOPSY_PROJECT_NAME:-app}.rule=${DEVOPSY_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
 ```
+
+The fallback is a `HostRegexp` because Traefik requests no certificate for
+one: an environment without hosts would otherwise log an ACME error for
+`app.localhost` on every attempt.
 
 `DEVOPSY_HOST_RULE` matches the public host plus `DEVOPSY_DOMAINS`, the
 environment's own domains, set in its `.env` (on a server, the target's
