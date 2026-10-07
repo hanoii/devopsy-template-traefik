@@ -6,7 +6,7 @@
 #   service gives mnt/letsencrypt and mnt/acmedns to 10001.
 # - Values detected once and kept in .env, so a plain `devopsy up` works
 #   later: the Docker socket's group, and acme-dns's public IP.
-# - The public wildcard certificate (DEVOPSY_PUBLIC_DOMAIN), or none.
+# - The public wildcard certificate (DEVOPSY_WILDCARD_DOMAIN), or none.
 # - Trusted proxies' ranges, fetched again (`devopsy proxies refresh`).
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
@@ -37,8 +37,8 @@ esac
 # the certificate: its rule matches one reserved name, so other hosts keep
 # Traefik's usual 404.
 wildcard=$dir/mnt/dynamic/public-wildcard.yaml
-domain=${DEVOPSY_PUBLIC_DOMAIN:-}
-resolver=${DEVOPSY_PUBLIC_CERTRESOLVER:-auto}
+domain=${DEVOPSY_WILDCARD_DOMAIN:-}
+resolver=${DEVOPSY_WILDCARD_CERTRESOLVER:-auto}
 if [ "$resolver" = auto ]; then
   if [ -n "${DEVOPSY_ACMEDNS_DOMAIN:-}" ]; then
     resolver=acmedns
@@ -50,14 +50,14 @@ if [ "$resolver" = auto ]; then
 fi
 case $resolver in
   acmedns | cloudflare | none) ;;
-  *) die "DEVOPSY_PUBLIC_CERTRESOLVER must be auto, acmedns, cloudflare or none: $resolver" ;;
+  *) die "DEVOPSY_WILDCARD_CERTRESOLVER must be auto, acmedns, cloudflare or none: $resolver" ;;
 esac
 if [ -z "$domain" ] || [ "$resolver" = none ]; then
   if [ -f "$wildcard" ]; then
     rm -f "$wildcard"
     echo "deploy: no public wildcard certificate"
   fi
-elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from DEVOPSY_PUBLIC_DOMAIN.
+elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from DEVOPSY_WILDCARD_DOMAIN.
 http:
   routers:
     devopsy-public-wildcard:

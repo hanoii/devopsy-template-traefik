@@ -82,8 +82,9 @@ cd .. && mv traefik traefik.clone && mv traefik.new traefik
 ```
 
 In `shared/.env`, remove `DEVOPSY_UID` and `DEVOPSY_GID`, and add what
-devopsy-server used to write elsewhere: `DEVOPSY_PUBLIC_DOMAIN` (and
-`DEVOPSY_PUBLIC_CERTRESOLVER` if not auto), and the Cloudflare token from
+devopsy-server used to write elsewhere: the public domain as
+`DEVOPSY_WILDCARD_DOMAIN` (and `DEVOPSY_WILDCARD_CERTRESOLVER` if not auto),
+and the Cloudflare token from
 `dns.env` as `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN`. Then release from your
 machine. `mv` keeps the ACME files' mode 600; the `init` service hands them
 to 10001 on the first start. Certificates and acme-dns registrations carry
@@ -255,9 +256,11 @@ which browsers resolve to the local machine.
 DNS: one wildcard record, `*.vm1.example.com A <server IP>`. Each public URL
 then gets its own HTTP-01 certificate. To use one wildcard certificate
 instead, which also avoids Let's Encrypt's limit of 50 certificates per domain
-a week, set the same `DEVOPSY_PUBLIC_DOMAIN` in this Traefik's `.env`:
-`deploy` writes `mnt/dynamic/public-wildcard.yaml`. It needs a DNS-01
-resolver, `DEVOPSY_PUBLIC_CERTRESOLVER`: `auto` (acmedns when configured,
+a week, set the same domain as `DEVOPSY_WILDCARD_DOMAIN` in this Traefik's
+`.env`: `deploy` writes `mnt/dynamic/public-wildcard.yaml`. (A different
+name than projects' `DEVOPSY_PUBLIC_DOMAIN`: Traefik itself has no public
+URL.) It needs a DNS-01 resolver, `DEVOPSY_WILDCARD_CERTRESOLVER`: `auto`
+(acmedns when configured,
 else cloudflare with a token, else none), `acmedns`, `cloudflare` or `none`.
 With `acmedns`, `devopsy acmedns` then lists the CNAME for
 `_acme-challenge.vm1.example.com`.
