@@ -47,7 +47,7 @@ Set its settings before the first release, then release it:
 
 ```sh
 devopsy @vm1-traefik --vars set --show TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL
-devopsy @vm1-traefik release
+devopsy @vm1-traefik --release
 ```
 
 `.devopsy/.env.example` lists every setting. They live in the server's
@@ -172,7 +172,7 @@ This is how hosting panels like Forge do DNS validation.
 
    Once it exists, make Traefik try again. It only retries when a router
    changes, and recreating an identical container does not count:
-   `devopsy @<target> domains --retry` from the site's project asks again
+   `devopsy @<target> --domains --retry` from the site's project asks again
    without a restart (see "Checking domains"). Renewals need nothing more.
 
 Each domain's credentials can only change its own challenge record, so
@@ -344,7 +344,7 @@ devopsy @vm1-traefik acmedns
 
 ## Checking domains
 
-devopsy-cli's `devopsy @<target> domains` checks a project's hosts from
+devopsy-cli's `devopsy @<target> --domains` checks a project's hosts from
 outside (DNS, certificates, CDN proxies) and says what to do next. What
 Traefik knows comes from here, through devopsy's `domains` capability
 (`.devopsy/capabilities/domains/`): `facts` reads Traefik's routers and the

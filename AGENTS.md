@@ -106,7 +106,7 @@ forget` and the Cloudflare real client IP plugin.
 - The wildcard router matches one reserved name only, so other hosts keep the
   usual 404 instead of the noop service's 418.
 - A wildcard requested before its DNS existed fails until a router changes:
-  `devopsy @<server>-traefik domains --retry` (devopsy-cli) asks again
+  `devopsy @<server>-traefik --domains --retry` (devopsy-cli) asks again
   without a restart. A restart works too, and also requests HTTP-01
   certificates for routed hosts that had none; Traefik then serves those
   exact matches instead of the wildcard. Both are valid.
@@ -118,11 +118,11 @@ forget` and the Cloudflare real client IP plugin.
 
 ## Releases
 
-Servers get it with `devopsy @<server>-traefik release` from a checkout,
+Servers get it with `devopsy @<server>-traefik --release` from a checkout,
 with targets in the operator's `~/.config/devopsy/targets.yaml` (with
 `source:` naming the checkout) or the checkout's
 `.devopsy/targets.local.yaml`, never committed: servers are the
-operator's. Each runs `deploy` for `release` and `rollback`.
+operator's. Each runs `deploy` for `--release` and `--rollback`.
 Settings go in the server's `shared/.env` through `--vars`. Breaking changes
 to `shared/` (a file moving, a setting renamed) need a migration note in the
 README, as "From a clone" has.
