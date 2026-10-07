@@ -31,8 +31,8 @@ case ",${COMPOSE_PROFILES:-}," in
     ;;
 esac
 
-# One wildcard certificate for every project's public URL. It needs a DNS-01
-# resolver: auto picks acmedns, else cloudflare, else none (each public URL
+# One wildcard certificate for every project's wildcard URL. It needs a DNS-01
+# resolver: auto picks acmedns, else cloudflare, else none (each wildcard URL
 # then gets its own HTTP-01 certificate). The router only exists to request
 # the certificate: its rule matches one reserved name, so other hosts keep
 # Traefik's usual 404.

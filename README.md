@@ -88,7 +88,7 @@ cd .. && mv traefik traefik.clone && mv traefik.new traefik
 ```
 
 In `shared/.env`, remove `DEVOPSY_UID` and `DEVOPSY_GID`, and add what
-devopsy-server used to write elsewhere: the public domain as
+devopsy-server used to write elsewhere: the wildcard domain as
 `DEVOPSY_WILDCARD_DOMAIN` (and `DEVOPSY_WILDCARD_CERTRESOLVER` if not auto),
 and the Cloudflare token from
 `dns.env` as `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN`. Then release from your
@@ -231,14 +231,14 @@ outside domains.
 Keep the CNAME as long as the site uses the `cloudflare` resolver. Removing it
 breaks the next renewal, about 30 days before expiry.
 
-## Public URLs
+## Wildcard URLs
 
-With a public domain for the server, like `vm1.example.com`, every project
+With a wildcard domain for the server, like `vm1.example.com`, every project
 gets a URL next to its own domains: `<project>.vm1.example.com`. Set it
 once, here, as `DEVOPSY_WILDCARD_DOMAIN`: each project release asks for it
-(the `domains` capability's `public-domain`) unless its target sets
-`DEVOPSY_PUBLIC_DOMAIN` itself (empty: no automatic URL). devopsy-cli then
-gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
+(the `domains` capability's `wildcard-domain`) unless its target sets
+`DEVOPSY_WILDCARD_DOMAIN` itself (empty: no automatic URL). devopsy-cli then
+gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_WILDCARD_HOST` and
 `DEVOPSY_HOST_RULE`:
 
 ```yaml
@@ -251,7 +251,7 @@ The fallback is a `HostRegexp` because Traefik requests no certificate for
 one: an environment without hosts would otherwise log an ACME error for
 `app.localhost` on every attempt.
 
-`DEVOPSY_HOST_RULE` matches the public host plus `DEVOPSY_DOMAINS`, the
+`DEVOPSY_HOST_RULE` matches the wildcard host plus `DEVOPSY_DOMAINS`, the
 environment's own domains, set in its `.env` (on a server, the target's
 `shared/.env`):
 
@@ -259,19 +259,18 @@ environment's own domains, set in its `.env` (on a server, the target's
 DEVOPSY_DOMAINS="example.org www.example.org"
 ```
 
-Without a public domain, a released environment only answers on its
-`DEVOPSY_DOMAINS`; locally, `DEVOPSY_PUBLIC_HOST` is `<project>.localhost`,
+Without a wildcard domain, a released environment only answers on its
+`DEVOPSY_DOMAINS`; locally, `DEVOPSY_WILDCARD_HOST` is `<project>.localhost`,
 which browsers resolve to the local machine.
 
-DNS: one wildcard record, `*.vm1.example.com A <server IP>`. Each public URL
-then gets its own HTTP-01 certificate. To use one wildcard certificate
-instead, which also avoids Let's Encrypt's limit of 50 certificates per domain
-a week, set the same domain as `DEVOPSY_WILDCARD_DOMAIN` in this Traefik's
-`.env`: `deploy` writes `mnt/dynamic/public-wildcard.yaml`. (A different
-name than projects' `DEVOPSY_PUBLIC_DOMAIN`: Traefik itself has no public
-URL.) It needs a DNS-01 resolver, `DEVOPSY_WILDCARD_CERTRESOLVER`: `auto`
-(acmedns when configured,
-else cloudflare with a token, else none), `acmedns`, `cloudflare` or `none`.
+DNS: one wildcard record, `*.vm1.example.com A <server IP>`. With
+`DEVOPSY_WILDCARD_DOMAIN` set, `deploy` also requests one wildcard
+certificate for all wildcard URLs (`mnt/dynamic/public-wildcard.yaml`),
+which avoids Let's Encrypt's limit of 50 certificates per domain a week. It
+needs a DNS-01 resolver, `DEVOPSY_WILDCARD_CERTRESOLVER`: `auto` (acmedns
+when configured, else cloudflare with a token, else none), `acmedns`,
+`cloudflare`, or `none` for one HTTP-01 certificate per wildcard URL.
+Traefik's own release takes no wildcard URL: it serves the others.
 With `acmedns`, `devopsy acmedns` then lists the CNAME for
 `_acme-challenge.vm1.example.com`.
 
