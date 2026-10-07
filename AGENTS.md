@@ -119,8 +119,10 @@ forget` and the Cloudflare real client IP plugin.
 ## Releases
 
 Servers get it with `devopsy @<server>-traefik release` from a checkout,
-with targets in `.devopsy/targets.local.yaml` (not committed: servers are
-the operator's), each with `release` and `rollback` running `deploy`.
+with targets in the operator's `~/.config/devopsy/targets.yaml` (with
+`source:` naming the checkout) or the checkout's
+`.devopsy/targets.local.yaml`, never committed: servers are the
+operator's. Each runs `deploy` for `release` and `rollback`.
 Settings go in the server's `shared/.env` through `--vars`. Breaking changes
 to `shared/` (a file moving, a setting renamed) need a migration note in the
 README, as "From a clone" has.

@@ -25,17 +25,23 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 A server needs Docker, a deploy user in the `docker` group owning `/srv`,
 and [devopsy](https://github.com/hanoii/devopsy-cli).
 [devopsy-server](https://github.com/hanoii/devopsy-server) sets that up on
-Debian. Then, from a checkout of this repository on your machine, add a
-target per server in `.devopsy/targets.local.yaml` (not committed):
+Debian. Then add a target per server to your user-level targets, with
+`source:` naming your checkout of this repository: releases run only from there, and every
+other command works from any directory.
 
 ```yaml
+# ~/.config/devopsy/targets.yaml
 vm1-traefik:
   host: devopsy@203.0.113.10
   path: /srv/traefik
+  source: ~/src/devopsy-traefik
   release: &steps
     remote: deploy
   rollback: *steps
 ```
+
+The checkout's `.devopsy/targets.local.yaml` (not committed) works too, for
+releases only.
 
 Set its settings before the first release, then release it:
 
@@ -329,17 +335,8 @@ Then open <http://localhost:8080>.
 
 ## From your machine
 
-Releases go through the checkout's `targets.local.yaml`. To run the
-commands here (`proxies`, `acmedns`, `letsencrypt`, `deploy`, logs) from any
-directory, add the same target to your user-level targets too, without the
-release steps (user-level targets cannot release):
-
-```yaml
-# ~/.config/devopsy/targets.yaml
-vm1-traefik:
-  host: devopsy@203.0.113.10
-  path: /srv/traefik
-```
+With the user-level target from Setup, the commands here (`proxies`,
+`acmedns`, `letsencrypt`, `deploy`, logs) run from any directory:
 
 ```sh
 devopsy @vm1-traefik proxies add cloudflare
