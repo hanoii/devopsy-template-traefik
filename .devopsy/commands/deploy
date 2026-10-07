@@ -1,0 +1,80 @@
+#!/bin/sh
+## Description: Start or update Traefik with this release's settings (what release and rollback run)
+# Prepares the host side, then starts or updates every service:
+#
+# - Host-written directories in mnt/, owned by the deploy user. The init
+#   service gives mnt/letsencrypt and mnt/acmedns to 10001.
+# - Values detected once and kept in .env, so a plain `devopsy up` works
+#   later: the Docker socket's group, and acme-dns's public IP.
+# - The public wildcard certificate (DEVOPSY_PUBLIC_DOMAIN), or none.
+# - Trusted proxies' ranges, fetched again (`devopsy proxies refresh`).
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies" "$dir/mnt/letsencrypt" "$dir/mnt/acmedns"
+
+# GNU stat: on macOS the socket is root's and the default of 0 works.
+if [ -z "${DEVOPSY_DOCKER_GID:-}" ] && gid=$(stat -c %g /var/run/docker.sock 2>/dev/null); then
+  env_set DEVOPSY_DOCKER_GID "$gid"
+  echo "deploy: DEVOPSY_DOCKER_GID=$gid in .env"
+fi
+
+# acme-dns binds the public IP only: 0.0.0.0:53 clashes with
+# systemd-resolved's 127.0.0.53:53 on many cloud images.
+case ",${COMPOSE_PROFILES:-}," in
+  *,acmedns,*)
+    [ -n "${DEVOPSY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set DEVOPSY_ACMEDNS_DOMAIN in .env"
+    if [ -z "${DEVOPSY_ACMEDNS_IP:-}" ] && ip=$(detect_ip) && [ -n "$ip" ]; then
+      env_set DEVOPSY_ACMEDNS_IP "$ip"
+      echo "deploy: DEVOPSY_ACMEDNS_IP=$ip in .env"
+    fi
+    ;;
+esac
+
+# One wildcard certificate for every project's public URL. It needs a DNS-01
+# resolver: auto picks acmedns, else cloudflare, else none (each public URL
+# then gets its own HTTP-01 certificate). The router only exists to request
+# the certificate: its rule matches one reserved name, so other hosts keep
+# Traefik's usual 404.
+wildcard=$dir/mnt/dynamic/public-wildcard.yaml
+domain=${DEVOPSY_PUBLIC_DOMAIN:-}
+resolver=${DEVOPSY_PUBLIC_CERTRESOLVER:-auto}
+if [ "$resolver" = auto ]; then
+  if [ -n "${DEVOPSY_ACMEDNS_DOMAIN:-}" ]; then
+    resolver=acmedns
+  elif [ -n "${DEVOPSY_CLOUDFLARE_DNS_API_TOKEN:-}" ]; then
+    resolver=cloudflare
+  else
+    resolver=none
+  fi
+fi
+case $resolver in
+  acmedns | cloudflare | none) ;;
+  *) die "DEVOPSY_PUBLIC_CERTRESOLVER must be auto, acmedns, cloudflare or none: $resolver" ;;
+esac
+if [ -z "$domain" ] || [ "$resolver" = none ]; then
+  if [ -f "$wildcard" ]; then
+    rm -f "$wildcard"
+    echo "deploy: no public wildcard certificate"
+  fi
+elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from DEVOPSY_PUBLIC_DOMAIN.
+http:
+  routers:
+    devopsy-public-wildcard:
+      rule: 'Host(\`devopsy-wildcard.$domain\`)'
+      entryPoints: [websecure]
+      service: noop@internal
+      tls:
+        certResolver: $resolver
+        domains:
+          - main: '*.$domain'
+"; then
+  echo "deploy: public wildcard *.$domain through $resolver"
+fi
+
+# Ranges from URLs can change. A failed fetch keeps the current ones.
+if [ -s "$dir/mnt/proxies/proxies.conf" ]; then
+  devopsy proxies refresh || warn "could not refresh the trusted proxies' ranges, keeping the current ones"
+fi
+
+devopsy up -d --wait --remove-orphans "$@"

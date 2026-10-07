@@ -1,29 +1,46 @@
 # AGENTS.md
 
 devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
-[devopsy-cli](https://github.com/hanoii/devopsy-cli). Everything lives in
-`.devopsy/`:
+[devopsy-cli](https://github.com/hanoii/devopsy-cli) and released onto each
+server like any devopsy project (`/srv/traefik`: `releases/`, `current`,
+`shared/`). Everything lives in `.devopsy/`:
 
-- `compose.yaml`: Traefik, socket-proxy and the optional acme-dns service
-  (Compose profile `acmedns`).
-- `.env.example`: the variables a server sets in `.devopsy/.env`.
-- `dns.env.example`: the optional Cloudflare DNS-01 resolver, loaded from
-  `.devopsy/dns.env` when it exists.
+- `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
+  (Compose profile `acmedns`), `init` (ownership of `mnt/`) and `jq`
+  (profile `tools`, for scripts only).
+- `.env.example`: the variables a server sets in its `shared/.env`, with
+  `devopsy @<server>-traefik --vars`.
 - `commands/`: devopsy custom commands (POSIX `sh`, each with a
-  `## Description:` line): `restart`, `acmedns`, `letsencrypt`, `proxies`.
-- `mnt/letsencrypt/`: ACME storage, never committed except `.gitkeep`.
-- `mnt/dynamic/`: Traefik file provider directory; `dynamic.example/` has
-  templates for it, like the public wildcard certificate.
+  `## Description:` line): `deploy` (what release and rollback run),
+  `restart`, `acmedns`, `letsencrypt`, `proxies`.
+- `capabilities/domains/`: devopsy-cli's `domains` capability, `facts` and
+  `retry` (see devopsy-cli's README for the contract). Traefik's internals
+  (its API, ACME files, resolver names, the retry file) stay here: devopsy-cli
+  only reads the JSON and its generic methods.
+- `lib/common.sh`: sourced by commands and capabilities (`in_traefik`, `jq`,
+  `quiet`, `env_set`).
+- `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
+  storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
+  provider: the public wildcard, proxies, retries) and `proxies/`
+  (`proxies.conf`, `proxies.env`).
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
   `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
   from that proxy's header. `devopsy proxies` keeps the proxies in
-  `proxies.conf` and writes `mnt/dynamic/proxies.yaml` (middleware and ranges;
-  changes need no restart) and `proxies.env` (plugin, websecure middleware,
-  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies), always
-  the middleware first: an entrypoint referencing a missing middleware breaks
-  every router. It migrates the first, Cloudflare-only version
-  (`cloudflare-proxy.env`). Unit-test plugins with `go test` in their
-  directory.
+  `mnt/proxies/proxies.conf` and writes `mnt/dynamic/proxies.yaml`
+  (middleware and ranges; changes need no restart) and
+  `mnt/proxies/proxies.env` (plugin, websecure middleware, forwarded-headers
+  trust for X-Forwarded-For and X-Real-Ip proxies), always the middleware
+  first: an entrypoint referencing a missing middleware breaks every router.
+  Unit-test plugins with `go test` in their directory.
+- Everything a command writes at runtime lives in `mnt/` or `.env`: a file
+  written elsewhere in `.devopsy/` lands in the release directory and is
+  gone with the next release. Write `.env` through it (`env_set`, `cat >`),
+  never `mv` over it: on servers it is a link to `shared/.env`.
+- Containers run as `10001`, like every devopsy project's, never as the
+  deploy user (in the docker group). `mnt/letsencrypt` and `mnt/acmedns`
+  are 10001's, mode 700: scripts touch them only through `in_traefik`, a
+  one-off Traefik container as 10001. The host needs no `jq` or `curl`: the
+  `jq` service and Traefik's `wget` cover them.
 - Configure Traefik with `TRAEFIK_*` environment variables in
   `compose.yaml`, not static config files.
 - Anything a server may need to change is a variable with a default, and goes
@@ -62,9 +79,22 @@ forget` and the Cloudflare real client IP plugin.
 - acme-dns: binds the public IP only (`DEVOPSY_ACMEDNS_IP`), because
   systemd-resolved holds 127.0.0.53:53 on many cloud images, and Docker
   cannot publish 0.0.0.0:53 then. Its log level is `warn`, not `warning`.
-  It runs as `DEVOPSY_UID`, so `mnt/acmedns` must exist owned by that user
-  (shipped with `.gitkeep`); otherwise registration fails with
-  "no such table: records", which Traefik reports as EOF.
+  It runs as 10001, so `mnt/acmedns` must be 10001's (the `init` service);
+  otherwise registration fails with "no such table: records", which Traefik
+  reports as EOF.
+- Ownership: `shared/mnt` starts empty, Docker creates missing bind-mount
+  directories as root, and the deploy user cannot chown to 10001. Hence
+  `init` (the Traefik image as root, minimal capabilities, no network),
+  which Traefik and acme-dns wait for. It runs `chown -R` on every start, so
+  files moved in by hand are fixed too. `deploy` creates the host-written
+  directories first, so they are the deploy user's.
+- The `cloudflare` resolver is always defined, like `acmedns`: Traefik
+  starts fine without a token (checked on v3.7.13) and only fails when a
+  router uses it. Its token is `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` in `.env`;
+  there is no `dns.env` any more.
+- `deploy` saves values it detects (`DEVOPSY_DOCKER_GID`,
+  `DEVOPSY_ACMEDNS_IP`) into `.env`, so a plain `devopsy up` later
+  interpolates the same compose file.
 - Cloudflare does not allow NS and A records on the same name, hence the
   nameserver `ns-<acme-dns domain>`. The A record must not be proxied.
 - The proxies plugin changes the request's remote address; Traefik then
@@ -86,15 +116,34 @@ forget` and the Cloudflare real client IP plugin.
   configuration, so projects cannot change it with labels; raise it per
   server, where a registry runs.
 
+## Releases
+
+Servers get it with `devopsy @<server>-traefik release` from a checkout,
+with targets in `.devopsy/targets.local.yaml` (not committed: servers are
+the operator's), each with `release` and `rollback` running `deploy`.
+Settings go in the server's `shared/.env` through `--vars`. Breaking changes
+to `shared/` (a file moving, a setting renamed) need a migration note in the
+README, as "From a clone" has.
+
 ## Checks
 
+```sh
+cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* capabilities/*/* lib/common.sh
+```
+
 Run it locally on other ports with a test environment name, and route a
-`traefik/whoami` container through it:
+`traefik/whoami` container through it (network `traefik-test`):
 
 ```sh
 DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
-  DEVOPSY_API_PORT=127.0.0.1:18081 devopsy up -d --wait
+  DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
+
+Capabilities run directly with the project's environment loaded, for
+example `env $(devopsy --env | grep -v '^#' | xargs) DEVOPSY_PROJECT_DIR=$PWD/.devopsy
+sh .devopsy/capabilities/domains/facts --all` (with the same test variables).
+On macOS, OrbStack fakes ownership changes on bind mounts: test `init`, a
+release and the commands on an OrbStack Linux machine.
 
 For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `DEVOPSY_ACMEDNS_DOMAIN` and `DEVOPSY_ACMEDNS_PORT=15353`, then query it with

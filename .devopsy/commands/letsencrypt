@@ -6,20 +6,17 @@
 #   devopsy letsencrypt production   real certificates
 #   devopsy letsencrypt staging      test certificates
 #
-# Switching sets the CA server in .env (and dns.env when it exists), then moves
+# Switching sets the CA server in .env, used by every resolver, then moves
 # the old environment's accounts and certificates aside: Traefik would keep
 # serving them until renewal otherwise. The acme-dns registrations
 # (acme-dns-accounts.json) are kept, so existing CNAMEs stay valid. Traefik
 # restarts, so sites are unavailable for a few seconds.
 set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
 production=https://acme-v02.api.letsencrypt.org/directory
 staging=https://acme-staging-v02.api.letsencrypt.org/directory
 key=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER
-cf_key=TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_CASERVER
-env_file=$DEVOPSY_PROJECT_DIR/.env
-dns_env=$DEVOPSY_PROJECT_DIR/dns.env
-certs=$DEVOPSY_PROJECT_DIR/mnt/letsencrypt
 
 name_of() {
   case "$1" in
@@ -29,19 +26,7 @@ name_of() {
   esac
 }
 
-# Replaces KEY=value in a file, or appends it.
-set_key() {
-  tmp=$(mktemp)
-  awk -v key="$2" -v line="$2=$3" '
-    index($0, key "=") == 1 { if (!done) print line; done = 1; next }
-    { print }
-    END { if (!done) print line }
-  ' "$1" >"$tmp"
-  cat "$tmp" >"$1"
-  rm -f "$tmp"
-}
-
-current=$(sed -n "s/^$key=//p" "$env_file" | tail -n 1)
+current=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}
 
 case "${1:-}" in
   '')
@@ -64,19 +49,19 @@ fi
 echo "Switching Let's Encrypt from $(name_of "$current") to $1. Traefik restarts."
 devopsy stop traefik
 
-set_key "$env_file" "$key" "$target"
-if [ -f "$dns_env" ]; then
-  set_key "$dns_env" "$cf_key" "$target"
-fi
+env_set "$key" "$target"
 
-# Moved aside, not deleted, and never acme-dns-accounts.json.
+# Moved aside, not deleted, and never acme-dns-accounts.json. 10001's files:
+# moved in a Traefik container.
 suffix=$(name_of "$current" | cut -d' ' -f1).$(date +%Y%m%d%H%M%S)
-for f in acme.json acme-acmedns.json acme-cloudflare.json; do
-  if [ -s "$certs/$f" ]; then
-    mv "$certs/$f" "$certs/$f.$suffix"
-    echo "Moved $f to $f.$suffix"
-  fi
-done
+# shellcheck disable=SC2016
+in_traefik '
+  for f in acme.json acme-acmedns.json acme-cloudflare.json; do
+    if [ -s "/letsencrypt/$f" ]; then
+      mv "/letsencrypt/$f" "/letsencrypt/$f.$1"
+      echo "Moved $f to $f.$1"
+    fi
+  done' "$suffix"
 
 devopsy up -d --wait
 echo "Now on $1. Certificates are requested again as sites are routed."

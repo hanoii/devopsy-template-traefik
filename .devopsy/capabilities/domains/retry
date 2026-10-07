@@ -1,0 +1,57 @@
+#!/bin/sh
+# devopsy's `domains` capability, `retry` action (see devopsy-cli's README):
+#
+#   retry <name> <host>...   ask Traefik for these certificates again
+#   retry <name> --done      stop asking
+#
+# Traefik only requests a certificate when a router's configuration
+# changes. This writes mnt/dynamic/devopsy-retry-<name>.yaml with new router
+# names on every run, one per resolver: no restart, no downtime. <name> keeps
+# callers apart, like each project. Traefik keeps and renews certificates
+# once the file is gone.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+[ $# -ge 2 ] || die "usage: retry <name> <host>... | retry <name> --done"
+name=$1
+shift
+case $name in '' | *[!a-z0-9_-]*) die "name must use a-z, 0-9, '-' and '_': $name" ;; esac
+file=$dir/mnt/dynamic/devopsy-retry-$name.yaml
+
+if [ "$*" = --done ]; then
+  rm -f "$file"
+  exit 0
+fi
+
+stamp=$(date -u +%Y%m%d%H%M%S)
+# Routed hosts by resolver, from the facts action.
+groups=$("$(dirname "$0")/facts" "$@" | jq -r '
+  [.hosts[] | select(.routed and .resolver)] | group_by(.resolver)[]
+  | "\(.[0].resolver) \(map(.host) | join(" "))"')
+[ -n "$groups" ] || die "none of these hosts is routed: $*"
+
+yaml="# Written by devopsy's domains --retry: asks Traefik to request these
+# certificates again. Safe to delete.
+http:
+  routers:
+"
+while read -r resolver hosts; do
+  yaml="$yaml    devopsy-retry-$name-$resolver-$stamp:
+      rule: 'Host(\`devopsy-retry-$stamp.invalid\`)'
+      entryPoints: [websecure]
+      service: noop@internal
+      tls:
+        certResolver: $resolver
+        domains:
+"
+  for h in $hosts; do
+    yaml="$yaml          - main: '$h'
+"
+  done
+done <<EOF
+$groups
+EOF
+
+mkdir -p "$dir/mnt/dynamic"
+printf '%s' "$yaml" >"$file.tmp"
+mv "$file.tmp" "$file"

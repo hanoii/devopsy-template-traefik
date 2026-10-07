@@ -1,0 +1,83 @@
+#!/bin/sh
+# devopsy's `domains` capability, `facts` action (see devopsy-cli's README):
+#
+#   facts <host>...   what Traefik knows about these hosts
+#   facts --all       every host Traefik routes, wildcards first
+#
+# Prints one JSON document: the server's IP, pending retries, and per host
+# whether it is routed, its resolver, how its certificate is issued
+# (`method`: http, dns-cname with the record to create, dns-api) and the
+# wildcard covering it. Resolver names stay here: devopsy only reads methods.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+[ $# -ge 1 ] || die "usage: facts <host>... | --all"
+
+ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
+default=${DEVOPSY_CERTRESOLVER:-letsencrypt1}
+
+# Retries waiting, by name (capabilities/domains/retry).
+retries=$(cd "$dir/mnt/dynamic" 2>/dev/null && for f in devopsy-retry-*.yaml; do
+  [ -e "$f" ] || continue
+  f=${f#devopsy-retry-}
+  echo "${f%.yaml}"
+done)
+
+routers=$(quiet exec -T traefik wget -qO- 'http://localhost:8080/api/http/routers?per_page=1000') \
+  || die "could not read Traefik's routers: is it running, with its API on (TRAEFIK_API_INSECURE)?"
+accounts=$(in_traefik 'cat /letsencrypt/acme-dns-accounts.json 2>/dev/null || echo "{}"')
+
+# shellcheck disable=SC2016
+filter='
+def hosts_of($rule): [$rule | scan("Host\\(`([^`]+)`\\)") | .[0] | ascii_downcase];
+def base($h): $h | ltrimstr("*.");
+
+.[0] as $all
+| ((.[1] // {}) | with_entries(.key |= ltrimstr("*.")) | map_values(.fulldomain)) as $accounts
+# Routers that only exist to ask for certificates again are not hosts.
+| [$all[] | select(.name | startswith("devopsy-retry-") | not)] as $routers
+| [$routers[] | (.tls.domains // [])[] | .main | ascii_downcase | select(startswith("*."))] | unique as $wildcards
+
+# The router requesting a wildcard certificate, and the name it matches:
+# checks connect to that name to see the wildcard.
+| def wildcard_router($w): first($routers[] | select(any((.tls.domains // [])[]; .main | ascii_downcase == $w))) // null;
+  def probe($w): (wildcard_router($w)) as $r
+    | (if $r then first(hosts_of($r.rule)[] | select(endswith($w[1:]))) else empty end) // ("devopsy-wildcard" + $w[1:]);
+
+# A host is routed when a router rule names it; routers with TLS win over
+# their HTTP twins. Without a resolver of its own, the entrypoint default.
+  def facts($h):
+    if $h | startswith("*.") then
+      (wildcard_router($h)) as $r
+      | {host: $h, probe: probe($h), routed: ($r != null)}
+        + (if $r then {resolver: ($r.tls.certResolver // $default)} else {} end)
+    else
+      [$routers[] | select(hosts_of(.rule) | index($h))] as $rs
+      | {host: $h, routed: ($rs | length > 0)}
+        + (if ($rs | length) > 0 then
+             {resolver: (first($rs[] | .tls.certResolver // empty | select(. != "")) // $default)}
+           else {} end)
+        + ((first($wildcards[] | select(.[1:] as $s | ($h | endswith($s)) and ($h | rtrimstr($s) | contains(".") | not)))
+            | {wildcard: .}) // {})
+    end
+    | if .resolver == "letsencrypt1" then .method = "http"
+      elif .resolver == "acmedns" then
+        .method = "dns-cname"
+        | (base($h)) as $b
+        | if $accounts[$b] then .record = {name: ("_acme-challenge." + $b), target: $accounts[$b]} else . end
+      elif .resolver == "cloudflare" then .method = "dns-api"
+      else . end;
+
+  (if $all_hosts == "1" then
+     $wildcards + ([$routers[] | hosts_of(.rule)[]] | unique | map(select(. as $h | [$wildcards[] | probe(.)] | index($h) | not)))
+   else $ARGS.positional | map(ascii_downcase) end) as $hosts
+  | {version: 1, ip: $ip, retries: ($retries | split("\n") | map(select(. != ""))), hosts: [$hosts[] | facts(.)]}
+'
+
+all_hosts=0
+if [ "$*" = --all ]; then
+  all_hosts=1
+  set --
+fi
+printf '%s\n%s\n' "$routers" "$accounts" | jq -s --arg ip "$ip" --arg default "$default" \
+  --arg retries "$retries" --arg all_hosts "$all_hosts" "$filter" --args "$@"

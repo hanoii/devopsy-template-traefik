@@ -9,40 +9,85 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - Traefik never mounts the Docker socket. It reads a filtered, read-only API
   through [socket-proxy](https://github.com/wollomatic/socket-proxy).
 - HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by default,
-  with an optional DNS-01 resolver through Cloudflare.
+  with DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
   dropped, so PHP backends cannot be fooled by them.
-- Traefik runs as an unprivileged user. The dashboard listens on localhost
+- Traefik and acme-dns run as UID 10001, like every devopsy project's
+  containers, never as the deploy user. The dashboard listens on localhost
   only.
+- Released like any devopsy project: upgrades and settings changes are
+  releases, and a bad one rolls back.
+- The host needs Docker and devopsy only: scripts use Traefik's own `wget`
+  and the official jq image.
 
 ## Setup
 
-```sh
-git clone https://github.com/hanoii/devopsy-traefik.git /srv/traefik
-cd /srv/traefik
-cp .devopsy/.env.example .devopsy/.env   # then edit it
-devopsy up -d
+A server needs Docker, a deploy user in the `docker` group owning `/srv`,
+and [devopsy](https://github.com/hanoii/devopsy-cli).
+[devopsy-server](https://github.com/hanoii/devopsy-server) sets that up on
+Debian. Then, from a checkout of this repository on your machine, add a
+target per server in `.devopsy/targets.local.yaml` (not committed):
+
+```yaml
+vm1-traefik:
+  host: devopsy@203.0.113.10
+  path: /srv/traefik
+  release: &steps
+    remote: deploy
+  rollback: *steps
 ```
 
-Required in `.env`:
+Set its settings before the first release, then release it:
 
-- `TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL`
-- `DEVOPSY_UID` and `DEVOPSY_GID`: the owner of `.devopsy/mnt/letsencrypt`.
-- `DEVOPSY_DOCKER_GID`: the group of `/var/run/docker.sock`
-  (`stat -c %g /var/run/docker.sock`).
+```sh
+devopsy @vm1-traefik --vars set --show TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL
+devopsy @vm1-traefik release
+```
+
+`.devopsy/.env.example` lists every setting. They live in the server's
+`/srv/traefik/shared/.env`; change one with `--vars set`, then `devopsy
+@vm1-traefik deploy` (or the next release) applies it. `deploy` is what each
+release runs: it prepares `mnt/`, writes the public wildcard certificate,
+refreshes trusted proxies' ranges and starts or updates every service.
+
+Upgrading is a release from a newer checkout; `devopsy @vm1-traefik
+rollback` goes back. Routed sites see a few seconds without Traefik when
+its container is recreated.
 
 Without a CA server in `.env`, certificates come from Let's Encrypt
 **staging**. Switch every resolver with:
 
 ```sh
-devopsy letsencrypt production   # or staging; no argument shows the current one
+devopsy @vm1-traefik letsencrypt production   # or staging; no argument shows the current one
 ```
 
-It sets the CA server in `.env` (and `dns.env`), moves the old environment's
-accounts and certificates aside so they are not served until renewal, keeps
-the acme-dns registrations, and restarts Traefik.
+It sets the CA server in `.env`, moves the old environment's accounts and
+certificates aside so they are not served until renewal, keeps the acme-dns
+registrations, and restarts Traefik.
 
 `devopsy restart` pulls newer images and recreates what changed.
+
+### From a clone
+
+Servers set up before releases have a git clone in `/srv/traefik`. Move it
+over once, on the server, as the deploy user:
+
+```sh
+cd /srv/traefik && devopsy down
+mkdir -p ../traefik.new/shared/mnt/proxies
+mv .devopsy/.env ../traefik.new/shared/.env
+mv .devopsy/mnt/* ../traefik.new/shared/mnt/
+mv .devopsy/proxies.conf .devopsy/proxies.env ../traefik.new/shared/mnt/proxies/ 2>/dev/null
+cd .. && mv traefik traefik.clone && mv traefik.new traefik
+```
+
+In `shared/.env`, remove `DEVOPSY_UID` and `DEVOPSY_GID`, and add what
+devopsy-server used to write elsewhere: `DEVOPSY_PUBLIC_DOMAIN` (and
+`DEVOPSY_PUBLIC_CERTRESOLVER` if not auto), and the Cloudflare token from
+`dns.env` as `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN`. Then release from your
+machine. `mv` keeps the ACME files' mode 600; the `init` service hands them
+to 10001 on the first start. Certificates and acme-dns registrations carry
+over: no DNS changes. Remove `traefik.clone` once everything works.
 
 ## Routing a project
 
@@ -79,8 +124,9 @@ in `.env` changes the default, or the router picks one with
 - **`acmedns`, DNS-01 through this server's own acme-dns.** No DNS provider
   token: each domain needs one CNAME, created once by whoever manages its
   DNS. See below.
-- **`cloudflare`, DNS-01.** Only when `.devopsy/dns.env` exists: copy
-  `dns.env.example` and set a Cloudflare API token.
+- **`cloudflare`, DNS-01 through Cloudflare's API.** Set a token as
+  `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` (`--vars set`, hidden prompt). See
+  below.
 
 Both DNS-01 resolvers work with a CDN proxy on, before DNS points at this
 server, and for wildcard certificates.
@@ -92,21 +138,22 @@ serves ACME challenge records. Each server runs its own, for its own
 subdomain, and Traefik updates it through an API that only Traefik can reach.
 This is how hosting panels like Forge do DNS validation.
 
-1. In `.devopsy/.env`, pick a subdomain of a domain you control, unique per
-   server, and turn the service on:
+1. Pick a subdomain of a domain you control, unique per server, and turn
+   the service on in the server's `.env`:
 
    ```dotenv
    COMPOSE_PROFILES=acmedns
    DEVOPSY_ACMEDNS_DOMAIN=acme-vm1.example.com
-   DEVOPSY_ACMEDNS_IP=203.0.113.10
    ```
 
-   `DEVOPSY_ACMEDNS_IP` is the server's public IPv4. acme-dns listens only
-   there, which avoids clashing with systemd-resolved on 127.0.0.53:53.
+   acme-dns listens only on the server's public IPv4, which avoids clashing
+   with systemd-resolved on 127.0.0.53:53. `deploy` detects it and saves it
+   as `DEVOPSY_ACMEDNS_IP`; set it yourself behind NAT.
 
-2. Run `devopsy up -d`, then `devopsy acmedns`. It prints two records to
-   create once in `example.com`: an A record for `ns-acme-vm1.example.com`
-   and an NS record delegating `acme-vm1.example.com` to it.
+2. Run `devopsy @vm1-traefik deploy`, then `devopsy @vm1-traefik acmedns`.
+   It prints two records to create once in `example.com`: an A record for
+   `ns-acme-vm1.example.com` and an NS record delegating
+   `acme-vm1.example.com` to it.
 3. Open port 53, UDP and TCP, in your provider's firewall.
 4. Route a site with the `acmedns` resolver. Its first attempt registers the
    domain and fails with a "CNAME required" error in Traefik's log. Run
@@ -116,10 +163,10 @@ This is how hosting panels like Forge do DNS validation.
    _acme-challenge.client.org.  CNAME  5400f461-...acme-vm1.example.com.
    ```
 
-   Once it exists, make Traefik try again. It only retries when the site's
-   router changes, and recreating an identical container does not count, so
-   take the site down and up: `devopsy down && devopsy up -d` in the site's
-   project. Renewals need nothing more.
+   Once it exists, make Traefik try again. It only retries when a router
+   changes, and recreating an identical container does not count:
+   `devopsy @<target> domains --retry` from the site's project asks again
+   without a restart (see "Checking domains"). Renewals need nothing more.
 
 Each domain's credentials can only change its own challenge record, so
 nothing here can touch real DNS records. acme-dns does not resolve other
@@ -129,8 +176,6 @@ The registrations live in `mnt/letsencrypt/acme-dns-accounts.json`. A site
 moving to another server registers again there and needs its CNAME changed to
 the new server's name. Do that before switching the site's DNS: the old
 server's certificate stays valid meanwhile.
-
-`devopsy acmedns` needs `jq` to list the CNAMEs.
 
 ### Cloudflare API token
 
@@ -182,9 +227,10 @@ breaks the next renewal, about 30 days before expiry.
 ## Public URLs
 
 With a public domain for the server, like `vm1.example.com`, every project
-gets a URL next to its own domains: `<project>.vm1.example.com`. devopsy-cli
-reads `DEVOPSY_PUBLIC_DOMAIN` from `/etc/devopsy/devopsy.env` (devopsy-server
-writes it) and gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
+gets a URL next to its own domains: `<project>.vm1.example.com`. Each
+project target sets `DEVOPSY_PUBLIC_DOMAIN` (in `targets.yaml`'s `env`, or
+its `.env`), next to its host: both describe the server. devopsy-cli then
+gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_PUBLIC_HOST` and
 `DEVOPSY_HOST_RULE`:
 
 ```yaml
@@ -201,15 +247,19 @@ environment's own domains, set in its `.env` (on a server, the target's
 DEVOPSY_DOMAINS="example.org www.example.org"
 ```
 
-Without a public domain, `DEVOPSY_PUBLIC_HOST` is `<project>.localhost`,
+Without a public domain, a released environment only answers on its
+`DEVOPSY_DOMAINS`; locally, `DEVOPSY_PUBLIC_HOST` is `<project>.localhost`,
 which browsers resolve to the local machine.
 
 DNS: one wildcard record, `*.vm1.example.com A <server IP>`. Each public URL
 then gets its own HTTP-01 certificate. To use one wildcard certificate
 instead, which also avoids Let's Encrypt's limit of 50 certificates per domain
-a week, copy `dynamic.example/public-wildcard.yaml` to `mnt/dynamic/` with the
-domain filled in. It needs a DNS-01 resolver: with `acmedns`, `devopsy
-acmedns` then lists the CNAME for `_acme-challenge.vm1.example.com`.
+a week, set the same `DEVOPSY_PUBLIC_DOMAIN` in this Traefik's `.env`:
+`deploy` writes `mnt/dynamic/public-wildcard.yaml`. It needs a DNS-01
+resolver, `DEVOPSY_PUBLIC_CERTRESOLVER`: `auto` (acmedns when configured,
+else cloudflare with a token, else none), `acmedns`, `cloudflare` or `none`.
+With `acmedns`, `devopsy acmedns` then lists the CNAME for
+`_acme-challenge.vm1.example.com`.
 
 Files in `mnt/dynamic/` are Traefik dynamic configuration (file provider), for
 anything else that does not belong to a project.
@@ -239,11 +289,20 @@ Traefik. Any other request loses the proxies' headers, so they cannot be
 spoofed by reaching the server directly. Proxied and direct sites work on the
 same server: each request is judged by who connected.
 
-The proxies are kept in `.devopsy/proxies.conf`. Adding the first proxy,
+The proxies are kept in `mnt/proxies/proxies.conf`. Adding the first proxy,
 removing the last one, or changing the ranges of an `X-Forwarded-For` or
 `X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
-restarts Traefik; anything else does not. devopsy-server can add Cloudflare
-and refresh the ranges weekly (`DEVOPSY_CLOUDFLARE_PROXY=1`).
+restarts Traefik; anything else does not.
+
+Every `deploy`, so every release, fetches URL ranges again. Cloudflare's
+change rarely. For regular refreshes in between, schedule `devopsy
+@vm1-traefik proxies refresh` from CI or your machine, or add a cron to the
+deploy user's crontab on the server; the release lock keeps it out of a
+release:
+
+```cron
+17 4 * * 1  cd /srv/traefik/current && flock /srv/traefik/.lock devopsy proxies refresh
+```
 
 Load balancers that pass TCP connections with the PROXY protocol (HAProxy, most
 cloud network load balancers) need no plugin: Traefik supports it natively,
@@ -262,8 +321,10 @@ Then open <http://localhost:8080>.
 
 ## From your machine
 
-devopsy's commands here (`proxies`, `acmedns`, `letsencrypt`, `restart`, logs)
-run from anywhere with a user-level target pointing at the server's clone:
+Releases go through the checkout's `targets.local.yaml`. To run the
+commands here (`proxies`, `acmedns`, `letsencrypt`, `deploy`, logs) from any
+directory, add the same target to your user-level targets too, without the
+release steps (user-level targets cannot release):
 
 ```yaml
 # ~/.config/devopsy/targets.yaml
@@ -277,9 +338,21 @@ devopsy @vm1-traefik proxies add cloudflare
 devopsy @vm1-traefik acmedns
 ```
 
+## Checking domains
+
+devopsy-cli's `devopsy @<target> domains` checks a project's hosts from
+outside (DNS, certificates, CDN proxies) and says what to do next. What
+Traefik knows comes from here, through devopsy's `domains` capability
+(`.devopsy/capabilities/domains/`): `facts` reads Traefik's routers and the
+acme-dns registrations and maps each resolver to how its certificate is
+issued, and `retry` writes a router file asking Traefik for certificates
+again, without a restart. On this Traefik's own target, `devopsy
+@vm1-traefik domains` checks every host it routes and the public wildcard.
+
 ## Customizing
 
-Put changes in `.devopsy/compose.override.yaml`, which is not committed.
+Put changes in `.devopsy/compose.override.yaml`, which is not committed. On
+a server, put it in `shared/`: releases link it in.
 Traefik reads its configuration from `TRAEFIK_*` environment variables, so
 most changes are extra variables:
 

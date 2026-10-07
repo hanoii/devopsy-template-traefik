@@ -40,12 +40,39 @@ services:
     networks:
       - dockerproxy
 
+  # Gives mnt/letsencrypt and mnt/acmedns to the containers' user, 10001.
+  # shared/mnt starts empty on a server, Docker creates missing bind-mount
+  # directories as root, and the deploy user cannot chown. Runs before
+  # Traefik and acme-dns on every start, so moved files are fixed too.
+  init:
+    image: traefik:v3.7.13
+    user: "0:0"
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        set -eu
+        chown -R 10001:10001 /letsencrypt /acmedns
+        chmod 700 /letsencrypt /acmedns
+        find /letsencrypt -maxdepth 1 -name '*.json' -exec chmod 600 {} +
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - DAC_OVERRIDE
+    network_mode: none
+    volumes:
+      - ./mnt/letsencrypt:/letsencrypt
+      - ./mnt/acmedns:/acmedns
+
   traefik:
     restart: unless-stopped
     image: traefik:v3.7.13
     depends_on:
       dockerproxy:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     environment:
       # Dashboard and API on port 8080, published on localhost only (see
       # ports). Reach it with an SSH tunnel.
@@ -68,8 +95,8 @@ services:
       # default cuts large uploads, like image layers pushed to a registry;
       # 0 disables it.
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_TRANSPORT_RESPONDINGTIMEOUTS_READTIMEOUT=${DEVOPSY_READ_TIMEOUT-60s}
-      # Default resolver for every router: letsencrypt1, or cloudflare (see
-      # dns.env.example). A router can pick another with its own label.
+      # Default resolver for every router: letsencrypt1, acmedns or
+      # cloudflare. A router can pick another with its own label.
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_TLS_CERTRESOLVER=${DEVOPSY_CERTRESOLVER-letsencrypt1}
       # On every entrypoint, drop headers that alias others for PHP and
       # similar backends (X_Forwarded_For vs X-Forwarded-For), so clients
@@ -112,21 +139,31 @@ services:
       # Per-domain acme-dns accounts. `devopsy acmedns` reads it to list the
       # CNAME records to create.
       - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
-    # Optional DNS-01 resolver through Cloudflare, only when dns.env exists.
+
+      # DNS-01 through Cloudflare's API. Always defined; it only works with
+      # DEVOPSY_CLOUDFLARE_DNS_API_TOKEN in .env (see README.md). Same account
+      # and CA as letsencrypt1. Propagation is checked against public
+      # resolvers, not the host's.
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL}
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_STORAGE=/letsencrypt/acme-cloudflare.json
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROVIDER=cloudflare
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_RESOLVERS=1.1.1.1:53,1.0.0.1:53
+      - CF_DNS_API_TOKEN=${DEVOPSY_CLOUDFLARE_DNS_API_TOKEN-}
     # Optional real client IPs behind proxies and CDNs, only when proxies.env
     # exists (`devopsy proxies add ...`).
     env_file:
-      - path: ./dns.env
-        required: false
-      - path: ./proxies.env
+      - path: ./mnt/proxies/proxies.env
         required: false
     healthcheck:
       test: ['CMD', 'traefik', 'healthcheck', '--ping']
       interval: 10s
       timeout: 5s
       retries: 3
-    # Unprivileged. It owns mnt/letsencrypt, where acme.json lives.
-    user: "${DEVOPSY_UID:?Set DEVOPSY_UID in .env (the uid that owns mnt/letsencrypt)}:${DEVOPSY_GID:?Set DEVOPSY_GID in .env (the gid that owns mnt/letsencrypt)}"
+    # The UID every devopsy project's containers use, never the deploy user's
+    # (in the docker group). It owns mnt/letsencrypt (see init).
+    user: "10001:10001"
     ports:
       - "${DEVOPSY_HTTP_PORT-80}:80"
       - "${DEVOPSY_HTTPS_PORT-443}:443"
@@ -182,12 +219,15 @@ services:
         logformat = "text"
         EOF
         exec acme-dns -c /tmp/config.cfg
+    depends_on:
+      init:
+        condition: service_completed_successfully
     healthcheck:
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/health']
       interval: 10s
       timeout: 5s
       retries: 3
-    user: "${DEVOPSY_UID}:${DEVOPSY_GID}"
+    user: "10001:10001"
     read_only: true
     tmpfs:
       - /tmp
@@ -204,6 +244,18 @@ services:
       - ./mnt/acmedns:/var/lib/acme-dns
     networks:
       - acmedns
+
+  # jq for commands and capabilities: `devopsy run --rm -T jq ...`. The
+  # official image, nothing else in it; never started by `up`.
+  jq:
+    profiles: [tools]
+    image: ghcr.io/jqlang/jq:1.8.1
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
 
 networks:
   # The network every routed container joins, as an external network.
