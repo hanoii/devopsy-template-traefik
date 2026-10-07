@@ -34,6 +34,7 @@ other command works from any directory.
 vm1-traefik:
   host: devopsy@203.0.113.10
   path: /srv/traefik
+  mode: image                    # only .devopsy/: nothing to build
   source: ~/src/devopsy-traefik
   release: &steps
     remote: deploy

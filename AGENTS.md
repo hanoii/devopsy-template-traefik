@@ -122,7 +122,8 @@ Servers get it with `devopsy @<server>-traefik --release` from a checkout,
 with targets in the operator's `~/.config/devopsy/targets.yaml` (with
 `source:` naming the checkout) or the checkout's
 `.devopsy/targets.local.yaml`, never committed: servers are the
-operator's. Each runs `deploy` for `--release` and `--rollback`.
+operator's. Each has `mode: image` (only `.devopsy/` is uploaded) and runs
+`deploy` for `--release` and `--rollback`.
 Settings go in the server's `shared/.env` through `--vars`. Breaking changes
 to `shared/` (a file moving, a setting renamed) need a migration note in the
 README, as "From a clone" has.
