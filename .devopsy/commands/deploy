@@ -6,10 +6,19 @@
 #   service gives mnt/letsencrypt and mnt/acmedns to 10001.
 # - Values detected once and kept in .env, so a plain `devopsy up` works
 #   later: the Docker socket's group, and acme-dns's public IP.
-# - The public wildcard certificate (DEVOPSY_WILDCARD_DOMAIN), or none.
+# - The public wildcard certificate (DEVOPSY_PROXY_WILDCARD_DOMAIN), or none.
 # - Trusted proxies' ranges, fetched again (`devopsy proxies refresh`).
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+# Until October 2026 the setting was DEVOPSY_WILDCARD_DOMAIN, the name
+# projects use: devopsy then gave Traefik a wildcard URL of its own.
+if [ -n "${DEVOPSY_WILDCARD_DOMAIN+set}" ] && [ -z "${DEVOPSY_PROXY_WILDCARD_DOMAIN+set}" ]; then
+  env_set DEVOPSY_PROXY_WILDCARD_DOMAIN "$DEVOPSY_WILDCARD_DOMAIN"
+  env_unset DEVOPSY_WILDCARD_DOMAIN
+  DEVOPSY_PROXY_WILDCARD_DOMAIN=$DEVOPSY_WILDCARD_DOMAIN
+  echo "deploy: DEVOPSY_WILDCARD_DOMAIN is now DEVOPSY_PROXY_WILDCARD_DOMAIN in .env"
+fi
 
 mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies" "$dir/mnt/letsencrypt" "$dir/mnt/acmedns"
 
@@ -37,7 +46,7 @@ esac
 # the certificate: its rule matches one reserved name, so other hosts keep
 # Traefik's usual 404.
 wildcard=$dir/mnt/dynamic/public-wildcard.yaml
-domain=${DEVOPSY_WILDCARD_DOMAIN:-}
+domain=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
 resolver=${DEVOPSY_WILDCARD_CERTRESOLVER:-auto}
 if [ "$resolver" = auto ]; then
   if [ -n "${DEVOPSY_ACMEDNS_DOMAIN:-}" ]; then
@@ -52,12 +61,15 @@ case $resolver in
   acmedns | cloudflare | none) ;;
   *) die "DEVOPSY_WILDCARD_CERTRESOLVER must be auto, acmedns, cloudflare or none: $resolver" ;;
 esac
+case $domain in
+  *[!a-z0-9.-]*) die "DEVOPSY_PROXY_WILDCARD_DOMAIN is not a domain name: $domain" ;;
+esac
 if [ -z "$domain" ] || [ "$resolver" = none ]; then
   if [ -f "$wildcard" ]; then
     rm -f "$wildcard"
     echo "deploy: no public wildcard certificate"
   fi
-elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from DEVOPSY_WILDCARD_DOMAIN.
+elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from DEVOPSY_PROXY_WILDCARD_DOMAIN.
 http:
   routers:
     devopsy-public-wildcard:

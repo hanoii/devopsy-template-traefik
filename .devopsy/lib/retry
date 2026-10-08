@@ -1,8 +1,8 @@
 #!/bin/sh
-# devopsy's `domains` capability, `retry` action (see devopsy-cli's README):
+# For commands/domains:
 #
-#   retry <name> <host>...   ask Traefik for these certificates again
-#   retry <name> --done      stop asking
+#   lib/retry <name> <host>...   ask Traefik for these certificates again
+#   lib/retry <name> --done      stop asking
 #
 # Traefik only requests a certificate when a router's configuration
 # changes. This writes mnt/dynamic/devopsy-retry-<name>.yaml with new router
@@ -30,7 +30,7 @@ groups=$("$(dirname "$0")/facts" "$@" | jq -r '
   | "\(.[0].resolver) \(map(.host) | join(" "))"')
 [ -n "$groups" ] || die "none of these hosts is routed: $*"
 
-yaml="# Written by devopsy's domains --retry: asks Traefik to request these
+yaml="# Written by 'devopsy domains --retry': asks Traefik to request these
 # certificates again. Safe to delete.
 http:
   routers:

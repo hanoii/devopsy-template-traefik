@@ -6,19 +6,19 @@ server like any devopsy project (`/srv/traefik`: `releases/`, `current`,
 `shared/`). Everything lives in `.devopsy/`:
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
-  (Compose profile `acmedns`), `init` (ownership of `mnt/`) and `jq`
-  (profile `tools`, for scripts only).
+  (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq` and
+  `curl` (profile `tools`, for scripts only).
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/`: devopsy custom commands (POSIX `sh`, each with a
   `## Description:` line): `deploy` (what release and rollback run),
-  `restart`, `acmedns`, `letsencrypt`, `proxies`.
-- `capabilities/domains/`: devopsy-cli's `domains` capability, `facts` and
-  `retry` (see devopsy-cli's README for the contract). Traefik's internals
-  (its API, ACME files, resolver names, the retry file) stay here: devopsy-cli
-  only reads the JSON and its generic methods.
-- `lib/common.sh`: sourced by commands and capabilities (`in_traefik`, `jq`,
-  `quiet`, `env_set`).
+  `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`.
+- `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
+  the retry router file, for `domains`. They were devopsy-cli's `domains`
+  capability until October 2026: devopsy-cli now knows no proxy, and the
+  whole report lives here.
+- `lib/common.sh`: sourced by commands and lib's scripts (`in_traefik`,
+  `jq`, `quiet`, `env_set`, `env_unset`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
   provider: the public wildcard, proxies, retries) and `proxies/`
@@ -53,7 +53,9 @@ server like any devopsy project (`/srv/traefik`: `releases/`, `current`,
   When upgrading socket-proxy, read its release notes.
 - Changes must not break projects already routed by this Traefik: the
   `traefik-main` network name, the `letsencrypt1`, `acmedns` and
-  `cloudflare` resolver names and the `web`/`websecure` entrypoints are a public interface.
+  `cloudflare` resolver names, the `web`/`websecure` entrypoints, and the
+  `devopsy.role=proxy` and `devopsy.export.WILDCARD_DOMAIN` labels projects
+  import from are a public interface.
 
 ## Design decisions and gotchas
 
@@ -106,7 +108,7 @@ forget` and the Cloudflare real client IP plugin.
 - The wildcard router matches one reserved name only, so other hosts keep the
   usual 404 instead of the noop service's 418.
 - A wildcard requested before its DNS existed fails until a router changes:
-  `devopsy @<server>-traefik --domains --retry` (devopsy-cli) asks again
+  `devopsy @<server>-traefik domains --retry` asks again
   without a restart. A restart works too, and also requests HTTP-01
   certificates for routed hosts that had none; Traefik then serves those
   exact matches instead of the wildcard. Both are valid.
@@ -115,6 +117,20 @@ forget` and the Cloudflare real client IP plugin.
   which cuts large uploads like registry layers). Entrypoints are static
   configuration, so projects cannot change it with labels; raise it per
   server, where a registry runs.
+- The wildcard domain setting is `DEVOPSY_PROXY_WILDCARD_DOMAIN`, not the
+  projects' `DEVOPSY_WILDCARD_DOMAIN`: with that name devopsy-cli computed a
+  wildcard URL for Traefik itself. `deploy` renames the old key (October
+  2026). Projects get the value through the export label, read by
+  devopsy-cli from the running container at each project release.
+- `domains` checks from the server, not the operator's machine: DNS over
+  HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
+  DigitalOcean), a request through what DNS returns, all in the `curl`
+  service. It prints the `devopsy --probe` line for the outside view.
+- Traefik's API (`TRAEFIK_API_INSECURE`, entrypoint `:8080`) listens on
+  every network Traefik joins, `traefik-main` included: projects' containers
+  can read every router. Read-only, and the published port stays on
+  localhost, but unrelated clients share servers. Not fixed yet: an
+  entrypoint cannot be bound to one Docker network's address.
 
 ## Releases
 
@@ -131,7 +147,7 @@ README, as "From a clone" has.
 ## Checks
 
 ```sh
-cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* capabilities/*/* lib/common.sh
+cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
 ```
 
 Run it locally on other ports with a test environment name, and route a
@@ -142,9 +158,9 @@ DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 
-Capabilities run directly with the project's environment loaded, for
+lib's scripts run directly with the project's environment loaded, for
 example `env $(devopsy --env | grep -v '^#' | xargs) DEVOPSY_PROJECT_DIR=$PWD/.devopsy
-sh .devopsy/capabilities/domains/facts --all` (with the same test variables).
+sh .devopsy/lib/facts --all` (with the same test variables).
 On macOS, OrbStack fakes ownership changes on bind mounts: test `init`, a
 release and the commands on an OrbStack Linux machine.
 

@@ -1,13 +1,13 @@
 #!/bin/sh
-# devopsy's `domains` capability, `facts` action (see devopsy-cli's README):
+# What Traefik knows about hosts, for commands/domains:
 #
-#   facts <host>...   what Traefik knows about these hosts
-#   facts --all       every host Traefik routes, wildcards first
+#   lib/facts <host>...   these hosts
+#   lib/facts --all       every host Traefik routes, wildcards first
 #
 # Prints one JSON document: the server's IP, pending retries, and per host
 # whether it is routed, its resolver, how its certificate is issued
 # (`method`: http, dns-cname with the record to create, dns-api) and the
-# wildcard covering it. Resolver names stay here: devopsy only reads methods.
+# wildcard covering it, as JSON.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 

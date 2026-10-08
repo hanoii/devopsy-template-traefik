@@ -1,0 +1,171 @@
+#!/bin/sh
+## Description: DNS, certificate and next step per host this Traefik routes (domains [<compose project>] [--retry])
+# devopsy @<server>-traefik domains [<compose project>] [--retry]
+#
+# For a compose project (like whoami-prod), the hosts its running containers'
+# Traefik rules name; without one, every host Traefik routes and its
+# wildcards. Per host: what Traefik knows (routed, resolver, how the
+# certificate is issued, the acme-dns CNAME), then, from this server, DNS
+# through 1.1.1.1, the certificate it presents for the name, and a request
+# through what DNS returns (Cloudflare's proxy recognized). Ends each host
+# with what to do next, and with the devopsy --probe line to check from
+# your machine.
+#
+#   --retry  ask Traefik for missing certificates again (lib/retry), then
+#            check again. The request is withdrawn once every certificate
+#            exists.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+project=
+retry=0
+for a in "$@"; do
+  case $a in
+    --retry) retry=1 ;;
+    -h | --help)
+      sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    -*) die "usage: domains [<compose project>] [--retry]" ;;
+    *)
+      [ -z "$project" ] || die "usage: domains [<compose project>] [--retry]"
+      project=$a
+      ;;
+  esac
+done
+
+ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
+[ -n "$ip" ] || die "could not tell this server's IP: set DEVOPSY_ACMEDNS_IP in .env"
+
+# The hosts a compose project's running containers route, from their Traefik
+# rules as compose interpolated them.
+project_hosts() {
+  ids=$(docker ps -q --filter "label=com.docker.compose.project=$1")
+  [ -n "$ids" ] || die "no running containers of compose project $1"
+  # shellcheck disable=SC2086,SC2016
+  docker inspect --format '{{json .Config.Labels}}' $ids | jq -rs '
+    [.[] | to_entries[] | select(.key | test("^traefik\\.http\\.routers\\.[^.]+\\.rule$")) | .value
+     | scan("Host\\(`([^`]+)`\\)") | .[0] | ascii_downcase] | unique[]'
+}
+
+# Network checks from this server, in the curl service: one JSON line per
+# name. DNS over HTTPS from 1.1.1.1, the certificate this server presents
+# (valid: curl's verification; issuer and expiry, from its verbose output),
+# and a request through what DNS returns.
+# shellcheck disable=SC2016
+check_script='
+doh() { curl -s --max-time 10 -H "accept: application/dns-json" "https://1.1.1.1/dns-query?name=$1&type=$2" || echo null; }
+for name; do
+  base=${name#devopsy-wildcard.}
+  a=$(doh "$name" A)
+  case $a in "{"*) ;; *) a=null ;; esac
+  challenge=$(doh "_acme-challenge.$base" CNAME)
+  case $challenge in "{"*) ;; *) challenge=null ;; esac
+  info=$(curl -skv -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" 2>&1 || true)
+  issuer=$(printf "%s\n" "$info" | sed -n "s/^\*  issuer: //p" | head -n 1 | sed "s/.*O=\([^;]*\);.*CN=\(.*\)/\1 \2/; s/^CN=//; s/\"//g")
+  expire=$(printf "%s\n" "$info" | sed -n "s/^\*  expire date: //p" | head -n 1)
+  valid=false
+  curl -s -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" && valid=true
+  headers=$(curl -s -o /dev/null -D - --max-time 15 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
+  status=$(printf "%s\n" "$headers" | sed -n "1s/^HTTP[^ ]* \([0-9]*\).*/\1/p")
+  cf=false
+  printf "%s\n" "$headers" | grep -qi "^cf-ray:" && cf=true
+  printf "{\"name\":\"%s\",\"a\":%s,\"challenge\":%s,\"issuer\":\"%s\",\"expire\":\"%s\",\"valid\":%s,\"status\":%s,\"cf\":%s}\n" \
+    "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf"
+done
+'
+
+# shellcheck disable=SC2016
+report_filter='
+.[0] as $facts | (.[1:] | map({key: .name, value: .}) | from_entries) as $checks
+| def ips($doh): [($doh.Answer // [])[] | select(.type == 1) | .data];
+  def cname($doh): [($doh.Answer // [])[] | select(.type == 5) | .data | rtrimstr(".")] | first // "";
+  def next($r):
+    if ($r.routed | not) then "Traefik does not route it: is the site running, with its rule from DEVOPSY_HOST_RULE?"
+    elif $r.valid and $r.on_server then "live"
+    elif $r.cdn then
+      if $r.status == 0 then "Cloudflare did not answer"
+      elif ($r.status | IN(521, 522, 523)) then "Cloudflare cannot reach the server (\($r.status)): check its DNS origin is \($ip) and ports 80 and 443 are open"
+      elif $r.status == 525 then "Cloudflare'"'"'s TLS handshake with the server fails (525): does the server have a certificate for this name?"
+      elif $r.status == 526 then "Cloudflare rejects the server'"'"'s certificate (526): get a valid one first, or set its SSL mode to Full"
+      elif $r.status >= 520 and $r.status <= 530 then "Cloudflare reports an origin error (\($r.status))"
+      elif ($r.valid | not) then "served through Cloudflare (its SSL mode is not Full (strict)), but no certificate here yet: Traefik requests one once the site is routed, check again in a minute, else --retry; get one before switching to Full (strict)"
+      else "live" end
+    elif $r.valid then "certificate ready: point its DNS at \($ip) (A record) to switch"
+    elif $r.method == "dns-cname" then
+      if ($r.want // "") == "" then "its challenge record is not known yet (not registered): run with --retry"
+      elif ($r.have | ascii_downcase) != ($r.want | ascii_downcase) then "create, where its DNS is hosted: _acme-challenge.\($r.host | ltrimstr("*.")). CNAME \($r.want)."
+      else "challenge CNAME in place: run with --retry" end
+    elif $r.method == "dns-api" then "run with --retry; the Cloudflare token must cover this domain'"'"'s zone"
+    elif $r.method == "http" then
+      if $r.on_server then "DNS points here: run with --retry"
+      else "point its DNS at \($ip) (HTTP-01 needs it), then run with --retry" end
+    else "Traefik does not say how it issues this certificate (resolver \($r.resolver // "-")): run with --retry" end;
+  [$facts.hosts[] | . as $h | ($h.probe // $h.host) as $name | $checks[$name] as $c
+   | {host: $h.host, name: $name, routed: $h.routed, resolver: $h.resolver, method: $h.method,
+      want: (($h.record // {}).target // "" | rtrimstr(".")), have: cname($c.challenge),
+      ips: ips($c.a), valid: $c.valid, issuer: $c.issuer, expire: $c.expire, status: $c.status}
+   | .on_server = (.ips | index($ip) != null)
+   | .cdn = ((.on_server | not) and $c.cf)
+   | .next = next(.)
+   | .live = (.next == "live")] as $reports
+| $reports
+'
+# shellcheck disable=SC2016
+text_filter='
+  .[] |
+  "\(.host)  [\(if .live then "live" else "pending" end)]",
+  "  resolver     \(.resolver // "-")",
+  "  dns          \(if (.ips | length) == 0 then "does not resolve" else (.ips | join(", ")) + (if .on_server then " (this server)" elif .cdn then " (Cloudflare proxy, HTTP \(.status) through it)" else " (not this server)" end) end)",
+  (if .method == "dns-cname" and ((.valid | not) or .have != "") then
+     "  challenge    \(if .have == "" then "missing" elif (.have | ascii_downcase) == (.want | ascii_downcase) then "ok" else "points to \(.have)" end)" else empty end),
+  (if .valid then "  certificate  valid, \(.issuer), expires \(.expire)"
+   elif .issuer != "" then "  certificate  not valid for this name (\(.issuer))"
+   else "  certificate  none (no TLS answer)" end),
+  (if .live then empty else "  next         \(.next)" end),
+  ""
+'
+
+# reports: one JSON array, a report per host.
+reports() {
+  if [ -n "$project" ]; then
+    # shellcheck disable=SC2046
+    facts=$("$dir/lib/facts" $(project_hosts "$project"))
+  else
+    facts=$("$dir/lib/facts" --all)
+  fi
+  names=$(printf '%s\n' "$facts" | jq -r '.hosts[] | .probe // .host')
+  # shellcheck disable=SC2086
+  checks=$(quiet run --rm --no-deps -T -e IP="$ip" --entrypoint sh curl -c "$check_script" sh $names)
+  printf '%s\n%s\n' "$facts" "$checks" | jq -s --arg ip "$ip" "$report_filter"
+}
+show() { printf '%s\n' "$1" | jq -r "$text_filter"; }
+pending() { printf '%s\n' "$1" | jq -r '.[] | select(.routed and (.valid | not)) | .host'; }
+
+name=${project:-server}
+case $name in *[!a-z0-9_-]*) die "not a compose project name: $name" ;; esac
+
+r=$(reports)
+show "$r"
+if [ "$retry" = 1 ]; then
+  hosts=$(pending "$r")
+  if [ -z "$hosts" ]; then
+    echo "domains: nothing to retry." >&2
+  else
+    # shellcheck disable=SC2086
+    "$dir/lib/retry" "$name" $hosts
+    echo "domains: asked Traefik for the missing certificates. Checking again in 45 seconds..." >&2
+    sleep 45
+    r=$(reports)
+    show "$r"
+  fi
+fi
+# A retry request is only clutter once every certificate exists.
+if [ -z "$(pending "$r")" ] && [ -f "$dir/mnt/dynamic/devopsy-retry-$name.yaml" ]; then
+  "$dir/lib/retry" "$name" --done
+  echo "domains: all certificates exist: removed the retry request." >&2
+fi
+
+# The same hosts from outside, from wherever devopsy-cli runs.
+printf 'To check from your machine:\n  devopsy --probe --ip %s %s\n' "$ip" \
+  "$(printf '%s\n' "$r" | jq -r '[.[] | select(.routed) | .name] | join(" ")')"

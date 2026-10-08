@@ -68,6 +68,12 @@ services:
   traefik:
     restart: unless-stopped
     image: traefik:v3.7.13
+    # For devopsy (see its README, "Roles, exports and imports"): this is the
+    # host's proxy, and projects importing proxy/WILDCARD_DOMAIN get the
+    # server's wildcard domain (empty: none) in each release.
+    labels:
+      - devopsy.role=proxy
+      - devopsy.export.WILDCARD_DOMAIN=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
     depends_on:
       dockerproxy:
         condition: service_healthy
@@ -251,6 +257,18 @@ services:
     profiles: [tools]
     image: ghcr.io/jqlang/jq:1.8.1
     network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+
+  # curl for `devopsy domains`: DNS over HTTPS, certificates and requests as
+  # visitors make them, from the server. Never started by `up`.
+  curl:
+    profiles: [tools]
+    image: curlimages/curl:8.15.0
+    network_mode: bridge
     read_only: true
     cap_drop:
       - ALL

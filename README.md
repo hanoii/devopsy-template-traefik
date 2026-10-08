@@ -90,12 +90,22 @@ cd .. && mv traefik traefik.clone && mv traefik.new traefik
 
 In `shared/.env`, remove `DEVOPSY_UID` and `DEVOPSY_GID`, and add what
 devopsy-server used to write elsewhere: the wildcard domain as
-`DEVOPSY_WILDCARD_DOMAIN` (and `DEVOPSY_WILDCARD_CERTRESOLVER` if not auto),
+`DEVOPSY_PROXY_WILDCARD_DOMAIN` (and `DEVOPSY_WILDCARD_CERTRESOLVER` if not auto),
 and the Cloudflare token from
 `dns.env` as `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN`. Then release from your
 machine. `mv` keeps the ACME files' mode 600; the `init` service hands them
 to 10001 on the first start. Certificates and acme-dns registrations carry
 over: no DNS changes. Remove `traefik.clone` once everything works.
+
+### From DEVOPSY_WILDCARD_DOMAIN (October 2026)
+
+The wildcard domain setting was `DEVOPSY_WILDCARD_DOMAIN`, the name projects
+use, so devopsy gave Traefik a wildcard URL of its own. It is now
+`DEVOPSY_PROXY_WILDCARD_DOMAIN`, exported to projects as `WILDCARD_DOMAIN`
+(see Wildcard URLs). The next release's `deploy` renames it in
+`shared/.env`. Projects then import it with a label, which needs
+devopsy-cli v0.17.0 or newer on the server: until they do, their releases
+keep the domain they had, and a new release has none.
 
 ## Routing a project
 
@@ -173,7 +183,7 @@ This is how hosting panels like Forge do DNS validation.
 
    Once it exists, make Traefik try again. It only retries when a router
    changes, and recreating an identical container does not count:
-   `devopsy @<target> --domains --retry` from the site's project asks again
+   `devopsy @<server>-traefik domains <compose project> --retry` asks again
    without a restart (see "Checking domains"). Renewals need nothing more.
 
 Each domain's credentials can only change its own challenge record, so
@@ -236,14 +246,25 @@ breaks the next renewal, about 30 days before expiry.
 
 With a wildcard domain for the server, like `vm1.example.com`, every project
 gets a URL next to its own domains: `<project>.vm1.example.com`. Set it
-once, here, as `DEVOPSY_WILDCARD_DOMAIN`: each project release asks for it
-(the `domains` capability's `wildcard-domain`) unless its target sets
-`DEVOPSY_WILDCARD_DOMAIN` itself (empty: no automatic URL). devopsy-cli then
-gives compose files `DEVOPSY_PROJECT_NAME`, `DEVOPSY_WILDCARD_HOST` and
-`DEVOPSY_HOST_RULE`:
+once, here, as `DEVOPSY_PROXY_WILDCARD_DOMAIN`. Traefik exports it to
+projects with devopsy's labels (devopsy-cli's README, "Roles, exports and
+imports"):
+
+```yaml
+# here, on the traefik service
+- devopsy.role=proxy
+- devopsy.export.WILDCARD_DOMAIN=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
+```
+
+A project imports it, and each of its releases writes it into the release's
+`target.env`, unless the target sets `DEVOPSY_WILDCARD_DOMAIN` itself
+(empty: no automatic URL). A release fails while no proxy runs, unless the
+import ends in `?`. devopsy-cli then gives compose files
+`DEVOPSY_PROJECT_NAME`, `DEVOPSY_WILDCARD_HOST` and `DEVOPSY_HOST_RULE`:
 
 ```yaml
 labels:
+  - devopsy.import.DEVOPSY_WILDCARD_DOMAIN=proxy/WILDCARD_DOMAIN
   - traefik.enable=true
   - traefik.http.routers.${DEVOPSY_PROJECT_NAME:-app}.rule=${DEVOPSY_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
 ```
@@ -265,13 +286,12 @@ Without a wildcard domain, a released environment only answers on its
 which browsers resolve to the local machine.
 
 DNS: one wildcard record, `*.vm1.example.com A <server IP>`. With
-`DEVOPSY_WILDCARD_DOMAIN` set, `deploy` also requests one wildcard
+`DEVOPSY_PROXY_WILDCARD_DOMAIN` set, `deploy` also requests one wildcard
 certificate for all wildcard URLs (`mnt/dynamic/public-wildcard.yaml`),
 which avoids Let's Encrypt's limit of 50 certificates per domain a week. It
 needs a DNS-01 resolver, `DEVOPSY_WILDCARD_CERTRESOLVER`: `auto` (acmedns
 when configured, else cloudflare with a token, else none), `acmedns`,
 `cloudflare`, or `none` for one HTTP-01 certificate per wildcard URL.
-Traefik's own release takes no wildcard URL: it serves the others.
 With `acmedns`, `devopsy acmedns` then lists the CNAME for
 `_acme-challenge.vm1.example.com`.
 
@@ -345,14 +365,28 @@ devopsy @vm1-traefik acmedns
 
 ## Checking domains
 
-devopsy-cli's `devopsy @<target> --domains` checks a project's hosts from
-outside (DNS, certificates, CDN proxies) and says what to do next. What
-Traefik knows comes from here, through devopsy's `domains` capability
-(`.devopsy/capabilities/domains/`): `facts` reads Traefik's routers and the
-acme-dns registrations and maps each resolver to how its certificate is
-issued, and `retry` writes a router file asking Traefik for certificates
-again, without a restart. On this Traefik's own target, `devopsy
-@vm1-traefik domains` checks every host it routes and the public wildcard.
+```sh
+devopsy @vm1-traefik domains whoami-prod          # one compose project's hosts
+devopsy @vm1-traefik domains                      # every host, and the wildcards
+devopsy @vm1-traefik domains whoami-prod --retry  # ask again for missing certificates
+```
+
+For a compose project, the hosts its running containers' Traefik rules
+name; without one, every host Traefik routes and the public wildcard. Per
+host: what Traefik knows (routed, resolver, how the certificate is issued,
+the acme-dns CNAME it needs, from `lib/facts`), then, from the server
+itself, DNS through 1.1.1.1 (over HTTPS), the certificate Traefik presents
+for the name, and a request through what DNS returns, so Cloudflare's
+proxy and its origin errors (521, 522, 525, 526) are recognized. It ends
+each host with what to do next, like the CNAME to create or "certificate
+ready: point its DNS at ...", and prints the `devopsy --probe` line that
+checks the same hosts from your machine (devopsy-cli).
+
+`--retry` writes a router file asking Traefik for the missing certificates
+again (`lib/retry`, no restart), then checks again. Once every routed host
+has a valid certificate, `domains` withdraws the request: Traefik keeps and
+renews the certificates without it. The checks run in the `curl` service
+(profile `tools`), so the host needs no `curl` or `dig`.
 
 ## Customizing
 

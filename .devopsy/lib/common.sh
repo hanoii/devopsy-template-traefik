@@ -1,4 +1,4 @@
-# Shared by commands/ and capabilities/: sourced, never run. POSIX sh.
+# Shared by commands/ and lib/'s scripts: sourced, never run. POSIX sh.
 #
 # Traefik and acme-dns run as 10001, which owns mnt/letsencrypt and
 # mnt/acmedns, mode 700: the deploy user running these scripts cannot read
@@ -63,6 +63,16 @@ env_set() {
     { print }
     END { if (!done) print line }
   ' "$_env" >"$_tmp"
+  cat "$_tmp" >"$_env"
+  rm -f "$_tmp"
+}
+
+# Removes KEY from .env, writing through the file like env_set.
+env_unset() {
+  _env=$dir/.env
+  [ -e "$_env" ] || return 0
+  _tmp=$(mktemp)
+  awk -v key="$1" 'index($0, key "=") != 1' "$_env" >"$_tmp"
   cat "$_tmp" >"$_env"
   rm -f "$_tmp"
 }
