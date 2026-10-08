@@ -64,6 +64,7 @@ for name; do
   info=$(curl -skv -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" 2>&1 || true)
   issuer=$(printf "%s\n" "$info" | sed -n "s/^\*  issuer: //p" | head -n 1 | sed "s/.*O=\([^;]*\);.*CN=\(.*\)/\1 \2/; s/^CN=//; s/\"//g")
   expire=$(printf "%s\n" "$info" | sed -n "s/^\*  expire date: //p" | head -n 1)
+  expire=$(date -u -D "%b %e %H:%M:%S %Y GMT" -d "$expire" +%F 2>/dev/null || printf "%s" "$expire")
   valid=false
   curl -s -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" && valid=true
   headers=$(curl -s -o /dev/null -D - --max-time 15 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
