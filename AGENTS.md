@@ -55,7 +55,7 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   (https://doc.traefik.io/traefik/migrate/v3/) for every version in between.
   When upgrading socket-proxy, read its release notes.
 - Changes must not break projects already routed by this Traefik: the
-  `traefik-main` network name, the `letsencrypt1`, `acmedns` and
+  `traefik` network name, the `letsencrypt1`, `acmedns` and
   `cloudflare` resolver names, the `web`/`websecure` entrypoints, and the
   `devopsy.role=proxy` and `devopsy.export.WILDCARD_DOMAIN` labels projects
   import from are a public interface.
@@ -134,7 +134,7 @@ forget` and the Cloudflare real client IP plugin.
   names matching a host name reach it: hosts come from every project's
   rules, and one stray quote broke hand-built JSON for the whole server.
 - Traefik's API (`TRAEFIK_API_INSECURE`, entrypoint `:8080`) listens on
-  every network Traefik joins, `traefik-main` included: projects' containers
+  every network Traefik joins, `traefik` included: projects' containers
   can read every router. Read-only, and the published port stays on
   localhost, but unrelated clients share servers. Not fixed yet: an
   entrypoint cannot be bound to one Docker network's address.
@@ -150,9 +150,9 @@ with targets in the operator's `~/.config/devopsy/config.yaml` (with
 `shared/.env` through `--vars`. No migration code: a breaking change to
 `shared/` is moved by hand on each server.
 
-The network projects join is `DEVOPSY_TRAEFIK_NETWORK` (default
-`traefik-main`), not derived from the target: user-level target names are
-per operator (`vm1-traefik`), and the network is the public interface.
+The network projects join is fixed, `traefik`: one Traefik per host (the
+`proxy` role refuses a second), so nothing varies, and it is the public
+interface other projects name.
 
 ## Checks
 
@@ -160,12 +160,11 @@ per operator (`vm1-traefik`), and the network is the public interface.
 cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
 ```
 
-Run it locally on other ports with a test network, and route a
-`traefik/whoami` container through it (network `traefik-test`):
+Run it locally on other ports, and route a `traefik/whoami` container
+through it (network `traefik`):
 
 ```sh
-COMPOSE_PROJECT_NAME=traefik-test DEVOPSY_TRAEFIK_NETWORK=traefik-test \
-  DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
+DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 

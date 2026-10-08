@@ -30,7 +30,7 @@ your copy, or what runs on your servers, but your own release.
 The other templates (whoami, drupal11, registry) route through it and
 import its wildcard domain, so a change here can break them: keep its
 interface (`devopsy.role=proxy`, the `WILDCARD_DOMAIN` export, the
-`traefik-main` network, the `letsencrypt1`, `acmedns` and `cloudflare`
+`traefik` network, the `letsencrypt1`, `acmedns` and `cloudflare`
 resolvers, the `web` and `websecure` entrypoints), or change the sites with
 it.
 
@@ -89,7 +89,7 @@ registrations, and restarts Traefik.
 
 ## Routing a project
 
-Join the `traefik-main` network and add labels:
+Join the `traefik` network and add labels:
 
 ```yaml
 services:
@@ -104,7 +104,7 @@ services:
 
 networks:
   traefik:
-    name: traefik-main
+    name: traefik
     external: true
 ```
 
@@ -388,9 +388,8 @@ services:
       - TRAEFIK_ACCESSLOG=true
 ```
 
-A second Traefik on the same host is a second target (its own directory
-and compose project), with its own network, `DEVOPSY_TRAEFIK_NETWORK`
-(default `traefik-main`, the network projects join), and other ports.
+One Traefik per host: it holds the `proxy` role, so a release of a second
+one on the same server is refused. Its network is always `traefik`.
 
 ## License
 
