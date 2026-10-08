@@ -5,7 +5,8 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 server like any devopsy project (`traefik/main` under the server's release
 root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 
-- `config.yaml`: `project: traefik` and the release steps; no targets,
+- `config.yaml`: `project: traefik`, its one environment `main` and the
+  release steps; no servers,
   since servers are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
@@ -17,11 +18,10 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `## Description:` line): `deploy` (what release and rollback run),
   `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`.
 - `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
-  the retry router file, for `domains`. They were devopsy-cli's `domains`
-  capability until October 2026: devopsy-cli now knows no proxy, and the
+  the retry router file, for `domains`. devopsy-cli knows no proxy: the
   whole report lives here.
 - `lib/common.sh`: sourced by commands and lib's scripts (`in_traefik`,
-  `jq`, `quiet`, `env_set`, `env_unset`).
+  `jq`, `quiet`, `env_set`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
   provider: the public wildcard, proxies, retries) and `proxies/`
@@ -95,8 +95,7 @@ forget` and the Cloudflare real client IP plugin.
   directories first, so they are the deploy user's.
 - The `cloudflare` resolver is always defined, like `acmedns`: Traefik
   starts fine without a token (checked on v3.7.13) and only fails when a
-  router uses it. Its token is `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` in `.env`;
-  there is no `dns.env` any more.
+  router uses it. Its token is `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` in `.env`.
 - `deploy` saves values it detects (`DEVOPSY_DOCKER_GID`,
   `DEVOPSY_ACMEDNS_IP`) into `.env`, so a plain `devopsy up` later
   interpolates the same compose file.
