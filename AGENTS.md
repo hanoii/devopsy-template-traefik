@@ -152,7 +152,12 @@ with targets in the operator's `~/.config/devopsy/config.yaml` (with
 
 The network projects join is fixed, `traefik`: one Traefik per host (the
 `proxy` role refuses a second), so nothing varies, and it is the public
-interface other projects name.
+interface other projects name. Changing it (done once, from `traefik-main`)
+fails the release while projects are still attached to the old one: compose
+cannot remove a network with endpoints and leaves Traefik stopped.
+Disconnect them and remove the old network first, release Traefik, then
+`docker network connect` them to the new one until each project's own
+release.
 
 ## Checks
 
