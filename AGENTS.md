@@ -1,6 +1,6 @@
 # AGENTS.md
 
-devopsy-traefik is the Traefik reverse proxy for a devopsy server, run with
+devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run with
 [devopsy-cli](https://github.com/hanoii/devopsy-cli) and released onto each
 server like any devopsy project (`/srv/traefik`: `releases/`, `current`,
 `shared/`). Everything lives in `.devopsy/`:
@@ -163,7 +163,7 @@ DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 
-End to end, with a recipe importing from it: devopsy-cli's AGENTS.md,
+End to end, with a template importing from it: devopsy-cli's AGENTS.md,
 Checks ("Roles and imports").
 
 lib's scripts run directly with the project's environment loaded, for

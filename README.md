@@ -1,4 +1,4 @@
-# devopsy-traefik
+# devopsy-template-traefik
 
 The Traefik setup for a devopsy server: one per Docker host, routing every
 project on it, with automatic Let's Encrypt certificates. It is run with
@@ -20,6 +20,20 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - The host needs Docker and devopsy only: scripts use Traefik's own `wget`
   and the official jq image.
 
+## Using this template
+
+A starting point to own, not a dependency: start a project from it on
+GitHub ("Use this template"), or clone it and keep this repository as a
+remote (`upstream`) to pull its changes when you choose. Nothing updates
+your copy, or what runs on your servers, but your own release.
+
+The other templates (whoami, drupal11, registry) route through it and
+import its wildcard domain, so a change here can break them: keep its
+interface (`devopsy.role=proxy`, the `WILDCARD_DOMAIN` export, the
+`traefik-main` network, the `letsencrypt1`, `acmedns` and `cloudflare`
+resolvers, the `web` and `websecure` entrypoints), or change the sites with
+it.
+
 ## Setup
 
 A server needs Docker, a deploy user in the `docker` group owning `/srv`,
@@ -35,7 +49,7 @@ vm1-traefik:
   host: devopsy@203.0.113.10
   path: /srv/traefik
   mode: image                    # only .devopsy/: nothing to build
-  source: ~/src/devopsy-traefik
+  source: ~/src/devopsy-template-traefik
   release: &steps
     remote: deploy
   rollback: *steps
