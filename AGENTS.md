@@ -141,11 +141,10 @@ forget` and the Cloudflare real client IP plugin.
 
 ## Releases
 
-Servers get it with `devopsy @<server>-traefik --release` from a checkout,
-with targets in the operator's `~/.config/devopsy/config.yaml` (with
-`source:` naming the checkout and `path: traefik/main`) or the checkout's
-`.devopsy/config.local.yaml`, never committed: servers are the operator's.
-`config.yaml` gives them `mode: image` (only `.devopsy/` is uploaded) and
+Servers get it with `devopsy @<server>:main --release` from a checkout, or
+an operator's alias (`~/.config/devopsy/config.yaml`, `source:` naming the
+checkout): servers are the operator's, never in this repository.
+`config.yaml` gives `main` `mode: image` (only `.devopsy/` is uploaded) and
 `deploy` for `--release` and `--rollback`. Settings go in the server's
 `shared/.env` through `--vars`. No migration code: a breaking change to
 `shared/` is moved by hand on each server.

@@ -1,10 +1,10 @@
 # devopsy config: see devopsy-cli's README, "Remote targets".
-# Servers are the operator's: their targets go in the user-level
-# ~/.config/devopsy/config.yaml, with source: naming this checkout (README,
-# Setup), or in .devopsy/config.local.yaml (not committed).
+# One environment, main, on every server: devopsy @<server>:main, or an
+# alias in the user-level ~/.config/devopsy/config.yaml (README, Setup).
 project: traefik
 defaults:
   mode: image                    # only .devopsy/: nothing to build
   release: {remote: deploy}
   rollback: {remote: deploy}
-targets: {}
+environments:
+  main: {}

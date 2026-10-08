@@ -39,23 +39,17 @@ it.
 A server needs Docker, a deploy user in the `docker` group, and
 [devopsy](https://github.com/hanoii/devopsy-cli).
 [devopsy-server](https://github.com/hanoii/devopsy-server) sets that up on
-Debian. Then add a target per server to your user-level config, with
-`source:` naming your checkout of this repository: releases run only from
-there, and every other command works from any directory. The project
-(`traefik`) and its release steps come from the checkout's `config.yaml`.
+Debian. Its one environment, `main`, is the same on every server:
+`devopsy @<server>:main` from your checkout (`traefik/main` under the
+server's release root, compose project `traefik-main`). Add an alias per
+server to your user config, with `source:` naming your checkout: releases
+run only from there, and every other command works from any directory.
 
 ```yaml
 # ~/.config/devopsy/config.yaml
-targets:
-  vm1-traefik:
-    host: devopsy@203.0.113.10
-    source: ~/src/devopsy-template-traefik
-    path: traefik/main           # under the server's release root: ~/traefik/main
+aliases:
+  vm1-traefik: {source: ~/src/devopsy-template-traefik, to: "devopsy@203.0.113.10:main"}
 ```
-
-`path: traefik/main` keeps the directory and compose project `traefik-main`
-whatever you name the target. The checkout's `.devopsy/config.local.yaml`
-(not committed) works too, for releases only.
 
 Set its settings before the first release, then release it:
 
@@ -335,7 +329,7 @@ Then open <http://localhost:8080>.
 
 ## From your machine
 
-With the user-level target from Setup, the commands here (`proxies`,
+With the alias from Setup, the commands here (`proxies`,
 `acmedns`, `letsencrypt`, `deploy`, logs) run from any directory:
 
 ```sh
