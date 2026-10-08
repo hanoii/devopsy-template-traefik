@@ -6,8 +6,7 @@ server like any devopsy project (`traefik/main` under the server's release
 root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 
 - `config.yaml`: `project: traefik`, its one environment `main` and the
-  release steps; no servers,
-  since servers are the operator's.
+  release steps; no servers, which are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
   (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq` and
