@@ -2,8 +2,11 @@
 
 devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run with
 [devopsy-cli](https://github.com/hanoii/devopsy-cli) and released onto each
-server like any devopsy project (`/srv/traefik`: `releases/`, `current`,
-`shared/`). Everything lives in `.devopsy/`:
+server like any devopsy project (`traefik/main` under the server's release
+root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
+
+- `config.yaml`: `project: traefik` and the release steps; no targets,
+  since servers are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
   (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq` and
@@ -119,8 +122,7 @@ forget` and the Cloudflare real client IP plugin.
   server, where a registry runs.
 - The wildcard domain setting is `DEVOPSY_PROXY_WILDCARD_DOMAIN`, not the
   projects' `DEVOPSY_WILDCARD_DOMAIN`: with that name devopsy-cli computed a
-  wildcard URL for Traefik itself. `deploy` renames the old key (October
-  2026). Projects get the value through the export label, read by
+  wildcard URL for Traefik itself. Projects get the value through the export label, read by
   devopsy-cli from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
@@ -140,14 +142,17 @@ forget` and the Cloudflare real client IP plugin.
 ## Releases
 
 Servers get it with `devopsy @<server>-traefik --release` from a checkout,
-with targets in the operator's `~/.config/devopsy/targets.yaml` (with
-`source:` naming the checkout) or the checkout's
-`.devopsy/targets.local.yaml`, never committed: servers are the
-operator's. Each has `mode: image` (only `.devopsy/` is uploaded) and runs
-`deploy` for `--release` and `--rollback`.
-Settings go in the server's `shared/.env` through `--vars`. Breaking changes
-to `shared/` (a file moving, a setting renamed) need a migration note in the
-README, as "From a clone" has.
+with targets in the operator's `~/.config/devopsy/config.yaml` (with
+`source:` naming the checkout and `path: traefik/main`) or the checkout's
+`.devopsy/config.local.yaml`, never committed: servers are the operator's.
+`config.yaml` gives them `mode: image` (only `.devopsy/` is uploaded) and
+`deploy` for `--release` and `--rollback`. Settings go in the server's
+`shared/.env` through `--vars`. No migration code: a breaking change to
+`shared/` is moved by hand on each server.
+
+The network projects join is `DEVOPSY_TRAEFIK_NETWORK` (default
+`traefik-main`), not derived from the target: user-level target names are
+per operator (`vm1-traefik`), and the network is the public interface.
 
 ## Checks
 
@@ -155,11 +160,12 @@ README, as "From a clone" has.
 cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
 ```
 
-Run it locally on other ports with a test environment name, and route a
+Run it locally on other ports with a test network, and route a
 `traefik/whoami` container through it (network `traefik-test`):
 
 ```sh
-DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
+COMPOSE_PROJECT_NAME=traefik-test DEVOPSY_TRAEFIK_NETWORK=traefik-test \
+  DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 

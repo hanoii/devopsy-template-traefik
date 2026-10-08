@@ -11,15 +11,6 @@
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
-# Until October 2026 the setting was DEVOPSY_WILDCARD_DOMAIN, the name
-# projects use: devopsy then gave Traefik a wildcard URL of its own.
-if [ -n "${DEVOPSY_WILDCARD_DOMAIN+set}" ] && [ -z "${DEVOPSY_PROXY_WILDCARD_DOMAIN+set}" ]; then
-  env_set DEVOPSY_PROXY_WILDCARD_DOMAIN "$DEVOPSY_WILDCARD_DOMAIN"
-  env_unset DEVOPSY_WILDCARD_DOMAIN
-  DEVOPSY_PROXY_WILDCARD_DOMAIN=$DEVOPSY_WILDCARD_DOMAIN
-  echo "deploy: DEVOPSY_WILDCARD_DOMAIN is now DEVOPSY_PROXY_WILDCARD_DOMAIN in .env"
-fi
-
 mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies" "$dir/mnt/letsencrypt" "$dir/mnt/acmedns"
 
 # GNU stat: on macOS the socket is root's and the default of 0 works.

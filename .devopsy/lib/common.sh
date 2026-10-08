@@ -67,16 +67,6 @@ env_set() {
   rm -f "$_tmp"
 }
 
-# Removes KEY from .env, writing through the file like env_set.
-env_unset() {
-  _env=$dir/.env
-  [ -e "$_env" ] || return 0
-  _tmp=$(mktemp)
-  awk -v key="$1" 'index($0, key "=") != 1' "$_env" >"$_tmp"
-  cat "$_tmp" >"$_env"
-  rm -f "$_tmp"
-}
-
 # The IPv4 of the default route: the public IP on most cloud servers.
 detect_ip() {
   ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }'

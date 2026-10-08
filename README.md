@@ -36,27 +36,26 @@ it.
 
 ## Setup
 
-A server needs Docker, a deploy user in the `docker` group owning `/srv`,
-and [devopsy](https://github.com/hanoii/devopsy-cli).
+A server needs Docker, a deploy user in the `docker` group, and
+[devopsy](https://github.com/hanoii/devopsy-cli).
 [devopsy-server](https://github.com/hanoii/devopsy-server) sets that up on
-Debian. Then add a target per server to your user-level targets, with
-`source:` naming your checkout of this repository: releases run only from there, and every
-other command works from any directory.
+Debian. Then add a target per server to your user-level config, with
+`source:` naming your checkout of this repository: releases run only from
+there, and every other command works from any directory. The project
+(`traefik`) and its release steps come from the checkout's `config.yaml`.
 
 ```yaml
-# ~/.config/devopsy/targets.yaml
-vm1-traefik:
-  host: devopsy@203.0.113.10
-  path: /srv/traefik
-  mode: image                    # only .devopsy/: nothing to build
-  source: ~/src/devopsy-template-traefik
-  release: &steps
-    remote: deploy
-  rollback: *steps
+# ~/.config/devopsy/config.yaml
+targets:
+  vm1-traefik:
+    host: devopsy@203.0.113.10
+    source: ~/src/devopsy-template-traefik
+    path: traefik/main           # under the server's release root: ~/traefik/main
 ```
 
-The checkout's `.devopsy/targets.local.yaml` (not committed) works too, for
-releases only.
+`path: traefik/main` keeps the directory and compose project `traefik-main`
+whatever you name the target. The checkout's `.devopsy/config.local.yaml`
+(not committed) works too, for releases only.
 
 Set its settings before the first release, then release it:
 
@@ -66,13 +65,13 @@ devopsy @vm1-traefik --release
 ```
 
 `.devopsy/.env.example` lists every setting. They live in the server's
-`/srv/traefik/shared/.env`; change one with `--vars set`, then `devopsy
+`traefik/main/shared/.env` (under its release root); change one with `--vars set`, then `devopsy
 @vm1-traefik deploy` (or the next release) applies it. `deploy` is what each
 release runs: it prepares `mnt/`, writes the public wildcard certificate,
 refreshes trusted proxies' ranges and starts or updates every service.
 
 Upgrading is a release from a newer checkout; `devopsy @vm1-traefik
-rollback` goes back. Routed sites see a few seconds without Traefik when
+--rollback` goes back. Routed sites see a few seconds without Traefik when
 its container is recreated.
 
 Without a CA server in `.env`, certificates come from Let's Encrypt
@@ -87,46 +86,6 @@ certificates aside so they are not served until renewal, keeps the acme-dns
 registrations, and restarts Traefik.
 
 `devopsy restart` pulls newer images and recreates what changed.
-
-### From a clone
-
-Servers set up before releases have a git clone in `/srv/traefik`. Move it
-over once, on the server, as the deploy user:
-
-```sh
-cd /srv/traefik && devopsy down
-mkdir -p ../traefik.new/shared/mnt/proxies
-mv .devopsy/.env ../traefik.new/shared/.env
-mv .devopsy/mnt/* ../traefik.new/shared/mnt/
-mv .devopsy/proxies.conf .devopsy/proxies.env ../traefik.new/shared/mnt/proxies/ 2>/dev/null
-cd .. && mv traefik traefik.clone && mv traefik.new traefik
-```
-
-In `shared/.env`, remove `DEVOPSY_UID` and `DEVOPSY_GID`, and add what
-devopsy-server used to write elsewhere: the wildcard domain as
-`DEVOPSY_PROXY_WILDCARD_DOMAIN` (and `DEVOPSY_WILDCARD_CERTRESOLVER` if not auto),
-and the Cloudflare token from
-`dns.env` as `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN`. Then release from your
-machine. `mv` keeps the ACME files' mode 600; the `init` service hands them
-to 10001 on the first start. Certificates and acme-dns registrations carry
-over: no DNS changes. Remove `traefik.clone` once everything works.
-
-### From DEVOPSY_WILDCARD_DOMAIN (October 2026)
-
-The wildcard domain setting was `DEVOPSY_WILDCARD_DOMAIN`, the name projects
-use, so devopsy gave Traefik a wildcard URL of its own. It is now
-`DEVOPSY_PROXY_WILDCARD_DOMAIN`, exported to projects as `WILDCARD_DOMAIN`
-(see Wildcard URLs). The next release's `deploy` renames it in
-`shared/.env`. Projects then import it with a label. In this order:
-
-1. Upgrade the server's devopsy-cli to v0.17.0 or newer (`devopsy
-   --upgrade` as root): this project's own labels need it, and an older one
-   refuses the release with an upgrade hint.
-2. Release this project, so the running Traefik carries `devopsy.role=proxy`
-   and its export.
-3. Release each project with the import label. Until then their releases
-   keep the domain they had; `devopsy @<target> --debug imports` shows
-   which are stale.
 
 ## Routing a project
 
@@ -356,7 +315,7 @@ deploy user's crontab on the server; the release lock keeps it out of a
 release:
 
 ```cron
-17 4 * * 1  cd /srv/traefik/current && flock /srv/traefik/.lock devopsy proxies refresh
+17 4 * * 1  cd ~/traefik/main/current && flock ~/traefik/main/.lock devopsy proxies refresh
 ```
 
 Load balancers that pass TCP connections with the PROXY protocol (HAProxy, most
@@ -429,8 +388,9 @@ services:
       - TRAEFIK_ACCESSLOG=true
 ```
 
-`DEVOPSY_ENVIRONMENT` (default `main`) changes the project and network name,
-to run a second Traefik on the same host. Change the ports along with it.
+A second Traefik on the same host is a second target (its own directory
+and compose project), with its own network, `DEVOPSY_TRAEFIK_NETWORK`
+(default `traefik-main`, the network projects join), and other ports.
 
 ## License
 

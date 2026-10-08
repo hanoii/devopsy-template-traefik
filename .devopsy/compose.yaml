@@ -1,5 +1,3 @@
-name: traefik-${DEVOPSY_ENVIRONMENT-main}
-
 services:
   # Read-only, filtered access to the Docker API for Traefik, so Traefik never
   # mounts the Docker socket itself.
@@ -113,7 +111,7 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER=true
       - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
-      - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik-${DEVOPSY_ENVIRONMENT-main}
+      - TRAEFIK_PROVIDERS_DOCKER_NETWORK=${DEVOPSY_TRAEFIK_NETWORK:-traefik-main}
 
       # Extra dynamic configuration, like the public wildcard certificate:
       # files in mnt/dynamic (see dynamic.example/).
@@ -278,7 +276,7 @@ services:
 networks:
   # The network every routed container joins, as an external network.
   default:
-    name: traefik-${DEVOPSY_ENVIRONMENT-main}
+    name: ${DEVOPSY_TRAEFIK_NETWORK:-traefik-main}
   dockerproxy:
     internal: true
   # Traefik and acme-dns only, so projects cannot reach the acme-dns API.
