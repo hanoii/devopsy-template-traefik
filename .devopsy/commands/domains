@@ -34,35 +34,48 @@ for a in "$@"; do
   esac
 done
 
-ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
-[ -n "$ip" ] || die "could not tell this server's IP: set DEVOPSY_ACMEDNS_IP in .env"
+name=${project:-server}
+case $name in *[!a-z0-9_-]*) die "not a compose project name: $name" ;; esac
+if [ -n "$project" ] && [ -z "$(docker ps -q --filter "label=com.docker.compose.project=$project")" ]; then
+  die "no running containers of compose project $project"
+fi
+
+# The server's public IPv4: DEVOPSY_PUBLIC_IP, else as 1.1.1.1 sees it (in
+# the check script, right behind NAT too), else acme-dns's, else the default
+# route's.
+fallback_ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
 
 # The hosts a compose project's running containers route, from their Traefik
 # rules as compose interpolated them.
 project_hosts() {
   ids=$(docker ps -q --filter "label=com.docker.compose.project=$1")
-  [ -n "$ids" ] || die "no running containers of compose project $1"
   # shellcheck disable=SC2086,SC2016
   docker inspect --format '{{json .Config.Labels}}' $ids | jq -rs '
     [.[] | to_entries[] | select(.key | test("^traefik\\.http\\.routers\\.[^.]+\\.rule$")) | .value
      | scan("Host\\(`([^`]+)`\\)") | .[0] | ascii_downcase] | unique[]'
 }
 
-# Network checks from this server, in the curl service: one JSON line per
-# name. DNS over HTTPS from 1.1.1.1, the certificate this server presents
+# Network checks from this server, in the curl service: the server's IP on
+# the first line, then one tab-separated line per name (jq turns them into
+# JSON). DNS over HTTPS from 1.1.1.1, the certificate this server presents
 # (valid: curl's verification; issuer and expiry, from its verbose output),
 # and a request through what DNS returns.
 # shellcheck disable=SC2016
 check_script='
+if [ -z "$IP" ]; then
+  IP=$(curl -s --max-time 10 https://1.1.1.1/cdn-cgi/trace | sed -n "s/^ip=\([0-9.]*\)$/\1/p")
+fi
+IP=${IP:-$FALLBACK_IP}
+printf "%s\n" "$IP"
 doh() { curl -s --max-time 10 -H "accept: application/dns-json" "https://1.1.1.1/dns-query?name=$1&type=$2" || echo null; }
 for name; do
   base=${name#devopsy-wildcard.}
   a=$(doh "$name" A)
-  case $a in "{"*) ;; *) a=null ;; esac
+  case $a in "{"*) a=$(printf "%s" "$a" | tr -d "\t\n\r") ;; *) a=null ;; esac
   challenge=$(doh "_acme-challenge.$base" CNAME)
-  case $challenge in "{"*) ;; *) challenge=null ;; esac
+  case $challenge in "{"*) challenge=$(printf "%s" "$challenge" | tr -d "\t\n\r") ;; *) challenge=null ;; esac
   info=$(curl -skv -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" 2>&1 || true)
-  issuer=$(printf "%s\n" "$info" | sed -n "s/^\*  issuer: //p" | head -n 1 | sed "s/.*O=\([^;]*\);.*CN=\(.*\)/\1 \2/; s/^CN=//; s/\"//g")
+  issuer=$(printf "%s\n" "$info" | sed -n "s/^\*  issuer: //p" | head -n 1 | sed "s/.*O=\([^;]*\);.*CN=\(.*\)/\1 \2/; s/^CN=//" | tr -d "\t")
   expire=$(printf "%s\n" "$info" | sed -n "s/^\*  expire date: //p" | head -n 1)
   expire=$(date -u -D "%b %e %H:%M:%S %Y GMT" -d "$expire" +%F 2>/dev/null || printf "%s" "$expire")
   valid=false
@@ -71,8 +84,7 @@ for name; do
   status=$(printf "%s\n" "$headers" | sed -n "1s/^HTTP[^ ]* \([0-9]*\).*/\1/p")
   cf=false
   printf "%s\n" "$headers" | grep -qi "^cf-ray:" && cf=true
-  printf "{\"name\":\"%s\",\"a\":%s,\"challenge\":%s,\"issuer\":\"%s\",\"expire\":\"%s\",\"valid\":%s,\"status\":%s,\"cf\":%s}\n" \
-    "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf"
 done
 '
 
@@ -109,7 +121,10 @@ report_filter='
    | .on_server = (.ips | index($ip) != null)
    | .cdn = ((.on_server | not) and $c.cf)
    | .next = next(.)
-   | .live = (.next == "live")] as $reports
+   | .live = (.next == "live")
+   | .ip = $ip
+   | .checked = ($c != null)
+   | if .checked then . else .next = "not a host name, or not checked" | .live = false end] as $reports
 | $reports
 '
 # shellcheck disable=SC2016
@@ -130,23 +145,30 @@ text_filter='
 # reports: one JSON array, a report per host.
 reports() {
   if [ -n "$project" ]; then
-    # shellcheck disable=SC2046
-    facts=$("$dir/lib/facts" $(project_hosts "$project"))
+    hosts=$(project_hosts "$project")
+    [ -n "$hosts" ] || die "$project's running containers have no Traefik Host() rules"
+    # shellcheck disable=SC2086
+    facts=$("$dir/lib/facts" $hosts)
   else
     facts=$("$dir/lib/facts" --all)
   fi
-  names=$(printf '%s\n' "$facts" | jq -r '.hosts[] | .probe // .host')
+  # Only names that are host names reach the checks (and the shell): a
+  # project's rule can say anything.
+  names=$(printf '%s\n' "$facts" | jq -r '.hosts[] | .probe // .host | select(test("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"))')
   # shellcheck disable=SC2086
-  checks=$(quiet run --rm --no-deps -T -e IP="$ip" --entrypoint sh curl -c "$check_script" sh $names)
+  out=$(quiet run --rm --no-deps -T -e IP="${DEVOPSY_PUBLIC_IP:-}" -e FALLBACK_IP="$fallback_ip" --entrypoint sh curl -c "$check_script" sh $names)
+  ip=$(printf '%s\n' "$out" | head -n 1)
+  [ -n "$ip" ] || die "could not tell this server's public IP: set DEVOPSY_PUBLIC_IP in .env"
+  checks=$(printf '%s\n' "$out" | tail -n +2 | jq -R 'select(. != "") | split("\t") | {name: .[0], a: (.[1] | fromjson? // null),
+    challenge: (.[2] | fromjson? // null), issuer: .[3], expire: .[4], valid: (.[5] == "true"),
+    status: (.[6] | tonumber? // 0), cf: (.[7] == "true")}')
   printf '%s\n%s\n' "$facts" "$checks" | jq -s --arg ip "$ip" "$report_filter"
 }
 show() { printf '%s\n' "$1" | jq -r "$text_filter"; }
 pending() { printf '%s\n' "$1" | jq -r '.[] | select(.routed and (.valid | not)) | .host'; }
 
-name=${project:-server}
-case $name in *[!a-z0-9_-]*) die "not a compose project name: $name" ;; esac
-
 r=$(reports)
+ip=$(printf '%s\n' "$r" | jq -r 'first(.[].ip) // empty')
 show "$r"
 if [ "$retry" = 1 ]; then
   hosts=$(pending "$r")
@@ -169,4 +191,4 @@ fi
 
 # The same hosts from outside, from wherever devopsy-cli runs.
 printf 'To check from your machine:\n  devopsy --probe --ip %s %s\n' "$ip" \
-  "$(printf '%s\n' "$r" | jq -r '[.[] | select(.routed) | .name] | join(" ")')"
+  "$(printf '%s\n' "$r" | jq -r '[.[] | select(.routed and .checked) | .name] | join(" ")')"

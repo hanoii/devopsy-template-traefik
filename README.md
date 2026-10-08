@@ -103,9 +103,16 @@ The wildcard domain setting was `DEVOPSY_WILDCARD_DOMAIN`, the name projects
 use, so devopsy gave Traefik a wildcard URL of its own. It is now
 `DEVOPSY_PROXY_WILDCARD_DOMAIN`, exported to projects as `WILDCARD_DOMAIN`
 (see Wildcard URLs). The next release's `deploy` renames it in
-`shared/.env`. Projects then import it with a label, which needs
-devopsy-cli v0.17.0 or newer on the server: until they do, their releases
-keep the domain they had, and a new release has none.
+`shared/.env`. Projects then import it with a label. In this order:
+
+1. Upgrade the server's devopsy-cli to v0.17.0 or newer (`devopsy
+   --upgrade` as root): this project's own labels need it, and an older one
+   refuses the release with an upgrade hint.
+2. Release this project, so the running Traefik carries `devopsy.role=proxy`
+   and its export.
+3. Release each project with the import label. Until then their releases
+   keep the domain they had; `devopsy @<target> --debug imports` shows
+   which are stale.
 
 ## Routing a project
 
@@ -381,6 +388,12 @@ proxy and its origin errors (521, 522, 525, 526) are recognized. It ends
 each host with what to do next, like the CNAME to create or "certificate
 ready: point its DNS at ...", and prints the `devopsy --probe` line that
 checks the same hosts from your machine (devopsy-cli).
+
+The server's public IP, for "this server" and the `--probe --ip` line, is
+`DEVOPSY_PUBLIC_IP` when set, else what 1.1.1.1 sees (`/cdn-cgi/trace`, so
+it works behind NAT), else `DEVOPSY_ACMEDNS_IP`, else the default route's.
+Only host names reach the checks: a project's rule that names something
+else is listed as not checked.
 
 `--retry` writes a router file asking Traefik for the missing certificates
 again (`lib/retry`, no restart), then checks again. Once every routed host

@@ -125,7 +125,12 @@ forget` and the Cloudflare real client IP plugin.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
   DigitalOcean), a request through what DNS returns, all in the `curl`
-  service. It prints the `devopsy --probe` line for the outside view.
+  service. It prints the `devopsy --probe` line for the outside view. The
+  public IP comes from `DEVOPSY_PUBLIC_IP`, else 1.1.1.1's `/cdn-cgi/trace`
+  (the default route's address is private behind NAT, as on OrbStack). The
+  check script prints tab-separated lines that jq turns into JSON, and only
+  names matching a host name reach it: hosts come from every project's
+  rules, and one stray quote broke hand-built JSON for the whole server.
 - Traefik's API (`TRAEFIK_API_INSECURE`, entrypoint `:8080`) listens on
   every network Traefik joins, `traefik-main` included: projects' containers
   can read every router. Read-only, and the published port stays on
@@ -157,6 +162,9 @@ Run it locally on other ports with a test environment name, and route a
 DEVOPSY_ENVIRONMENT=test DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
+
+End to end, with a recipe importing from it: devopsy-cli's AGENTS.md,
+Checks ("Roles and imports").
 
 lib's scripts run directly with the project's environment loaded, for
 example `env $(devopsy --env | grep -v '^#' | xargs) DEVOPSY_PROJECT_DIR=$PWD/.devopsy
