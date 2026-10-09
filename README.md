@@ -185,6 +185,28 @@ Use one token per server: a leaked token then only exposes that server's
 zones. It is unrelated to any token your applications use, for example to
 purge Cloudflare's cache.
 
+### Propagation checks
+
+Before asking Let's Encrypt, Traefik checks the challenge TXT record: first
+through recursive resolvers, `DEVOPSY_DNS_RESOLVERS` (default the host's,
+`127.0.0.11:53` through Docker, then 1.1.1.1 and 1.0.0.1; each is asked in
+turn when one fails or has no answer yet), then at the zone's authoritative
+nameservers on port 53.
+
+Behind a firewall that blocks outbound DNS, skip the checks and wait
+instead:
+
+```sh
+devopsy @vm1-traefik --vars set --show DEVOPSY_DNS_SKIP_CHECKS DEVOPSY_DNS_PROPAGATION_DELAY
+# true, 60s
+```
+
+Checking through the host's resolver alone does not work: Traefik looks the
+name up before writing the record, and the resolver caches that it does not
+exist, up to the zone's negative TTL. Waiting is reliable: Cloudflare's API
+writes the record within seconds, and Let's Encrypt asks the authoritative
+nameservers itself.
+
 ### DNS-01 for any domain: CNAME delegation
 
 Let's Encrypt checks a TXT record at `_acme-challenge.<domain>`. It follows a

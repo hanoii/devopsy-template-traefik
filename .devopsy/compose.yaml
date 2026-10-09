@@ -146,14 +146,21 @@ services:
 
       # DNS-01 through Cloudflare's API. Always defined; it only works with
       # DEVOPSY_CLOUDFLARE_DNS_API_TOKEN in .env (see README.md). Same account
-      # and CA as letsencrypt1. Propagation is checked against public
-      # resolvers, not the host's.
+      # and CA as letsencrypt1. Propagation is checked against the host's
+      # resolvers (Docker's embedded DNS, 127.0.0.11), then public ones: lego
+      # asks the next one when a resolver fails or has no answer yet. Then
+      # against the zone's authoritative nameservers, on port 53. Where
+      # outbound DNS is blocked, skip the checks and wait instead (see
+      # .env.example): the host's resolver caches that the record does not
+      # exist, from the lookup made before writing it.
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE=true
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_EMAIL=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL}
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_CASERVER=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER-https://acme-staging-v02.api.letsencrypt.org/directory}
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_STORAGE=/letsencrypt/acme-cloudflare.json
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROVIDER=cloudflare
-      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_RESOLVERS=1.1.1.1:53,1.0.0.1:53
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_RESOLVERS=${DEVOPSY_DNS_RESOLVERS:-127.0.0.11:53,1.1.1.1:53,1.0.0.1:53}
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROPAGATION_DELAYBEFORECHECKS=${DEVOPSY_DNS_PROPAGATION_DELAY:-0s}
+      - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROPAGATION_DISABLECHECKS=${DEVOPSY_DNS_SKIP_CHECKS:-false}
       - CF_DNS_API_TOKEN=${DEVOPSY_CLOUDFLARE_DNS_API_TOKEN-}
     # Optional real client IPs behind proxies and CDNs, only when proxies.env
     # exists (`devopsy proxies add ...`).

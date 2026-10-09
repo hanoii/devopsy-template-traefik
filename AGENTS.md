@@ -92,6 +92,16 @@ forget` and the Cloudflare real client IP plugin.
   which Traefik and acme-dns wait for. It runs `chown -R` on every start, so
   files moved in by hand are fixed too. `deploy` creates the host-written
   directories first, so they are the deploy user's.
+- The `cloudflare` resolver checks propagation through
+  `DEVOPSY_DNS_RESOLVERS`, the host's first (`127.0.0.11`, Docker's embedded
+  DNS, on every network Traefik joins), then 1.1.1.1: lego's `dnsQuery`
+  asks the next resolver on an error or an empty answer. Then the zone's
+  authoritative nameservers, directly on port 53. Servers behind firewalls
+  that block outbound DNS skip all checks (`DEVOPSY_DNS_SKIP_CHECKS`) and
+  wait (`DEVOPSY_DNS_PROPAGATION_DELAY`): lego looks the challenge name up
+  (following CNAMEs) before writing the record, so the host's resolver
+  caches NXDOMAIN and the recursive check fails until its negative TTL
+  ends (seen behind a corporate resolver).
 - The `cloudflare` resolver is always defined, like `acmedns`: Traefik
   starts fine without a token (checked on v3.7.13) and only fails when a
   router uses it. Its token is `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` in `.env`.
