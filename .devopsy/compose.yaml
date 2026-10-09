@@ -10,8 +10,10 @@ services:
       - '-listenip=0.0.0.0'
       # Only the traefik container may connect.
       - '-allowfrom=traefik'
-      # Read-only endpoints Traefik's Docker provider needs.
-      - '-allowGET=/v1\..{1,2}/(version|containers/.*|events.*)'
+      # Only the read-only endpoints Traefik's Docker provider calls: version,
+      # list, inspect, events. Not containers/.*, which also lets through
+      # export, archive, logs and attach of every container.
+      - '-allowGET=/v1\..{1,2}/(version|containers/json|containers/[a-zA-Z0-9_.-]+/json|events)'
       - '-allowHEAD=/_ping'
       - '-shutdowngracetime=5'
       # Exit if the socket goes away (Docker upgrade, for example) so the
