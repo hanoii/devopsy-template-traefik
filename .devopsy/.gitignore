@@ -1,6 +1,4 @@
 /mnt
 /.env
-/docker-compose.override.y*ml
 /compose.override.y*ml
 /config.local.yaml
-/target.env
