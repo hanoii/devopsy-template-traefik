@@ -26,7 +26,7 @@ done)
 # -Y off: containers get the Docker client's proxy settings, and busybox's
 # wget ignores no_proxy.
 routers=$(quiet exec -T traefik wget -Y off -qO- 'http://localhost:8080/api/http/routers?per_page=1000') \
-  || die "could not read Traefik's routers: is it running, with its API on (TRAEFIK_API_INSECURE)?"
+  || die "could not read Traefik's routers: is it running, after 'devopsy deploy' (mnt/dynamic/devopsy-api.yaml)?"
 accounts=$(in_traefik 'cat /letsencrypt/acme-dns-accounts.json 2>/dev/null || echo "{}"')
 
 # shellcheck disable=SC2016

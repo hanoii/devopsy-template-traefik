@@ -353,6 +353,13 @@ ssh -L 8080:127.0.0.1:8080 your-server
 
 Then open <http://localhost:8080>.
 
+The API and dashboard answer Traefik itself and the host only, never
+projects' containers, although port 8080 listens on every network Traefik
+joins: `deploy` and `restart` write `mnt/dynamic/devopsy-api.yaml`, a
+router with an IP allowlist of localhost and the gateways of Traefik's
+networks, where connections to the published port come from. Until the
+first `deploy` finishes, the API answers 404.
+
 ## From your machine
 
 With the alias from Setup, the commands here (`proxies`,

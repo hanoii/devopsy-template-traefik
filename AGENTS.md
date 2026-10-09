@@ -145,11 +145,15 @@ forget` and the Cloudflare real client IP plugin.
   check script prints tab-separated lines that jq turns into JSON, and only
   names matching a host name reach it: hosts come from every project's
   rules, and one stray quote broke hand-built JSON for the whole server.
-- Traefik's API (`TRAEFIK_API_INSECURE`, entrypoint `:8080`) listens on
-  every network Traefik joins, `traefik` included: projects' containers
-  can read every router. Read-only, and the published port stays on
-  localhost, but unrelated clients share servers. Not fixed yet: an
-  entrypoint cannot be bound to one Docker network's address.
+- Traefik's API and dashboard (entrypoint `traefik`, `:8080`) listen on
+  every network Traefik joins, `traefik` included, so they are not
+  insecure: `api_access` (lib/common.sh, after every `up` in `deploy` and
+  `restart`) writes a router with an `ipAllowList` of localhost (`exec`,
+  for `lib/facts`) and the gateways of Traefik's networks (the published
+  port, through docker-proxy or NAT), read from the running container.
+  Docker 29 prints a missing gateway as `invalid IP`, and one bad range
+  makes the router invalid: hence the filter. Checked on Debian 13 with
+  Docker 29: host 200, a container on `traefik` 403.
 
 ## Releases
 

@@ -8,6 +8,7 @@
 #   later: the Docker socket's group, and acme-dns's public IP.
 # - The public wildcard certificate (DEVOPSY_PROXY_WILDCARD_DOMAIN), or none.
 # - Trusted proxies' ranges, fetched again (`devopsy proxies refresh`).
+# - Then, with Traefik running, who may reach its API (api_access).
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
@@ -81,3 +82,4 @@ if [ -s "$dir/mnt/proxies/proxies.conf" ]; then
 fi
 
 devopsy up -d --wait --remove-orphans "$@"
+api_access

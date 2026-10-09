@@ -71,3 +71,50 @@ env_set() {
 detect_ip() {
   ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }'
 }
+
+# Opens Traefik's API and dashboard (entrypoint traefik, :8080) to Traefik
+# itself (lib/facts, through `exec`) and to the host (the published port,
+# for SSH tunnels), never to projects' containers on the same networks.
+# Connections from the host arrive from the gateway of one of Traefik's
+# networks, which Docker assigns, so they are read from the running
+# container: after every `up`. Until then the API answers 404.
+api_access() {
+  _id=$(devopsy ps -q traefik 2>/dev/null) && [ -n "$_id" ] || {
+    warn "Traefik is not running: API access not updated"
+    return 0
+  }
+  # Docker 29 prints a missing gateway as "invalid IP", older ones as "":
+  # keep addresses only. One bad range would make the router invalid.
+  _list="          - 127.0.0.1/32
+          - ::1/128"
+  for _gw in $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}},{{.IPv6Gateway}},{{end}}' "$_id" | tr ',' '\n' | tr -d ' '); do
+    case $_gw in
+      *[!0-9a-f.:]* | '') ;;
+      *:*) _list="$_list
+          - $_gw/128" ;;
+      *.*) _list="$_list
+          - $_gw/32" ;;
+    esac
+  done
+  if write_if_changed "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
+http:
+  routers:
+    devopsy-api:
+      rule: 'Path(\`/\`) || PathPrefix(\`/api\`) || PathPrefix(\`/dashboard\`)'
+      entryPoints: [traefik]
+      service: api@internal
+      middlewares: [devopsy-api-local, devopsy-api-root]
+  middlewares:
+    # / to the dashboard, as Traefik's insecure API does.
+    devopsy-api-root:
+      redirectRegex:
+        regex: '^(https?://[^/]+)/\$'
+        replacement: '\${1}/dashboard/'
+    devopsy-api-local:
+      ipAllowList:
+        sourceRange:
+$_list
+"; then
+    echo "$(basename "$0"): API open to Traefik and the host only"
+  fi
+}

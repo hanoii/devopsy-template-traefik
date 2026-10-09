@@ -2,5 +2,8 @@
 ## Description: Pull newer images and recreate what changed
 # Pull newer images and recreate whatever changed.
 set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
 devopsy pull
 devopsy up -d --remove-orphans
+api_access

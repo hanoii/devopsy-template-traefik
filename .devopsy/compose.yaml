@@ -79,8 +79,12 @@ services:
         condition: service_completed_successfully
     environment:
       # Dashboard and API on port 8080, published on localhost only (see
-      # ports). Reach it with an SSH tunnel.
-      - TRAEFIK_API_INSECURE=${TRAEFIK_API_INSECURE-true}
+      # ports). Reach it with an SSH tunnel. Not insecure: its router
+      # (mnt/dynamic/devopsy-api.yaml, from `deploy`) only lets Traefik
+      # and the host in, since the entrypoint listens on every network
+      # Traefik joins, projects' included.
+      - TRAEFIK_API=true
+      - TRAEFIK_API_DASHBOARD=true
       - TRAEFIK_PING=true
       - TRAEFIK_ENTRYPOINTS_TRAEFIK_ADDRESS=:8080
       - TRAEFIK_ENTRYPOINTS_TRAEFIK_HTTP_ALIASHEADERSSTRATEGY=delete
