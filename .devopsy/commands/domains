@@ -94,7 +94,7 @@ report_filter='
 | def ips($doh): [($doh.Answer // [])[] | select(.type == 1) | .data];
   def cname($doh): [($doh.Answer // [])[] | select(.type == 5) | .data | rtrimstr(".")] | first // "";
   def next($r):
-    if ($r.routed | not) then "Traefik does not route it: is the site running, with its rule from DEVOPSY_HOST_RULE?"
+    if ($r.routed | not) then "Traefik does not route it: is the site running, with a router rule for it?"
     elif $r.valid and $r.on_server then "live"
     elif $r.cdn then
       if $r.status == 0 then "Cloudflare did not answer"

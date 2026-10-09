@@ -233,31 +233,35 @@ imports"):
 A project imports it, and each of its releases writes it into the release's
 `target.env`, unless the target sets `DEVOPSY_WILDCARD_DOMAIN` itself
 (empty: no automatic URL). A release fails while no proxy runs, unless the
-import ends in `?`. devopsy-cli then gives compose files
-`DEVOPSY_PROJECT_NAME`, `DEVOPSY_WILDCARD_HOST` and `DEVOPSY_HOST_RULE`:
+import ends in `?`. devopsy-cli knows no URL: the site templates compute
+their hosts from the compose project name (`COMPOSE_PROJECT_NAME`, which
+devopsy sets), the imported domain and the environment's
+`DEVOPSY_DOMAINS`, in their `env` capability
+(`.devopsy/capabilities/env/compute`), and use the resulting rule in their
+labels:
 
 ```yaml
 labels:
   - devopsy.import.DEVOPSY_WILDCARD_DOMAIN=proxy/WILDCARD_DOMAIN
   - traefik.enable=true
-  - traefik.http.routers.${DEVOPSY_PROJECT_NAME:-app}.rule=${DEVOPSY_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
+  - traefik.http.routers.${COMPOSE_PROJECT_NAME:-app}.rule=${SITE_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
 ```
 
 The fallback is a `HostRegexp` because Traefik requests no certificate for
 one: an environment without hosts would otherwise log an ACME error for
 `app.localhost` on every attempt.
 
-`DEVOPSY_HOST_RULE` matches the wildcard host plus `DEVOPSY_DOMAINS`, the
-environment's own domains, set in its `.env` (on a server, the target's
-`shared/.env`):
+`SITE_HOST_RULE` matches the wildcard host plus `DEVOPSY_DOMAINS`, the
+environment's own domains, set in its `env` in config.yaml or its `.env`
+(on a server, the target's `shared/.env`):
 
 ```dotenv
 DEVOPSY_DOMAINS="example.org www.example.org"
 ```
 
 Without a wildcard domain, a released environment only answers on its
-`DEVOPSY_DOMAINS`; locally, `DEVOPSY_WILDCARD_HOST` is `<project>.localhost`,
-which browsers resolve to the local machine.
+`DEVOPSY_DOMAINS`; locally, its host is `<project>.localhost`, which
+browsers resolve to the local machine.
 
 DNS: one wildcard record, `*.vm1.example.com A <server IP>`. With
 `DEVOPSY_PROXY_WILDCARD_DOMAIN` set, `deploy` also requests one wildcard
