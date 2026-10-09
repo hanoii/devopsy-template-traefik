@@ -234,7 +234,7 @@ services:
       init:
         condition: service_completed_successfully
     healthcheck:
-      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/health']
+      test: ['CMD', 'wget', '-Y', 'off', '-q', '-O', '/dev/null', 'http://127.0.0.1/health']
       interval: 10s
       timeout: 5s
       retries: 3

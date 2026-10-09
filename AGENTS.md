@@ -92,6 +92,10 @@ forget` and the Cloudflare real client IP plugin.
   which Traefik and acme-dns wait for. It runs `chown -R` on every start, so
   files moved in by hand are fixed too. `deploy` creates the host-written
   directories first, so they are the deploy user's.
+- Behind an HTTP proxy, Docker gives containers the client's proxy settings
+  (`~/.docker/config.json`, `proxies`), and busybox's `wget` (Traefik's,
+  acme-dns's) ignores `no_proxy`: calls to the container's own addresses
+  pass `-Y off`. Fetches from the internet keep the proxy.
 - The `cloudflare` resolver checks propagation through
   `DEVOPSY_DNS_RESOLVERS`, the host's first (`127.0.0.11`, Docker's embedded
   DNS, on every network Traefik joins), then 1.1.1.1: lego's `dnsQuery`
