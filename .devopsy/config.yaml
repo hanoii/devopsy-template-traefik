@@ -4,7 +4,7 @@
 project: traefik
 defaults:
   mode: image                    # only .devopsy/: nothing to build
-  release: {remote: deploy}
-  rollback: {remote: deploy}
+  release: deploy
+  rollback: deploy
 environments:
   main: {}
