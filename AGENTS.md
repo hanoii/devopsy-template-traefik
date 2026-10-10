@@ -120,6 +120,21 @@ forget` and the Cloudflare real client IP plugin.
   hence the forwarded-headers trust for proxies using them. Test locally by
   adding a proxy for Docker's gateway range (`192.168.0.0/16` on OrbStack)
   and sending its header through a whoami.
+- The `traefik` network is shared by every routed container: one of them,
+  compromised, reaches the others' ports directly, past Traefik's
+  middlewares. Accepted while projects on a server trust each other and
+  none relies on a middleware for access control (the recipes do not; only
+  their web service joins it). The design for a network per project, tested,
+  is in the roadmap. What a taken web container cannot reach: the socket
+  proxy and acme-dns (their own networks) and Traefik's API (403).
+- The socket proxy allows only what Traefik's Docker provider calls
+  (version, list, inspect, events): `containers/.*` also let through
+  `export`, `archive`, `logs` and `attach` of every container. Inspect still
+  shows every container's environment; Traefik needs it for labels.
+- Traefik runs read-only and without capabilities: Docker lets containers
+  bind 80 and 443 without `NET_BIND_SERVICE`, and Traefik only writes to
+  the mounted `/letsencrypt` (no `plugins-storage` for local plugins;
+  checked on v3.7.13).
 - The wildcard router matches one reserved name only, so other hosts keep the
   usual 404 instead of the noop service's 418.
 - A wildcard requested before its DNS existed fails until a router changes:

@@ -104,6 +104,18 @@ networks:
 
 Router names must be unique on the host. Prefix them with the project name.
 
+The `traefik` network is shared: every container on it can reach every other
+one, on any port, without going through Traefik. So:
+
+- Only the service Traefik routes joins it. Databases, caches and workers
+  stay on the project's own network.
+- Do not rely on Traefik middlewares (basic auth, IP allow lists) as a
+  service's only protection: another project's container reaches it
+  directly. The application checks access itself.
+
+That is fine for projects that trust each other, the usual case on a
+server. A network per project is on devopsy's roadmap for the others.
+
 ## Certificates
 
 Three resolvers. Every router uses `letsencrypt1` unless `DEVOPSY_CERTRESOLVER`
