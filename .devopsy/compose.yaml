@@ -118,6 +118,13 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik
+      # A router whose containers are all unhealthy or still starting (a
+      # paused app during a clone, a restart) stays, answering 503, which
+      # the hold middleware retries until the container is back. Without
+      # it Traefik drops such routers at the next container event: 404 or
+      # the maintenance page instead of a wait. Stopped containers are
+      # not listed at all, so their routers go either way.
+      - TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true
 
       # The hold plugin (plugins-local/), always loaded: the hold middleware
       # (mnt/dynamic/hold.yaml, from deploy and DEVOPSY_HOLD) uses it, and

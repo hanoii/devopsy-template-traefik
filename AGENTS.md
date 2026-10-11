@@ -200,20 +200,21 @@ forget` and the Cloudflare real client IP plugin.
   Traefik decodes a configured list over the default element by element.
 - Bodies are buffered up to `maxBody` for retries, in Traefik's memory per
   held request; bigger ones get one try (their start replayed).
-- `docker pause` holds only until Traefik reads the containers again. On
-  Docker 29.9 a paused container's health is `unhealthy` at once (no
-  event), and stays so after unpause until its next check. Traefik ignores
-  pause and unpause events, so the router stays and the kernel completes
-  the TCP handshake (the request waits until unpause), but any other
-  container event on the host (a clone stopping a database, a deploy)
-  makes it drop the routers of unhealthy containers: the maintenance
-  page, or 404. The same for a container still `starting`. Seen on
-  OrbStack: `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true` keeps those
-  routers with an empty service (503, which `hold` and the errors
-  middleware's `/hold.html` then hold); not decided, since it changes how
-  every project's unhealthy containers answer. `docker stop` drops the
-  router at once (Traefik 404, nothing to hold): only another router can
-  answer, the server-wide maintenance router (`priority: 1`, a
+- `docker pause` alone does not hold. On Docker 29.9 a paused container's
+  health is `unhealthy` at once (no event), and stays so after unpause
+  until its next check; Traefik ignores pause and unpause events, but any
+  other container event on the host (a clone stopping a database, a
+  deploy) makes it re-read the containers and drop the routers of
+  unhealthy ones: the maintenance page, or 404, instead of a wait. Hence
+  `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true`: a router whose
+  containers are all unhealthy or `starting` stays, with an empty service
+  answering 503, which `hold` (and the errors middleware's `/hold.html`)
+  retries until the container is healthy. Checked on OrbStack: a paused
+  app plus an event was held 4 s, then 200. The cost: an unhealthy
+  container of any project answers 503 through `hold` instead of 404.
+  `docker stop` and `down` remove the container from the list, so its
+  router goes either way (Traefik 404, nothing to hold): only another
+  router can answer, the server-wide maintenance router (`priority: 1`, a
   `HostRegexp` under the wildcard domain) or a project's own at 2 or more.
 - The maintenance service has no Traefik labels: with a service label and
   no router, the Docker provider makes a default router with a Host rule,

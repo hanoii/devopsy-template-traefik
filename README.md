@@ -385,8 +385,10 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
   Traefik's plugin interpreter a held response cannot be flushed early, so
   other streamed responses (Drupal's BigPipe, for one) arrive in 4 KB
   pieces or at the end instead of chunk by chunk.
-- A paused container (`docker pause`) holds requests by itself: Traefik
-  keeps its router and the connection waits until it is unpaused.
+- A paused or still starting container keeps its router, answering 503
+  until it is healthy again (`allowEmptyServices` in `compose.yaml`), so
+  its requests are held like any other. A stopped container loses its
+  router: see "Maintenance pages".
 
 When the limit passes, the last response goes through, unless the
 middleware has a page. A project gives its routers their own instance by
