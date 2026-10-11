@@ -1,0 +1,14 @@
+displayName: devopsy hold
+type: middleware
+import: github.com/hanoii/devopsy-traefik/hold
+summary: >-
+  Holds requests while the backend answers 502, 503 or 504 (restarting,
+  unhealthy, being recreated), retrying every interval up to maxWait. Then
+  answers with an optional page, or lets the last response through.
+testData:
+  maxWait: 60s
+  interval: 1s
+  statuses:
+    - 502
+    - 503
+    - 504
