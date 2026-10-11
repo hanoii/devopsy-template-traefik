@@ -7,6 +7,18 @@
 
 dir=${DEVOPSY_PROJECT_DIR:?run through devopsy}
 
+# DEVOPSY_MAINTENANCE_PAGE=true turns the maintenance profile on for every
+# devopsy these scripts run, next to COMPOSE_PROFILES' own.
+if [ "${DEVOPSY_MAINTENANCE_PAGE:-}" = true ]; then
+  case ",${COMPOSE_PROFILES:-}," in
+    *,maintenance,*) ;;
+    *)
+      COMPOSE_PROFILES=${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}maintenance
+      export COMPOSE_PROFILES
+      ;;
+  esac
+fi
+
 die() {
   echo "$(basename "$0"): $*" >&2
   exit 1
@@ -116,5 +128,84 @@ http:
 $_list
 "; then
     echo "$(basename "$0"): API open to Traefik and the host only"
+  fi
+}
+
+# Traefik's static settings that depend on what is enabled, in
+# mnt/traefik.env (compose.yaml's env_file): the websecure entrypoint's
+# middlewares, proxies first (`devopsy proxies`), then hold (DEVOPSY_HOLD,
+# default 60s, 0 for none), and the proxies' plugin and forwarded-headers
+# trust. One writer for all of them, called by deploy and proxies.
+#
+# An entrypoint naming a missing middleware breaks every router: a
+# middleware's file is written before the env names it, and removed only
+# once the running Traefik no longer names it. Static settings need a
+# restart: done here when the file changed, unless --no-restart (deploy,
+# whose `up` follows). Rewrites a mnt/proxies/proxies.env from older
+# releases, which only held the proxies' part.
+static_env() {
+  _restart=true
+  [ "${1:-}" != --no-restart ] || _restart=false
+  _hold=${DEVOPSY_HOLD:-60s}
+  printf '%s\n' "$_hold" | grep -Eq '^(0|([0-9]+(\.[0-9]+)?(ms|s|m|h))+)$' ||
+    die "DEVOPSY_HOLD must be a duration like 60s, or 0 for none: $_hold"
+
+  _middlewares=
+  _env="# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.
+"
+  # Proxies: configured and their middleware written (`devopsy proxies`).
+  _proxies=false
+  if [ -s "$dir/mnt/dynamic/proxies.yaml" ] && [ -f "$dir/mnt/proxies/proxies.conf" ] &&
+    grep -qv '^[[:space:]]*\(#\|$\)' "$dir/mnt/proxies/proxies.conf"; then
+    _proxies=true
+    _middlewares=proxies@file
+    _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
+"
+    if [ -s "$dir/mnt/proxies/forwarded-ips" ]; then
+      _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=$(cat "$dir/mnt/proxies/forwarded-ips")
+"
+    fi
+  fi
+  if [ "$_hold" != 0 ]; then
+    if write_if_changed "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy' from DEVOPSY_HOLD.
+http:
+  middlewares:
+    hold:
+      plugin:
+        hold:
+          maxWait: $_hold
+"; then
+      echo "$(basename "$0"): requests held up to $_hold while a backend is unavailable"
+    fi
+    _middlewares=${_middlewares:+$_middlewares,}hold@file
+  fi
+  if [ -n "$_middlewares" ]; then
+    _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=$_middlewares
+"
+  fi
+
+  rm -f "$dir/mnt/proxies/proxies.env"
+  if write_if_changed "$dir/mnt/traefik.env" "$_env" && [ "$_restart" = true ]; then
+    echo "$(basename "$0"): restarting Traefik for its new static settings"
+    devopsy up -d --wait
+  fi
+
+  # Middlewares turned off: their files go once Traefik stops naming them.
+  _running=
+  if _id=$(devopsy ps -q traefik 2>/dev/null) && [ -n "$_id" ]; then
+    _running=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$_id" |
+      sed -n 's/^TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=//p')
+  fi
+  if [ "$_proxies" = false ]; then
+    case ",$_running," in *,proxies@file,*) ;; *) rm -f "$dir/mnt/dynamic/proxies.yaml" ;; esac
+  fi
+  if [ "$_hold" = 0 ] && [ -f "$dir/mnt/dynamic/hold.yaml" ]; then
+    case ",$_running," in
+      *,hold@file,*) ;;
+      *)
+        rm -f "$dir/mnt/dynamic/hold.yaml"
+        echo "$(basename "$0"): requests are not held"
+        ;;
+    esac
   fi
 }

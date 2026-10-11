@@ -7,12 +7,15 @@
 # - Values detected once and kept in .env, so a plain `devopsy up` works
 #   later: the Docker socket's group, and acme-dns's public IP.
 # - The public wildcard certificate (DEVOPSY_PROXY_WILDCARD_DOMAIN), or none.
-# - Trusted proxies' ranges, fetched again (`devopsy proxies refresh`).
-# - Then, with Traefik running, who may reach its API (api_access).
+# - The server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE), or none.
+# - Static settings: the entrypoint's middlewares (static_env), and trusted
+#   proxies' ranges, fetched again (`devopsy proxies refresh`).
+# - Then, with Traefik running, middlewares turned off are removed, and who
+#   may reach its API is updated (api_access).
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
-mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies" "$dir/mnt/letsencrypt" "$dir/mnt/acmedns"
+mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies" "$dir/mnt/letsencrypt" "$dir/mnt/acmedns" "$dir/mnt/maintenance"
 
 # GNU stat: on macOS the socket is root's and the default of 0 works.
 if [ -z "${DEVOPSY_DOCKER_GID:-}" ] && gid=$(stat -c %g /var/run/docker.sock 2>/dev/null); then
@@ -76,10 +79,64 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
+# Server-wide maintenance page: every host under the wildcard domain without
+# a router of its own (a stopped or removed environment) gets the
+# maintenance service's 503 page instead of Traefik's 404. Lowest priority,
+# so any project's router wins; custom domains and unknown hosts keep the
+# 404. common.sh turns the maintenance profile on.
+maintenance=$dir/mnt/dynamic/maintenance.yaml
+case ${DEVOPSY_MAINTENANCE_PAGE:-false} in
+  true | false) ;;
+  *) die "DEVOPSY_MAINTENANCE_PAGE must be true or false: $DEVOPSY_MAINTENANCE_PAGE" ;;
+esac
+if [ "${DEVOPSY_MAINTENANCE_PAGE:-false}" = true ] && [ -n "$domain" ]; then
+  if [ "$resolver" = none ]; then
+    tls="      tls: {}"
+  else
+    tls="      tls:
+        certResolver: $resolver
+        domains:
+          - main: '*.$domain'"
+  fi
+  if write_if_changed "$maintenance" "# Written by 'devopsy deploy' from DEVOPSY_MAINTENANCE_PAGE.
+http:
+  routers:
+    devopsy-maintenance:
+      rule: 'HostRegexp(\`^.+\\.$(printf '%s' "$domain" | sed 's/\./\\./g')\$\`)'
+      priority: 1
+      entryPoints: [websecure]
+      service: devopsy-maintenance
+$tls
+  services:
+    # The maintenance service, by its alias on the traefik network.
+    devopsy-maintenance:
+      loadBalancer:
+        servers:
+          - url: 'http://devopsy-maintenance:8080'
+"; then
+    echo "deploy: maintenance page for *.$domain without a site"
+  fi
+else
+  [ "${DEVOPSY_MAINTENANCE_PAGE:-false}" = false ] ||
+    warn "DEVOPSY_MAINTENANCE_PAGE needs DEVOPSY_PROXY_WILDCARD_DOMAIN: no maintenance page"
+  if [ -f "$maintenance" ]; then
+    rm -f "$maintenance"
+    echo "deploy: no maintenance page"
+  fi
+fi
+if [ "${DEVOPSY_MAINTENANCE_PAGE:-false}" = false ]; then
+  # Named, compose finds the service with its profile off.
+  quiet rm -s -f maintenance >/dev/null
+fi
+
+# The entrypoint's middlewares; `up` below restarts Traefik when they change.
+static_env --no-restart
+
 # Ranges from URLs can change. A failed fetch keeps the current ones.
 if [ -s "$dir/mnt/proxies/proxies.conf" ]; then
   devopsy proxies refresh || warn "could not refresh the trusted proxies' ranges, keeping the current ones"
 fi
 
 devopsy up -d --wait --remove-orphans "$@"
+static_env
 api_access

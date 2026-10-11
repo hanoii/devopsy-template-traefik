@@ -119,6 +119,11 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik
 
+      # The hold plugin (plugins-local/), always loaded: the hold middleware
+      # (mnt/dynamic/hold.yaml, from deploy and DEVOPSY_HOLD) uses it, and
+      # projects can define their own instances with labels.
+      - TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold
+
       # Extra dynamic configuration, like the public wildcard certificate:
       # files in mnt/dynamic (see dynamic.example/).
       - TRAEFIK_PROVIDERS_FILE_DIRECTORY=/dynamic
@@ -168,10 +173,11 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROPAGATION_DELAYBEFORECHECKS=${DEVOPSY_DNS_PROPAGATION_DELAY:-0s}
       - TRAEFIK_CERTIFICATESRESOLVERS_CLOUDFLARE_ACME_DNSCHALLENGE_PROPAGATION_DISABLECHECKS=${DEVOPSY_DNS_SKIP_CHECKS:-false}
       - CF_DNS_API_TOKEN=${DEVOPSY_CLOUDFLARE_DNS_API_TOKEN-}
-    # Optional real client IPs behind proxies and CDNs, only when proxies.env
-    # exists (`devopsy proxies add ...`).
+    # Settings that depend on what is enabled, written by deploy and
+    # `devopsy proxies` (static_env in lib/common.sh): the websecure
+    # entrypoint's middlewares (proxies, hold) and the proxies plugin.
     env_file:
-      - path: ./mnt/proxies/proxies.env
+      - path: ./mnt/traefik.env
         required: false
     healthcheck:
       test: ['CMD', 'traefik', 'healthcheck', '--ping']
@@ -267,6 +273,38 @@ services:
       - ./mnt/acmedns:/var/lib/acme-dns
     networks:
       - acmedns
+
+  # Optional server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE=true,
+  # which turns this profile on for deploy and the other commands): hosts
+  # under the wildcard domain that no project routes, like a stopped
+  # environment, get maintenance/index.html (or mnt/maintenance/index.html
+  # when present) as a 503 with Retry-After, instead of Traefik's 404.
+  # Routed by mnt/dynamic/maintenance.yaml (deploy) through its alias; no
+  # labels, which would give it a router of its own.
+  maintenance:
+    profiles: [maintenance]
+    restart: unless-stopped
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine-slim
+    entrypoint: ['nginx', '-c', '/maintenance/nginx.conf', '-g', 'daemon off;']
+    healthcheck:
+      test: ['CMD', 'wget', '-Y', 'off', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    volumes:
+      - ./maintenance:/maintenance:ro
+      - ./mnt/maintenance:/maintenance-custom:ro
+    networks:
+      default:
+        aliases: [devopsy-maintenance]
 
   # jq for commands and capabilities: `devopsy run --rm -T jq ...`. The
   # official image, nothing else in it; never started by `up`.
