@@ -200,9 +200,18 @@ forget` and the Cloudflare real client IP plugin.
   Traefik decodes a configured list over the default element by element.
 - Bodies are buffered up to `maxBody` for retries, in Traefik's memory per
   held request; bigger ones get one try (their start replayed).
-- `docker pause` holds by itself: Docker skips healthchecks on paused
-  containers, so Traefik keeps the router, and the kernel completes the
-  TCP handshake; the request waits until unpause. `docker stop` drops the
+- `docker pause` holds only until Traefik reads the containers again. On
+  Docker 29.9 a paused container's health is `unhealthy` at once (no
+  event), and stays so after unpause until its next check. Traefik ignores
+  pause and unpause events, so the router stays and the kernel completes
+  the TCP handshake (the request waits until unpause), but any other
+  container event on the host (a clone stopping a database, a deploy)
+  makes it drop the routers of unhealthy containers: the maintenance
+  page, or 404. The same for a container still `starting`. Seen on
+  OrbStack: `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true` keeps those
+  routers with an empty service (503, which `hold` and the errors
+  middleware's `/hold.html` then hold); not decided, since it changes how
+  every project's unhealthy containers answer. `docker stop` drops the
   router at once (Traefik 404, nothing to hold): only another router can
   answer, the server-wide maintenance router (`priority: 1`, a
   `HostRegexp` under the wildcard domain) or a project's own at 2 or more.
