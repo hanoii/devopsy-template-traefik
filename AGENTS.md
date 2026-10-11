@@ -9,8 +9,11 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   release steps; no servers, which are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
-  (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq` and
-  `curl` (profile `tools`, for scripts only).
+  (Compose profile `acmedns`), the optional `maintenance` page (profile
+  `maintenance`, turned on by `DEVOPSY_MAINTENANCE_PAGE=true` in
+  `lib/common.sh`; its nginx config and page in `maintenance/`), `init`
+  (ownership of `mnt/`), and `jq` and `curl` (profile `tools`, for scripts
+  only).
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/`: devopsy custom commands (POSIX `sh`, each with a
@@ -20,20 +23,31 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   the retry router file, for `domains`. devopsy-cli knows no proxy: the
   whole report lives here.
 - `lib/common.sh`: sourced by commands and lib's scripts (`in_traefik`,
-  `jq`, `quiet`, `env_set`).
+  `jq`, `quiet`, `env_set`, `static_env`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
-  provider: the public wildcard, proxies, retries) and `proxies/`
-  (`proxies.conf`, `proxies.env`).
+  provider: the public wildcard, proxies, hold, maintenance, retries),
+  `proxies/` (`proxies.conf`, `forwarded-ips`), `maintenance/` (an
+  optional page) and `traefik.env` (static settings, see below).
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
   `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
   from that proxy's header. `devopsy proxies` keeps the proxies in
   `mnt/proxies/proxies.conf` and writes `mnt/dynamic/proxies.yaml`
-  (middleware and ranges; changes need no restart) and
-  `mnt/proxies/proxies.env` (plugin, websecure middleware, forwarded-headers
-  trust for X-Forwarded-For and X-Real-Ip proxies), always the middleware
-  first: an entrypoint referencing a missing middleware breaks every router.
-  Unit-test plugins with `go test` in their directory.
+  (middleware and ranges; changes need no restart). `hold` holds requests
+  while a backend answers 502/503/504 (README, "Holding requests"); deploy
+  writes `mnt/dynamic/hold.yaml` from `DEVOPSY_HOLD`. Both sit on the
+  websecure entrypoint, whose middleware list is static: one writer,
+  `static_env`, called by `deploy` and `proxies`, composes
+  `mnt/traefik.env` (proxies first, then hold; the proxies plugin and the
+  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies) and
+  restarts Traefik only when it changed. Middleware files are written
+  before the env names them and removed only once the running Traefik no
+  longer does: an entrypoint referencing a missing middleware breaks every
+  router. The file used to be `mnt/proxies/proxies.env`, which `static_env`
+  replaces; a new name, so an older release rolled back to never reads a
+  middleware list naming `hold` (it only logs an error for the unused
+  `hold.yaml`, whose plugin it does not load). Unit-test plugins with `go test` in their
+  directory, and under Yaegi (`yaegi test`, see Checks).
 - Everything a command writes at runtime lives in `mnt/` or `.env`: a file
   written elsewhere in `.devopsy/` lands in the release directory and is
   gone with the next release. Write `.env` through it (`env_set`, `cat >`),
@@ -170,6 +184,38 @@ forget` and the Cloudflare real client IP plugin.
   makes the router invalid: hence the filter. Checked on Debian 13 with
   Docker 29: host 200, a container on `traefik` 403.
 
+- `hold` and Yaegi: Traefik runs plugins in Yaegi, which hands a
+  plugin's ResponseWriter wrapper to Go code as a fixed set of interfaces:
+  ResponseWriter plus Hijacker, never Flusher (yaegi v0.16.1,
+  `stdlib/wrapper-composed.go`). Websockets work (checked on v3.7.13);
+  flushes are lost, so held responses only go out as Go's buffer fills.
+  Hence event streams and gRPC skip holding. The plugin's own tests pass
+  under `yaegi test` too, skipping the flush one.
+- `hold` decides on the first status, like Traefik's `errors` middleware;
+  a 502/503/504 with `Retry-After` passes at once (maintenance pages say
+  they are down on purpose). Instances nest through a value in the
+  request's context: a router's instance (labels, with a page) takes over
+  and the entrypoint's passes its answers through, otherwise the page
+  would be held again. Statuses default in `New`, not `CreateConfig`:
+  Traefik decodes a configured list over the default element by element.
+- Bodies are buffered up to `maxBody` for retries, in Traefik's memory per
+  held request; bigger ones get one try (their start replayed).
+- `docker pause` holds by itself: Docker skips healthchecks on paused
+  containers, so Traefik keeps the router, and the kernel completes the
+  TCP handshake; the request waits until unpause. `docker stop` drops the
+  router at once (Traefik 404, nothing to hold): only another router can
+  answer, the server-wide maintenance router (`priority: 1`, a
+  `HostRegexp` under the wildcard domain) or a project's own at 2 or more.
+- The maintenance service has no Traefik labels: with a service label and
+  no router, the Docker provider makes a default router with a Host rule,
+  and the default resolver would request a certificate for it. The file
+  provider routes to its network alias, `devopsy-maintenance`, which
+  Docker's DNS keeps current across restarts. Its profile comes from
+  `DEVOPSY_MAINTENANCE_PAGE` through `lib/common.sh`, so every command's
+  `up` keeps it; a plain `devopsy up` without it leaves it running, and
+  `deploy` removes it (`rm -s -f maintenance`, which finds the service by
+  name with its profile off) when turned off.
+
 ## Releases
 
 Servers get it with `devopsy @<server>:main --release` from a checkout, or
@@ -195,6 +241,14 @@ release.
 cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
 ```
 
+Plugins: `go test` in each plugin's directory, then the same tests under
+Traefik's interpreter (Yaegi is stricter than Go), from `plugins-local`:
+
+```sh
+go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1   # Traefik's version
+GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
+```
+
 Run it locally on other ports, and route a `traefik/whoami` container
 through it (network `traefik`):
 
@@ -217,7 +271,13 @@ For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
 Check all containers are healthy, `http://` redirects, `https://` reaches
-whoami, and the Traefik log has no new warnings. Then `devopsy down`.
+whoami, and the Traefik log has no new warnings. For `hold`: `docker pause`
+the whoami, a curl waits and answers after `docker unpause`; whoami's
+`/health` answers what a POST to it set (`curl -d 503 -X POST .../health`),
+so a GET of it is held until a POST sets 200. With a test
+`DEVOPSY_PROXY_WILDCARD_DOMAIN` and `DEVOPSY_MAINTENANCE_PAGE=true`, a
+stopped whoami under it, or any other host there, gets the maintenance
+page (`curl --resolve`). Then `devopsy down`.
 
 ## Commits
 

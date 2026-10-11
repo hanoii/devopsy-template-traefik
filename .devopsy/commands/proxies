@@ -18,13 +18,15 @@
 # anything else does not.
 #
 # State lives in mnt/ (shared/mnt on a server), so releases keep it:
-# mnt/proxies/proxies.conf, the proxies; mnt/proxies/proxies.env, Traefik's
-# settings for them; mnt/dynamic/proxies.yaml, the middleware.
+# mnt/proxies/proxies.conf, the proxies; mnt/proxies/forwarded-ips, the
+# ranges trusted for forwarded headers; mnt/dynamic/proxies.yaml, the
+# middleware. mnt/traefik.env, Traefik's static settings, comes from
+# static_env (lib/common.sh), shared with deploy.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
 conf=$dir/mnt/proxies/proxies.conf
-env_file=$dir/mnt/proxies/proxies.env
+forwarded_file=$dir/mnt/proxies/forwarded-ips
 dynamic=$dir/mnt/dynamic/proxies.yaml
 mkdir -p "$dir/mnt/proxies" "$dir/mnt/dynamic"
 
@@ -59,11 +61,9 @@ ranges() {
 
 apply() {
   if [ -z "$(proxies)" ]; then
-    if [ -f "$env_file" ]; then
-      rm -f "$env_file"
-      devopsy up -d --wait
-    fi
-    rm -f "$dynamic"
+    rm -f "$forwarded_file"
+    # Drops the proxies from the entrypoint, then their middleware.
+    static_env
     echo "proxies: none, real client IPs are off"
     return
   fi
@@ -93,23 +93,16 @@ $(printf '%s\n' "$r" | sed 's/^/                - /')
 $(proxies)
 EOT
 
-  env="# Written by 'devopsy proxies'. Proxies are in proxies.conf.
-TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
-TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=proxies@file
-"
-  if [ -n "$forwarded" ]; then
-    env="${env}TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=$(printf '%s' "$forwarded" | tr -s ' \n' ',' | sed 's/^,//; s/,$//')
-"
-  fi
-
   # The middleware exists before the entrypoint references it.
   if write_if_changed "$dynamic" "$yaml"; then
     echo "proxies: wrote mnt/dynamic/proxies.yaml"
   fi
-  if write_if_changed "$env_file" "$env"; then
-    echo "proxies: restarting Traefik to apply proxies.env"
-    devopsy up -d --wait
+  if [ -n "$forwarded" ]; then
+    write_if_changed "$forwarded_file" "$(printf '%s' "$forwarded" | tr -s ' \n' ',' | sed 's/^,//; s/,$//')" || true
+  else
+    rm -f "$forwarded_file"
   fi
+  static_env
   proxies | while read -r name header _; do echo "proxies: $name ($header)"; done
 }
 
