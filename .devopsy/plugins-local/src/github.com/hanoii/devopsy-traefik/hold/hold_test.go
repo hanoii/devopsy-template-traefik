@@ -101,6 +101,27 @@ func TestBodyReplayed(t *testing.T) {
 	}
 }
 
+// Every try starts from the original request: what follows rewrites
+// headers and the path in place, as Traefik's forwarder and stripPrefix do.
+func TestEachTryFresh(t *testing.T) {
+	var seen []string
+	h := build(t, config(nil), http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		seen = append(seen, req.URL.Path+" "+req.Header.Get("X-Forwarded-For"))
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, "/api")
+		req.Header.Add("X-Forwarded-For", "10.0.0.1")
+		if len(seen) < 3 {
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		rw.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/x", nil))
+	if rec.Code != 200 || strings.Join(seen, ",") != "/api/x ,/api/x ,/api/x " {
+		t.Fatalf("got %d, tries saw %q", rec.Code, seen)
+	}
+}
+
 func TestMaxWaitWithoutPage(t *testing.T) {
 	var tries int32
 	h := build(t, config(func(c *Config) { c.MaxWait = "100ms" }), failing(1000, &tries))

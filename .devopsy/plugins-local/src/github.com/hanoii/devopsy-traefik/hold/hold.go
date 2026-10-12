@@ -139,21 +139,26 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	st := &state{}
-	req = req.WithContext(context.WithValue(req.Context(), stateKey, st))
+	ctx := context.WithValue(req.Context(), stateKey, st)
 	deadline := time.Now().Add(h.maxWait)
 	for {
+		// Each try gets its own copy of the request: what follows
+		// rewrites it in place (Traefik's forwarder adds X-Forwarded-*
+		// headers, stripPrefix changes the path), and a second try must
+		// not start from the first's leftovers.
+		try := req.Clone(ctx)
 		if body != nil {
-			req.Body = io.NopCloser(bytes.NewReader(body))
-			req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+			try.Body = io.NopCloser(bytes.NewReader(body))
+			try.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 		}
 		// Without a page the last try answers whatever the backend says.
 		last := time.Now().Add(h.interval).After(deadline)
 		if last && h.page == nil {
-			h.next.ServeHTTP(rw, req)
+			h.next.ServeHTTP(rw, try)
 			return
 		}
 		c := &catcher{rw: rw, header: http.Header{}, statuses: h.statuses, st: st}
-		h.next.ServeHTTP(c, req)
+		h.next.ServeHTTP(c, try)
 		if !c.caught {
 			return
 		}
@@ -162,7 +167,7 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 		t := time.NewTimer(h.interval)
 		select {
-		case <-req.Context().Done():
+		case <-ctx.Done():
 			t.Stop()
 			// The client is gone: nobody to answer.
 			return
