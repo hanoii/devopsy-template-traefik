@@ -379,6 +379,12 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
   backend is down on purpose and says so, like a maintenance page. An
   application that answers 503 itself without it (a CMS's maintenance mode)
   is held up to the limit like any other.
+- A 503 is held for any method: nothing reached the backend (Traefik's
+  own 503, a router without a healthy backend) or it refused before acting.
+  A 502 or 504 is held for GET, HEAD and OPTIONS only: the backend may
+  have received a POST and acted on it before the connection broke or
+  the timeout passed, and a replayed one would act twice. Such a POST
+  gets its 502 or 504 at once, as without holding.
 - Bodies up to 1 MB are kept in memory for the retries; a bigger upload
   gets a single try.
 - Event streams (`Accept: text/event-stream`) and gRPC skip holding. Under

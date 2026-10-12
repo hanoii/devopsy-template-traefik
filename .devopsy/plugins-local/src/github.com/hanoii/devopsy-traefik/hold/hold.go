@@ -9,6 +9,12 @@
 // client goes away. Then the configured page is answered as a 503, or else
 // the last try's response goes through as it is. A response with
 // Retry-After is never held: the backend is down on purpose and says so.
+// A 503 is retried for any method: nothing was forwarded (Traefik's own,
+// for a router without a healthy backend) or the backend refused before
+// acting. A 502 or 504 is retried for GET, HEAD and OPTIONS only: the
+// backend may have received the request and acted on it before the
+// connection broke or the timeout passed, and a replayed POST would act
+// twice.
 //
 // Bodies up to maxBody are kept in memory for the retries; a bigger one gets
 // a single try. Instances nest: an instance on a router, with its own page or
@@ -157,7 +163,7 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			h.next.ServeHTTP(rw, try)
 			return
 		}
-		c := &catcher{rw: rw, header: http.Header{}, statuses: h.statuses, st: st}
+		c := &catcher{rw: rw, header: http.Header{}, statuses: h.statuses, st: st, safe: safeMethod(req.Method)}
 		h.next.ServeHTTP(c, try)
 		if !c.caught {
 			return
@@ -207,8 +213,22 @@ type catcher struct {
 	header   http.Header
 	statuses map[int]bool
 	st       *state
+	safe     bool
 	decided  bool
 	caught   bool
+}
+
+// safeMethod is a method a proxy may repeat: it changes nothing (RFC
+// 9110, "safe methods").
+func safeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
+}
+
+// retriable is a status in the list that this request may be tried
+// again on: a 503 whatever the method (nothing was forwarded, or the
+// backend refused before acting), any other only for a safe method.
+func (c *catcher) retriable(code int) bool {
+	return c.statuses[code] && (c.safe || code == http.StatusServiceUnavailable)
 }
 
 func (c *catcher) Header() http.Header {
@@ -246,7 +266,7 @@ func (c *catcher) WriteHeader(code int) {
 	// Let through what an inner instance answers after holding itself, and
 	// answers with Retry-After: the backend is down on purpose (a
 	// maintenance page) and says so.
-	if c.statuses[code] && !c.st.claimed && c.header.Get("Retry-After") == "" {
+	if c.retriable(code) && !c.st.claimed && c.header.Get("Retry-After") == "" {
 		c.decided = true
 		c.caught = true
 		return
