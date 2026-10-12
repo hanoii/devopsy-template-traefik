@@ -89,7 +89,7 @@ func TestBodyReplayed(t *testing.T) {
 		b, _ := io.ReadAll(req.Body)
 		bodies = append(bodies, string(b))
 		if len(bodies) < 3 {
-			rw.WriteHeader(http.StatusBadGateway)
+			rw.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		rw.WriteHeader(http.StatusCreated)
@@ -159,6 +159,34 @@ func TestStatuses(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != 503 || tries != 1 {
 		t.Fatalf("503 is not in the list: got %d after %d tries", rec.Code, tries)
+	}
+}
+
+// A 503 is retried for any method; a 502 or 504 only for a safe one: the
+// backend may have acted on a POST before the connection broke.
+func TestUnsafeMethods(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		status int
+		tries  int32
+		code   int
+	}{
+		{"POST", 503, 3, 200}, {"POST", 502, 1, 502}, {"PUT", 504, 1, 504}, {"DELETE", 502, 1, 502},
+		{"GET", 502, 3, 200}, {"HEAD", 504, 3, 200}, {"OPTIONS", 502, 3, 200}, {"GET", 503, 3, 200},
+	} {
+		var tries int32
+		h := build(t, config(nil), http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			if atomic.AddInt32(&tries, 1) < 3 {
+				rw.WriteHeader(tc.status)
+				return
+			}
+			rw.WriteHeader(http.StatusOK)
+		}))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(tc.method, "/", strings.NewReader("x")))
+		if rec.Code != tc.code || tries != tc.tries {
+			t.Errorf("%s on %d: got %d after %d tries, want %d after %d", tc.method, tc.status, rec.Code, tries, tc.code, tc.tries)
+		}
 	}
 }
 

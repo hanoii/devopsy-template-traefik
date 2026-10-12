@@ -209,7 +209,11 @@ certificate retries and a network per project.
   under `yaegi test` too, skipping the flush one.
 - `hold` decides on the first status, like Traefik's `errors` middleware;
   a 502/503/504 with `Retry-After` passes at once (maintenance pages say
-  they are down on purpose). Instances nest through a value in the
+  they are down on purpose). A 503 is retried for any method; 502 and
+  504 only for GET, HEAD and OPTIONS (`safeMethod`): the backend may have
+  acted on a POST before the connection broke or the timeout passed.
+  Every try is a `Clone` of the original request: what follows rewrites
+  headers and the path in place. Instances nest through a value in the
   request's context: a router's instance (labels, with a page) takes over
   and the entrypoint's passes its answers through, otherwise the page
   would be held again. Statuses default in `New`, not `CreateConfig`:
