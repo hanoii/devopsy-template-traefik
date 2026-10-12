@@ -325,6 +325,22 @@ services:
     security_opt:
       - no-new-privileges
 
+  # sqlite for `devopsy forget`: acme-dns's database has no other way to
+  # remove a registration, and its image no sqlite. Python's, from the
+  # official image, as the database's owner; never started by `up`.
+  sqlite:
+    profiles: [tools]
+    image: python:3.14.8-alpine
+    user: "10001:10001"
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    volumes:
+      - ./mnt/acmedns:/acmedns
+
   # curl for `devopsy domains`: DNS over HTTPS, certificates and requests as
   # visitors make them, from the server. Never started by `up`.
   curl:

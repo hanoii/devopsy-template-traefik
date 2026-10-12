@@ -5,5 +5,7 @@ set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
 devopsy pull
+# Domains queued by `devopsy forget`.
+forget_apply
 devopsy up -d --remove-orphans
 api_access
