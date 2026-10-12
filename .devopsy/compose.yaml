@@ -130,6 +130,11 @@ services:
       # (mnt/dynamic/hold.yaml, from deploy and DEVOPSY_HOLD) uses it, and
       # projects can define their own instances with labels.
       - TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold
+      # A plugin that fails to load stops Traefik instead of being skipped:
+      # the entrypoint's middleware list names both plugins, and a running
+      # Traefik without one fails every router on websecure while looking
+      # healthy. Stopped, `up --wait` fails and the release rolls back.
+      - TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true
 
       # Extra dynamic configuration, like the public wildcard certificate:
       # files in mnt/dynamic (see dynamic.example/).
