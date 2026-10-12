@@ -12,13 +12,13 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   (Compose profile `acmedns`), the optional `maintenance` page (profile
   `maintenance`, turned on by `DEVOPSY_MAINTENANCE_PAGE=true` in
   `lib/common.sh`; its nginx config and page in `maintenance/`), `init`
-  (ownership of `mnt/`), and `jq` and `curl` (profile `tools`, for scripts
-  only).
+  (ownership of `mnt/`), and `jq`, `curl` and `sqlite` (profile `tools`,
+  for scripts only).
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/`: devopsy custom commands (POSIX `sh`, each with a
   `## Description:` line): `deploy` (what release and rollback run),
-  `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`.
+  `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`, `forget`.
 - `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
   the retry router file, for `domains`. devopsy-cli knows no proxy: the
   whole report lives here.
@@ -76,8 +76,8 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 ## Design decisions and gotchas
 
 The workspace README (`../devopsy/README.md` locally) describes how the repos
-fit together, and `../devopsy/ROADMAP.md` the open ideas, like `devopsy
-forget` and the Cloudflare real client IP plugin.
+fit together, and `../devopsy/ROADMAP.md` the open ideas, like automatic
+certificate retries and a network per project.
 
 - `letsencrypt1` uses HTTP-01, not TLS-ALPN: it also works behind a CDN
   proxy, and Traefik's ACME challenge router has top priority, ahead of the
@@ -91,6 +91,22 @@ forget` and the Cloudflare real client IP plugin.
 - Traefik renews every stored certificate, routed or not, and only reads its
   ACME files at startup, writing its in-memory copy back on changes. Editing
   `mnt/letsencrypt/*.json` takes a stop or restart around the edit.
+- Hence `devopsy forget`: it only queues domains (`mnt/forget.pending`),
+  and `forget_apply` (lib/common.sh), called by `deploy`, `restart` and
+  `forget --now` right before their `up`, stops Traefik and edits the
+  stores. The host has no jq and the Traefik image none either: one Traefik
+  container prints every store as one JSON object, the `jq` service turns
+  it into tab-separated lines (what was removed, each changed file's new
+  content on one line), and a second Traefik container writes them, through
+  the files so they keep mode 600, which Traefik insists on. Three
+  containers, so Traefik is down a few seconds; a first pass before
+  stopping it skips the stop when nothing matches. Private keys only travel
+  in pipes and shell variables, never to the host's disk. Forgotten
+  registrations then leave acme-dns's database too (`records` and `txt`,
+  by subdomain): its image has no sqlite and its API no way to remove one,
+  hence the `sqlite` service (profile `tools`: Python's module from the
+  official image, as 10001, no network). acme-dns reads the database on
+  every request, so it keeps running.
 - The same holds for acme-dns registrations (`acme-dns-accounts.json`):
   lego loads them once. That is why there is no "pre-register a domain"
   command: it would need a Traefik restart per domain.

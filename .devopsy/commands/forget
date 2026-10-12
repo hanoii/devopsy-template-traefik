@@ -1,0 +1,81 @@
+#!/bin/sh
+## Description: Forget domains: their certificates and acme-dns registrations
+# Removes domains nothing routes any more from Traefik's stores: their
+# certificates, which Traefik would renew for ever, and their acme-dns
+# registrations, which `devopsy acmedns` would keep listing, from Traefik's
+# file and from acme-dns's own database.
+#
+#   devopsy forget                    what is stored, and what is queued
+#   devopsy forget <domain>...        queue: applied by the next deploy or
+#                                     restart, which stops Traefik for it
+#   devopsy forget --now <domain>...  apply now: Traefik restarts, sites are
+#                                     unavailable for a few seconds
+#   devopsy forget --cancel           empty the queue
+#
+# A domain stands for itself and its wildcard: `example.com` also forgets
+# `*.example.com`. A certificate goes when any of its names matches. A
+# domain a router still names gets a new certificate when Traefik starts.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+usage() {
+  echo "Usage: devopsy forget [--now] <domain>... | --cancel" >&2
+  exit 1
+}
+
+now=false
+cancel=false
+while [ $# -gt 0 ]; do
+  case $1 in
+    --now) now=true ;;
+    --cancel) cancel=true ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+  shift
+done
+
+if [ "$cancel" = true ]; then
+  [ $# -eq 0 ] && [ "$now" = false ] || usage
+  rm -f "$forget_list"
+  echo "forget: nothing queued"
+  exit 0
+fi
+
+if [ $# -eq 0 ]; then
+  [ "$now" = false ] || usage
+  stored=$(forget_stores | jq -r '
+    to_entries[] | .key as $f | .value
+    | if $f == "acme-dns-accounts.json" then keys[] | "  \(.)  acme-dns registration"
+      else to_entries[] | .key as $r
+        | (if (.value | type) == "object" then .value.Certificates // [] else [] end)[]
+        | "  \([.domain.main] + (.domain.sans // []) | join(", "))  certificate, \($r)"
+      end' | sort -u)
+  if [ -n "$stored" ]; then
+    echo "Stored:"
+    printf '%s\n' "$stored"
+  else
+    echo "Nothing stored."
+  fi
+  if [ -s "$forget_list" ]; then
+    echo "Queued for the next deploy or restart (devopsy forget --cancel):"
+    sed 's/^/  /' "$forget_list"
+  fi
+  exit 0
+fi
+
+for name in "$@"; do
+  name=${name#\*.}
+  case $name in
+    '' | *[!a-z0-9.-]* | .* | *. | -*) die "not a domain name: $name" ;;
+  esac
+  grep -qxF "$name" "$forget_list" 2>/dev/null || printf '%s\n' "$name" >>"$forget_list"
+done
+
+if [ "$now" = true ]; then
+  forget_apply
+  devopsy up -d --wait
+  api_access
+else
+  echo "forget: queued, applied by the next deploy or restart: $(tr '\n' ' ' <"$forget_list")"
+fi

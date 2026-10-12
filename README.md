@@ -513,6 +513,37 @@ has a valid certificate, `domains` withdraws the request: Traefik keeps and
 renews the certificates without it. The checks run in the `curl` service
 (profile `tools`), so the host needs no `curl` or `dig`.
 
+## Forgetting domains
+
+Traefik keeps every certificate it was ever given and renews all of them,
+routed or not. A domain that is gone (a test site, a server's old wildcard
+domain) fails its renewals from 30 days before expiry, with errors in the
+log, and its acme-dns registration stays in `devopsy acmedns`.
+
+```sh
+devopsy @vm1-traefik forget                         # what is stored, and queued
+devopsy @vm1-traefik forget old.example.com         # queue it
+devopsy @vm1-traefik forget --now old.example.com   # now: Traefik restarts
+devopsy @vm1-traefik forget --cancel                # empty the queue
+```
+
+A domain stands for itself and its wildcard: `old.example.com` also forgets
+`*.old.example.com`, never `site.old.example.com`. A certificate goes when
+any of its names matches, from every resolver's store, with the acme-dns
+registration of the domain: in Traefik's file and in acme-dns's own
+database. Delete its `_acme-challenge` CNAME afterwards.
+
+Traefik reads its stores only when it starts, so they are edited while it
+is stopped. Queued domains wait for the next `deploy` (a release) or
+`restart`, which stops Traefik for them: sites are unavailable for a few
+seconds. `--now` does that at once, for everything queued. Nothing stops when nothing is stored
+for the queued domains. Each edited store keeps a copy next to it
+(`mnt/letsencrypt/<file>.forget-<time>`).
+
+Forget a domain once nothing routes it: one a router still names gets a
+new certificate as Traefik starts, and through `acmedns` a new
+registration, with a new CNAME.
+
 ## Customizing
 
 Put changes in `.devopsy/compose.override.yaml`, which is not committed. On

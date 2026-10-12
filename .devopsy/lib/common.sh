@@ -209,3 +209,115 @@ http:
     esac
   fi
 }
+
+# Domains `devopsy forget` queued, one per line, without `*.`.
+forget_list=$dir/mnt/forget.pending
+
+# Traefik's stores as one JSON object, file name to content: every
+# resolver's ACME file and the acme-dns registrations. With private keys:
+# only ever piped into jq.
+forget_stores() {
+  # shellcheck disable=SC2016
+  in_traefik '
+    printf "{"
+    sep=
+    for f in acme.json acme-acmedns.json acme-cloudflare.json acme-dns-accounts.json; do
+      [ -s "/letsencrypt/$f" ] || continue
+      printf "%s\"%s\":" "$sep" "$f"
+      cat "/letsencrypt/$f"
+      sep=,
+    done
+    printf "}"' </dev/null
+}
+
+# forget_edits NAMES: what forgetting the names (one per line) changes in
+# Traefik's stores, as tab-separated lines: `removed certificate <name>
+# <resolver>`, `removed registration <name> <acme-dns subdomain>`, and
+# `file <name> <json>` with
+# the new content of each store that changes. A name stands for itself and
+# its wildcard; a certificate goes when any of its names matches. The file
+# lines hold private keys: only ever piped back into a Traefik container.
+forget_edits() {
+  forget_stores | jq -r --arg names "$1" '
+    ($names | split("\n") | map(select(length > 0) | ltrimstr("*."))) as $n
+    | def hit: ltrimstr("*.") as $b | ($n | index($b)) != null;
+      def names: [.domain.main] + (.domain.sans // []);
+      def certs: if type == "object" and (.Certificates | type) == "array" then .Certificates else [] end;
+    to_entries[] | .key as $f | .value as $v
+    | if $f == "acme-dns-accounts.json" then
+        ($v | with_entries(select(.key | hit | not))) as $new
+        | ($v | to_entries[] | select(.key | hit)
+            | "removed\tregistration\t\(.key)\t\(.value.subdomain // "")"),
+          (if $new != $v then "file\t\($f)\t\($new | tojson)" else empty end)
+      else
+        ($v | map_values(if (certs | length) > 0
+            then .Certificates |= map(select(names | any(hit) | not))
+            else . end)) as $new
+        | ($v | to_entries[] | .key as $r | .value | certs[]
+            | select(names | any(hit)) | "removed\tcertificate\t\(names | join(", "))\t\($r)"),
+          (if $new != $v then "file\t\($f)\t\($new | tojson)" else empty end)
+      end'
+}
+
+# Applies `devopsy forget`'s queue, for callers about to start Traefik
+# (deploy, restart, `forget --now`): Traefik reads its stores only at
+# startup and writes its own copy back on changes, so they are edited while
+# it is stopped. Stops it only when a store has something to forget. Each
+# edited store keeps a copy next to it (<file>.forget-<time>, 10001's).
+# Forgotten registrations also leave acme-dns's own database, by their
+# subdomain: acme-dns reads it on every request, so it keeps running.
+forget_apply() {
+  [ -s "$forget_list" ] || return 0
+  _names=$(sort -u "$forget_list")
+  _edits=$(forget_edits "$_names")
+  if ! printf '%s\n' "$_edits" | grep -q '^removed'; then
+    echo "$(basename "$0"): nothing stored for $(printf '%s' "$_names" | tr '\n' ' ')"
+    rm -f "$forget_list"
+    return 0
+  fi
+  echo "$(basename "$0"): stopping Traefik to forget $(printf '%s' "$_names" | tr '\n' ' ')"
+  quiet stop traefik
+  # Again, now that Traefik no longer writes.
+  _edits=$(forget_edits "$_names")
+  # shellcheck disable=SC2016
+  _done=$(printf '%s\n' "$_edits" | in_traefik '
+    umask 077
+    tab=$(printf "\t")
+    while IFS= read -r line; do
+      case $line in
+        "file$tab"*)
+          rest=${line#"file$tab"}
+          name=${rest%%"$tab"*}
+          case $name in
+            acme.json | acme-acmedns.json | acme-cloudflare.json | acme-dns-accounts.json) ;;
+            *) continue ;;
+          esac
+          cp -p "/letsencrypt/$name" "/letsencrypt/$name.forget-$1"
+          # Through the file: it keeps its mode, which Traefik checks.
+          printf "%s\n" "${rest#*"$tab"}" >"/letsencrypt/$name"
+          ;;
+        "removed$tab"*) printf "%s\n" "$line" ;;
+      esac
+    done' "$(date +%Y%m%d%H%M%S)")
+  printf '%s\n' "$_done" | while IFS="$(printf '\t')" read -r _ _kind _name _resolver; do
+    case $_kind in
+      certificate) echo "$(basename "$0"): forgot the certificate for $_name ($_resolver)" ;;
+      registration) echo "$(basename "$0"): forgot the acme-dns registration of $_name" ;;
+    esac
+  done
+  _subs=$(printf '%s\n' "$_done" | awk -F '\t' '$2 == "registration" && $4 ~ /^[0-9a-f-]+$/ { print $4 }')
+  if [ -n "$_subs" ]; then
+    # shellcheck disable=SC2086
+    quiet run --rm --no-deps -T sqlite python3 -c '
+import os, sqlite3, sys
+path = "/acmedns/acme-dns.db"
+if os.path.exists(path):
+    db = sqlite3.connect(path, timeout=30)
+    for sub in sys.argv[1:]:
+        db.execute("DELETE FROM txt WHERE Subdomain = ?", (sub,))
+        db.execute("DELETE FROM records WHERE Subdomain = ?", (sub,))
+    db.commit()' $_subs </dev/null ||
+      warn "could not remove the registrations from acme-dns's database"
+  fi
+  rm -f "$forget_list"
+}

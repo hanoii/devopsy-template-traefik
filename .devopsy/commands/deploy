@@ -10,6 +10,7 @@
 # - The server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE), or none.
 # - Static settings: the entrypoint's middlewares (static_env), and trusted
 #   proxies' ranges, fetched again (`devopsy proxies refresh`).
+# - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
 # - Then, with Traefik running, middlewares turned off are removed, and who
 #   may reach its API is updated (api_access).
 set -eu
@@ -136,6 +137,9 @@ static_env --no-restart
 if [ -s "$dir/mnt/proxies/proxies.conf" ]; then
   devopsy proxies refresh || warn "could not refresh the trusted proxies' ranges, keeping the current ones"
 fi
+
+# Domains queued by `devopsy forget`: Traefik stops for them, `up` starts it.
+forget_apply
 
 devopsy up -d --wait --remove-orphans "$@"
 static_env
