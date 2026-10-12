@@ -207,6 +207,12 @@ certificate retries and a network per project.
   flushes are lost, so held responses only go out as Go's buffer fills.
   Hence event streams and gRPC skip holding. The plugin's own tests pass
   under `yaegi test` too, skipping the flush one.
+- `TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`: a local plugin that
+  fails to load (a Yaegi parse error) stops Traefik instead of being
+  skipped. Skipped, the entrypoint's middleware list still names it and
+  every router on websecure fails while the container looks healthy;
+  stopped, it restarts in a loop, `up --wait` fails and the release
+  rolls back. Checked on v3.7.13 with a broken hold.go.
 - `hold` decides on the first status, like Traefik's `errors` middleware;
   a 502/503/504 with `Retry-After` passes at once (maintenance pages say
   they are down on purpose). A 503 is retried for any method; 502 and
