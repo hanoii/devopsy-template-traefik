@@ -220,7 +220,7 @@ certificate retries and a network per project.
   router or on the entrypoint alike, both sit below Traefik's switcher),
   so a service that was empty or gone then stays so, and only the same
   address coming back answers the held request (a container restarted,
-  or recreated with the same IP). A clone or a deploy drops the app's
+  or recreated with the same IP). A sync or a deploy drops the app's
   router, so requests held meanwhile ended on the maintenance page after
   the whole limit although the site was back in seconds; with the writer
   wrapped, streamed responses lost their flushes on every request. Hence
@@ -235,7 +235,7 @@ certificate retries and a network per project.
   `running` (`keepContainer`, health aside), so a paused one loses its
   router the next time Traefik reads the containers: it ignores pause
   and unpause events, but any start, die or health_status event on the
-  host (a clone stopping a database, a deploy) makes it re-read, and the
+  host (a sync stopping a database, a deploy) makes it re-read, and the
   router is back only at the next such event after the unpause, which a
   container without a healthcheck never produces by itself (checked on
   OrbStack). On Docker 29.9 a paused container with a healthcheck is
