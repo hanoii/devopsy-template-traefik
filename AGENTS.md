@@ -240,22 +240,41 @@ certificate retries and a network per project.
   bodies of unknown length (`ContentLength < 0`, chunked): a client
   streaming one may wait for the answer before it ends it, and reading
   it all first would wait with it.
-- `docker pause` alone does not hold. On Docker 29.9 a paused container's
-  health is `unhealthy` at once (no event), and stays so after unpause
-  until its next check; Traefik ignores pause and unpause events, but any
-  other container event on the host (a clone stopping a database, a
-  deploy) makes it re-read the containers and drop the routers of
-  unhealthy ones: the maintenance page, or 404, instead of a wait. Hence
-  `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true`: a router whose
-  containers are all unhealthy or `starting` stays, with an empty service
-  answering 503, which `hold` retries until the container is healthy.
-  Checked on OrbStack: a paused app plus an event was held 4 s, then 200.
-  The cost: an unhealthy container of any project answers 503 (held on
-  routers with `hold@file`) instead of 404.
+- A held request never follows a configuration change: the plugin's
+  `next` is the chain built for the configuration the request entered
+  (at the router or on the entrypoint alike, both sit below Traefik's
+  switcher), so a service that was empty or gone then stays so for its
+  retries, and only the same address coming back answers it (a container
+  restarted, or recreated with the same IP; on 3.7.13, measured: a
+  stopped container with `traefik.docker.allowNonRunning=true` keeps its
+  router with an empty service, and a request held through its start
+  ends 503 at the limit while a new one gets 200 at once). So `hold`
+  covers a backend that answers 503 itself, a restart and most recreates;
+  not a clone or deploy that drops the router meanwhile.
+- `docker pause` alone does not hold. Traefik 3.7 filters any container
+  whose status is not `running` (`keepContainer`, health aside), so a
+  paused one loses its router the next time Traefik reads the containers:
+  it ignores pause and unpause events, but any start, die or
+  health_status event on the host (a clone stopping a database, a deploy)
+  makes it re-read, and the router is back only at the next such event
+  after the unpause, which a container without a healthcheck never
+  produces by itself (checked on OrbStack: paused whoami plus an event,
+  router gone; unpaused, still gone until another event). On Docker 29.9 a
+  paused container with a healthcheck is also `unhealthy` at once, and
+  stays so after the unpause until its next check, which is the event
+  that brings it back. `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true`
+  keeps the router of an unhealthy or `starting` container, with an empty
+  service answering 503, which `hold` retries, so new requests meet a
+  wait instead of 404 (the earlier claim that a paused app plus an event
+  was held then answered 200 did not hold up on 3.7.13: the paused
+  container is filtered before health counts, and the maintenance router
+  answered after the limit). The cost: an unhealthy container of any
+  project answers 503 (held on routers with `hold@file`) instead of 404.
   `docker stop` and `down` remove the container from the list, so its
   router goes either way (Traefik 404, nothing to hold): only another
   router can answer, the server-wide maintenance router (`priority: 1`, a
-  `HostRegexp` under the wildcard domain) or a project's own at 2 or more.
+  `HostRegexp` under the wildcard domain) or a project's own at 2 or more,
+  and what that router's service answers is what the held request gets.
 - The maintenance service has no Traefik labels: with a service label and
   no router, the Docker provider makes a default router with a Host rule,
   and the default resolver would request a certificate for it. The file

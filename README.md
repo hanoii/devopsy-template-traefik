@@ -401,8 +401,14 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 passes everything throug
   or one sent without a length (chunked, as streaming clients do), gets a
   single try.
 - The limit counts between tries, never inside one: a backend that takes
-  a request and never answers (a paused container Traefik still lists as
-  healthy) holds it as long as the client waits, limit or not.
+  a request and never answers (a paused container Traefik has not looked
+  at since) holds it as long as the client waits, limit or not.
+- A held request retries the backend it first reached: Traefik gives it
+  no other, however its configuration changes meanwhile. A backend that
+  comes back at the same address answers it (a restarted container, a
+  recreated one that got the same IP, a paused one nobody disturbed); a
+  router Traefik rebuilt or dropped while the request waited does not,
+  and the request ends with the limit.
 - A request with the header `X-Devopsy-Hold: no` is never held: for tools
   that look at a site, like `domains`, which get the backend's answer at
   once. Anyone can send it, and only gets the raw 502 or 503 for it.
@@ -411,10 +417,14 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 passes everything throug
   be flushed early, held or not, so other streamed responses (Drupal's
   BigPipe, for one) arrive in 4 KB pieces or at the end instead of chunk
   by chunk. Routers without the middleware stream as usual.
-- A paused or still starting container keeps its router, answering 503
-  until it is healthy again (`allowEmptyServices` in `compose.yaml`), so
-  its requests are held like any other. A stopped container loses its
-  router: see "Maintenance pages".
+- A still starting or unhealthy container keeps its router, answering
+  503 (`allowEmptyServices` in `compose.yaml`), so new requests are held
+  instead of 404; those held before it was healthy end with the limit
+  (above). Traefik drops a paused container's router the next time it
+  looks at the containers (any start, stop or health event on the host),
+  and puts it back only at the next such event after the unpause: a
+  pause only holds while nothing else happens on the host. A stopped
+  container loses its router: see "Maintenance pages".
 
 When the limit passes, the last response goes through, unless the
 middleware has a page. A project gives a router its own instance instead
