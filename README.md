@@ -387,6 +387,9 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
   gets its 502 or 504 at once, as without holding.
 - Bodies up to 1 MB are kept in memory for the retries; a bigger upload
   gets a single try.
+- A request with the header `X-Devopsy-Hold: no` is never held: for tools
+  that look at a site, like `domains`, which get the backend's answer at
+  once. Anyone can send it, and only gets the raw 502 or 503 for it.
 - Event streams (`Accept: text/event-stream`) and gRPC skip holding. Under
   Traefik's plugin interpreter a held response cannot be flushed early, so
   other streamed responses (Drupal's BigPipe, for one) arrive in 4 KB

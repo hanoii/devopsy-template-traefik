@@ -18,7 +18,8 @@
 //
 // Bodies up to maxBody are kept in memory for the retries; a bigger one gets
 // a single try. Instances nest: an instance on a router, with its own page or
-// limits, takes over from one on the entrypoint.
+// limits, takes over from one on the entrypoint. A request with
+// "X-Devopsy-Hold: no" is never held.
 package hold
 
 import (
@@ -56,6 +57,12 @@ type Config struct {
 func CreateConfig() *Config {
 	return &Config{MaxWait: "60s", Interval: "1s", MaxBody: 1 << 20}
 }
+
+// skipHeader set to "no" by a client skips holding: a tool looking at a
+// site (devopsy-template-traefik's domains) gets the backend's answer at once
+// instead of waiting. Anyone can send it, and only gets the raw 502 or
+// 503 for it.
+const skipHeader = "X-Devopsy-Hold"
 
 // stateKey finds the enclosing instance's state in a request's context.
 const stateKey = "github.com/hanoii/devopsy-traefik/hold"
@@ -121,7 +128,7 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if outer, ok := req.Context().Value(stateKey).(*state); ok && outer != nil {
 		outer.claimed = true
 	}
-	if h.maxWait <= 0 || streaming(req) {
+	if h.maxWait <= 0 || streaming(req) || req.Header.Get(skipHeader) == "no" {
 		h.next.ServeHTTP(rw, req)
 		return
 	}

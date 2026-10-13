@@ -190,6 +190,19 @@ func TestUnsafeMethods(t *testing.T) {
 	}
 }
 
+// X-Devopsy-Hold: no gets the backend's first answer, held or not.
+func TestSkipHeader(t *testing.T) {
+	var tries int32
+	h := build(t, config(nil), failing(3, &tries))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Devopsy-Hold", "no")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 503 || tries != 1 {
+		t.Fatalf("got %d after %d tries", rec.Code, tries)
+	}
+}
+
 func TestOversizedBodySingleTry(t *testing.T) {
 	var tries int32
 	h := build(t, config(func(c *Config) { c.MaxBody = 4 }), failing(1, &tries))
