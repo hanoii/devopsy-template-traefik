@@ -222,6 +222,31 @@ func TestOversizedBodySingleTry(t *testing.T) {
 	}
 }
 
+// A body of unknown length (chunked) is not buffered: a client streaming
+// it may wait for the answer before it ends it. One try, body through.
+func TestChunkedBodySingleTry(t *testing.T) {
+	var tries int32
+	h := build(t, config(nil), failing(1, &tries))
+	rec := httptest.NewRecorder()
+	// The body never ends; httptest gives an unknown reader length -1.
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	go func() { _, _ = pw.Write([]byte("partial")) }()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/", pr))
+	if rec.Code != 503 || tries != 1 {
+		t.Fatalf("got %d after %d tries", rec.Code, tries)
+	}
+
+	// The whole body still reaches the backend.
+	tries = 0
+	h = build(t, config(nil), failing(0, &tries))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/", struct{ io.Reader }{strings.NewReader("streamed")}))
+	if rec.Code != 200 || rec.Body.String() != "ok:streamed" {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestContextCancelStops(t *testing.T) {
 	var tries int32
 	h := build(t, config(nil), failing(1000, &tries))

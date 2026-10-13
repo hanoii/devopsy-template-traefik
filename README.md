@@ -385,8 +385,9 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
   have received a POST and acted on it before the connection broke or
   the timeout passed, and a replayed one would act twice. Such a POST
   gets its 502 or 504 at once, as without holding.
-- Bodies up to 1 MB are kept in memory for the retries; a bigger upload
-  gets a single try.
+- Bodies up to 1 MB are kept in memory for the retries; a bigger upload,
+  or one sent without a length (chunked, as streaming clients do), gets a
+  single try.
 - The limit counts between tries, never inside one: a backend that takes
   a request and never answers (a paused container Traefik still lists as
   healthy) holds it as long as the client waits, limit or not.
