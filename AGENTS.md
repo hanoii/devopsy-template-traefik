@@ -34,20 +34,24 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   from that proxy's header. `devopsy proxies` keeps the proxies in
   `mnt/proxies/proxies.conf` and writes `mnt/dynamic/proxies.yaml`
   (middleware and ranges; changes need no restart). `hold` holds requests
-  while a backend answers 502/503/504 (README, "Holding requests"); deploy
-  writes `mnt/dynamic/hold.yaml` from `DEVOPSY_HOLD`. Both sit on the
-  websecure entrypoint, whose middleware list is static: one writer,
-  `static_env`, called by `deploy` and `proxies`, composes
-  `mnt/traefik.env` (proxies first, then hold; the proxies plugin and the
-  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies) and
-  restarts Traefik only when it changed. Middleware files are written
-  before the env names them and removed only once the running Traefik no
-  longer does: an entrypoint referencing a missing middleware breaks every
-  router. The file used to be `mnt/proxies/proxies.env`, which `static_env`
-  replaces; a new name, so an older release rolled back to never reads a
-  middleware list naming `hold` (it only logs an error for the unused
-  `hold.yaml`, whose plugin it does not load). Unit-test plugins with `go test` in their
-  directory, and under Yaegi (`yaegi test`, see Checks).
+  while a backend answers 502/503/504 (README, "Holding requests");
+  `deploy` always writes `mnt/dynamic/hold.yaml` (`hold_middleware`, its
+  `maxWait` from `DEVOPSY_HOLD`, 0 passes through) and routers opt in with
+  `hold@file` in their labels: nothing is held without it, and the file
+  never goes away, since a router naming a missing middleware is dropped.
+  It used to sit on the websecure entrypoint, holding every site; moved
+  off because every response through the plugin loses its flushes (below),
+  held or not. The proxies middleware does sit on the entrypoint, whose
+  middleware list is static: one writer, `static_env`, called by `deploy`
+  and `proxies`, composes `mnt/traefik.env` (the middleware, the proxies
+  plugin and the forwarded-headers trust for X-Forwarded-For and X-Real-Ip
+  proxies) and restarts Traefik only when it changed. Middleware files are
+  written before the env names them and removed only once the running
+  Traefik no longer does: an entrypoint referencing a missing middleware
+  breaks every router. The file used to be `mnt/proxies/proxies.env`,
+  which `static_env` replaces; an older release rolled back to puts
+  `hold@file` back on the entrypoint, which works. Unit-test plugins with
+  `go test` in their directory, and under Yaegi (`yaegi test`, see Checks).
 - Everything a command writes at runtime lives in `mnt/` or `.env`: a file
   written elsewhere in `.devopsy/` lands in the release directory and is
   gone with the next release. Write `.env` through it (`env_set`, `cat >`),
@@ -205,14 +209,18 @@ certificate retries and a network per project.
 - `hold` and Yaegi: Traefik runs plugins in Yaegi, which hands a
   plugin's ResponseWriter wrapper to Go code as a fixed set of interfaces:
   ResponseWriter plus Hijacker, never Flusher (yaegi v0.16.1,
-  `stdlib/wrapper-composed.go`). Websockets work (checked on v3.7.13);
-  flushes are lost, so held responses only go out as Go's buffer fills.
-  Hence event streams and gRPC skip holding. The plugin's own tests pass
-  under `yaegi test` too, skipping the flush one.
+  `stdlib/wrapper-composed.go`; traefik/traefik#10269). Websockets work
+  (checked on v3.7.13); flushes are lost, so a response through the
+  catcher, the first try included, only goes out as Go's buffer fills
+  (BigPipe pages arrive in 4 KB pieces). Hence event streams and gRPC
+  skip holding, and routers opt in. Not the way out: http-wasm plugins
+  cannot call the next handler twice, so no retry loop. The plugin's own
+  tests pass under `yaegi test` too, skipping the flush one.
 - `TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`: a local plugin that
   fails to load (a Yaegi parse error) stops Traefik instead of being
-  skipped. Skipped, the entrypoint's middleware list still names it and
-  every router on websecure fails while the container looks healthy;
+  skipped. Skipped, the entrypoint's middleware list still names
+  `proxies`, and every router naming `hold@file` is dropped, while the
+  container looks healthy;
   stopped, it restarts in a loop, `up --wait` fails and the release
   rolls back. Checked on v3.7.13 with a broken hold.go.
 - `hold` decides on the first status, like Traefik's `errors` middleware;
@@ -240,10 +248,10 @@ certificate retries and a network per project.
   unhealthy ones: the maintenance page, or 404, instead of a wait. Hence
   `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true`: a router whose
   containers are all unhealthy or `starting` stays, with an empty service
-  answering 503, which `hold` (and the errors middleware's `/hold.html`)
-  retries until the container is healthy. Checked on OrbStack: a paused
-  app plus an event was held 4 s, then 200. The cost: an unhealthy
-  container of any project answers 503 through `hold` instead of 404.
+  answering 503, which `hold` retries until the container is healthy.
+  Checked on OrbStack: a paused app plus an event was held 4 s, then 200.
+  The cost: an unhealthy container of any project answers 503 (held on
+  routers with `hold@file`) instead of 404.
   `docker stop` and `down` remove the container from the list, so its
   router goes either way (Traefik 404, nothing to hold): only another
   router can answer, the server-wide maintenance router (`priority: 1`, a
@@ -313,7 +321,8 @@ For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
 Check all containers are healthy, `http://` redirects, `https://` reaches
-whoami, and the Traefik log has no new warnings. For `hold`: `docker pause`
+whoami, and the Traefik log has no new warnings. For `hold` (the whoami's
+router labeled `traefik.http.routers.whoami.middlewares=hold@file`): `docker pause`
 the whoami, a curl waits and answers after `docker unpause`; whoami's
 `/health` answers what a POST to it set (`curl -d 503 -X POST .../health`),
 so a GET of it is held until a POST sets 200. With a test

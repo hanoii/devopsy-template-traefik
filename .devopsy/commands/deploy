@@ -8,6 +8,7 @@
 #   later: the Docker socket's group, and acme-dns's public IP.
 # - The public wildcard certificate (DEVOPSY_PROXY_WILDCARD_DOMAIN), or none.
 # - The server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE), or none.
+# - The hold middleware's limit (DEVOPSY_HOLD), for routers naming hold@file.
 # - Static settings: the entrypoint's middlewares (static_env), and trusted
 #   proxies' ranges, fetched again (`devopsy proxies refresh`).
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
@@ -130,7 +131,9 @@ if [ "${DEVOPSY_MAINTENANCE_PAGE:-false}" = false ]; then
   quiet rm -s -f maintenance >/dev/null
 fi
 
-# The entrypoint's middlewares; `up` below restarts Traefik when they change.
+# The hold middleware, then the entrypoint's; `up` below restarts Traefik
+# when the static ones change.
+hold_middleware
 static_env --no-restart
 
 # Ranges from URLs can change. A failed fetch keeps the current ones.
