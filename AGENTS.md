@@ -228,7 +228,10 @@ certificate retries and a network per project.
   would be held again. Statuses default in `New`, not `CreateConfig`:
   Traefik decodes a configured list over the default element by element.
 - Bodies are buffered up to `maxBody` for retries, in Traefik's memory per
-  held request; bigger ones get one try (their start replayed).
+  held request; bigger ones get one try (their start replayed), and so do
+  bodies of unknown length (`ContentLength < 0`, chunked): a client
+  streaming one may wait for the answer before it ends it, and reading
+  it all first would wait with it.
 - `docker pause` alone does not hold. On Docker 29.9 a paused container's
   health is `unhealthy` at once (no event), and stays so after unpause
   until its next check; Traefik ignores pause and unpause events, but any

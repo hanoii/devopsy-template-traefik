@@ -16,8 +16,8 @@
 // connection broke or the timeout passed, and a replayed POST would act
 // twice.
 //
-// Bodies up to maxBody are kept in memory for the retries; a bigger one gets
-// a single try. Instances nest: an instance on a router, with its own page or
+// Bodies up to maxBody are kept in memory for the retries; a bigger one, or
+// one of unknown length (chunked), gets a single try. Instances nest: an instance on a router, with its own page or
 // limits, takes over from one on the entrypoint. A request with
 // "X-Devopsy-Hold: no" is never held.
 package hold
@@ -136,6 +136,13 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Keep the body for retries, up to maxBody.
 	var body []byte
 	if req.Body != nil && req.Body != http.NoBody {
+		if req.ContentLength < 0 {
+			// Unknown length (chunked): the client may be streaming it and
+			// wait for an answer before it ends, so reading it all first
+			// could wait forever. One try, the body passed through.
+			h.next.ServeHTTP(rw, req)
+			return
+		}
 		buf, err := io.ReadAll(io.LimitReader(req.Body, h.maxBody+1))
 		if err != nil {
 			http.Error(rw, "Bad Request", http.StatusBadRequest)
