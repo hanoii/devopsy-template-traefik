@@ -183,9 +183,9 @@ certificate retries and a network per project.
   devopsy-cli from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
-  DigitalOcean; validity from the verified handshake's verbose line,
-  since `hold` may keep the request itself for a paused site, so every
-  request there has a short `--max-time`), a request through what DNS returns, all in the `curl`
+  DigitalOcean; validity from the verified handshake's verbose line, and
+  every request sends `X-Devopsy-Hold: no`, so `hold` never keeps one
+  for a paused site), a request through what DNS returns, all in the `curl`
   service. It prints the `devopsy --probe` line for the outside view. The
   public IP comes from `DEVOPSY_PUBLIC_IP`, else 1.1.1.1's `/cdn-cgi/trace`
   (the default route's address is private behind NAT, as on OrbStack). The
@@ -221,7 +221,8 @@ certificate retries and a network per project.
   504 only for GET, HEAD and OPTIONS (`safeMethod`): the backend may have
   acted on a POST before the connection broke or the timeout passed.
   Every try is a `Clone` of the original request: what follows rewrites
-  headers and the path in place. Instances nest through a value in the
+  headers and the path in place. `X-Devopsy-Hold: no` skips holding
+  (`skipHeader`): tools looking at a site. Instances nest through a value in the
   request's context: a router's instance (labels, with a page) takes over
   and the entrypoint's passes its answers through, otherwise the page
   would be held again. Statuses default in `New`, not `CreateConfig`:
