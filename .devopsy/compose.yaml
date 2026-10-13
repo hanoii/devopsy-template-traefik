@@ -118,24 +118,10 @@ services:
       - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik
-      # A router whose containers are all unhealthy or still starting (a
-      # paused app during a clone, a restart) stays, answering 503, which
-      # the hold middleware retries until the container is back. Without
-      # it Traefik drops such routers at the next container event: 404 or
-      # the maintenance page instead of a wait. Stopped containers are
-      # not listed at all, so their routers go either way.
-      - TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true
-
-      # The hold plugin (plugins-local/), always loaded: the hold@file
-      # middleware (mnt/dynamic/hold.yaml, from deploy and DEVOPSY_HOLD)
-      # uses it, routers opt in by label, and projects can define their
-      # own instances with labels.
-      - TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold
       # A plugin that fails to load stops Traefik instead of being skipped:
-      # the entrypoint's middleware list names proxies and routers name
-      # hold@file, and a running Traefik without them fails those routers
-      # while looking healthy. Stopped, `up --wait` fails and the release
-      # rolls back.
+      # the entrypoint's middleware list names proxies, and a running
+      # Traefik without it fails every router while looking healthy.
+      # Stopped, `up --wait` fails and the release rolls back.
       - TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true
 
       # Extra dynamic configuration, like the public wildcard certificate:
@@ -298,7 +284,10 @@ services:
   maintenance:
     profiles: [maintenance]
     restart: unless-stopped
-    image: nginxinc/nginx-unprivileged:1.30.5-alpine-slim
+    # The official image, its entrypoint (which edits its own default
+    # configuration) skipped: nginx.conf keeps everything it writes in
+    # /tmp, so it runs as 10001 on a read-only root filesystem.
+    image: nginx:1.30.5-alpine-slim
     entrypoint: ['nginx', '-c', '/maintenance/nginx.conf', '-g', 'daemon off;']
     healthcheck:
       test: ['CMD', 'wget', '-Y', 'off', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/']

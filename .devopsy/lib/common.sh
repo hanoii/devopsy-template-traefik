@@ -131,32 +131,6 @@ $_list
   fi
 }
 
-# The hold middleware, `hold@file`, for routers that name it (README,
-# "Holding requests"): mnt/dynamic/hold.yaml, its limit from DEVOPSY_HOLD
-# (default 60s; 0 passes everything through). The file always exists: a
-# router naming a missing middleware is dropped, and projects name it in
-# their labels. Dynamic configuration, no restart. Called by deploy.
-hold_middleware() {
-  _hold=${DEVOPSY_HOLD:-60s}
-  printf '%s\n' "$_hold" | grep -Eq '^(0|([0-9]+(\.[0-9]+)?(ms|s|m|h))+)$' ||
-    die "DEVOPSY_HOLD must be a duration like 60s, or 0 for none: $_hold"
-  case $_hold in 0ms | 0s | 0m | 0h) _hold=0 ;; esac
-  if write_if_changed "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy' from DEVOPSY_HOLD.
-http:
-  middlewares:
-    hold:
-      plugin:
-        hold:
-          maxWait: $_hold
-"; then
-    if [ "$_hold" = 0 ]; then
-      echo "$(basename "$0"): requests are not held (DEVOPSY_HOLD=0)"
-    else
-      echo "$(basename "$0"): requests held up to $_hold by routers using hold@file"
-    fi
-  fi
-}
-
 # Traefik's static settings that depend on what is enabled, in
 # mnt/traefik.env (compose.yaml's env_file): the websecure entrypoint's
 # middlewares (`devopsy proxies`), and the proxies' plugin and
@@ -167,8 +141,8 @@ http:
 # once the running Traefik no longer names it. Static settings need a
 # restart: done here when the file changed, unless --no-restart (deploy,
 # whose `up` follows). Rewrites a mnt/proxies/proxies.env from older
-# releases, and a mnt/traefik.env from releases that put hold on the
-# entrypoint (routers opt in with hold@file since).
+# releases, and a mnt/traefik.env from releases that put a `hold`
+# middleware on the entrypoint (gone since).
 static_env() {
   _restart=true
   [ "${1:-}" != --no-restart ] || _restart=false

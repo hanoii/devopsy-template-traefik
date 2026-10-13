@@ -26,22 +26,15 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `jq`, `quiet`, `env_set`, `static_env`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
-  provider: the public wildcard, proxies, hold, maintenance, retries),
+  provider: the public wildcard, proxies, maintenance, retries),
   `proxies/` (`proxies.conf`, `forwarded-ips`), `maintenance/` (an
   optional page) and `traefik.env` (static settings, see below).
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
   `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
   from that proxy's header. `devopsy proxies` keeps the proxies in
   `mnt/proxies/proxies.conf` and writes `mnt/dynamic/proxies.yaml`
-  (middleware and ranges; changes need no restart). `hold` holds requests
-  while a backend answers 502/503/504 (README, "Holding requests");
-  `deploy` always writes `mnt/dynamic/hold.yaml` (`hold_middleware`, its
-  `maxWait` from `DEVOPSY_HOLD`, 0 passes through) and routers opt in with
-  `hold@file` in their labels: nothing is held without it, and the file
-  never goes away, since a router naming a missing middleware is dropped.
-  It used to sit on the websecure entrypoint, holding every site; moved
-  off because every response through the plugin loses its flushes (below),
-  held or not. The proxies middleware does sit on the entrypoint, whose
+  (middleware and ranges; changes need no restart). The proxies
+  middleware sits on the websecure entrypoint, whose
   middleware list is static: one writer, `static_env`, called by `deploy`
   and `proxies`, composes `mnt/traefik.env` (the middleware, the proxies
   plugin and the forwarded-headers trust for X-Forwarded-For and X-Real-Ip
@@ -49,9 +42,12 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   written before the env names them and removed only once the running
   Traefik no longer does: an entrypoint referencing a missing middleware
   breaks every router. The file used to be `mnt/proxies/proxies.env`,
-  which `static_env` replaces; an older release rolled back to puts
-  `hold@file` back on the entrypoint, which works. Unit-test plugins with
-  `go test` in their directory, and under Yaegi (`yaegi test`, see Checks).
+  which `static_env` replaces. Unit-test plugins with `go test` in their
+  directory, and under Yaegi (`yaegi test`, see Checks). There was a
+  `hold` plugin (October 2026) that held requests while a backend answered
+  502/503/504; removed, see the gotchas below for why. `deploy` removes
+  its `mnt/dynamic/hold.yaml`, so a project still labeling `hold@file`
+  loses those routers: projects drop the label first.
 - Everything a command writes at runtime lives in `mnt/` or `.env`: a file
   written elsewhere in `.devopsy/` lands in the release directory and is
   gone with the next release. Write `.env` through it (`env_set`, `cat >`),
@@ -187,9 +183,8 @@ certificate retries and a network per project.
   devopsy-cli from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
-  DigitalOcean; validity from the verified handshake's verbose line, and
-  every request sends `X-Devopsy-Hold: no`, so `hold` never keeps one
-  for a paused site), a request through what DNS returns, all in the `curl`
+  DigitalOcean; validity from the verified handshake's verbose line), a
+  request through what DNS returns, all in the `curl`
   service. It prints the `devopsy --probe` line for the outside view. The
   public IP comes from `DEVOPSY_PUBLIC_IP`, else 1.1.1.1's `/cdn-cgi/trace`
   (the default route's address is private behind NAT, as on OrbStack). The
@@ -206,75 +201,50 @@ certificate retries and a network per project.
   makes the router invalid: hence the filter. Checked on Debian 13 with
   Docker 29: host 200, a container on `traefik` 403.
 
-- `hold` and Yaegi: Traefik runs plugins in Yaegi, which hands a
+- Plugins and Yaegi: Traefik runs local plugins in Yaegi, which hands a
   plugin's ResponseWriter wrapper to Go code as a fixed set of interfaces:
   ResponseWriter plus Hijacker, never Flusher (yaegi v0.16.1,
   `stdlib/wrapper-composed.go`; traefik/traefik#10269). Websockets work
-  (checked on v3.7.13); flushes are lost, so a response through the
-  catcher, the first try included, only goes out as Go's buffer fills
-  (BigPipe pages arrive in 4 KB pieces). Hence event streams and gRPC
-  skip holding, and routers opt in. Not the way out: http-wasm plugins
-  cannot call the next handler twice, so no retry loop. The plugin's own
-  tests pass under `yaegi test` too, skipping the flush one.
+  (checked on v3.7.13); flushes are lost, so a response written through
+  a plugin's wrapper only goes out as Go's buffer fills. `proxies` never
+  wraps the writer. http-wasm plugins cannot call the next handler twice.
 - `TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`: a local plugin that
   fails to load (a Yaegi parse error) stops Traefik instead of being
   skipped. Skipped, the entrypoint's middleware list still names
-  `proxies`, and every router naming `hold@file` is dropped, while the
-  container looks healthy;
-  stopped, it restarts in a loop, `up --wait` fails and the release
-  rolls back. Checked on v3.7.13 with a broken hold.go.
-- `hold` decides on the first status, like Traefik's `errors` middleware;
-  a 502/503/504 with `Retry-After` passes at once (maintenance pages say
-  they are down on purpose). A 503 is retried for any method; 502 and
-  504 only for GET, HEAD and OPTIONS (`safeMethod`): the backend may have
-  acted on a POST before the connection broke or the timeout passed.
-  Every try is a `Clone` of the original request: what follows rewrites
-  headers and the path in place. `X-Devopsy-Hold: no` skips holding
-  (`skipHeader`): tools looking at a site. Instances nest through a value in the
-  request's context: a router's instance (labels, with a page) takes over
-  and the entrypoint's passes its answers through, otherwise the page
-  would be held again. Statuses default in `New`, not `CreateConfig`:
-  Traefik decodes a configured list over the default element by element.
-- Bodies are buffered up to `maxBody` for retries, in Traefik's memory per
-  held request; bigger ones get one try (their start replayed), and so do
-  bodies of unknown length (`ContentLength < 0`, chunked): a client
-  streaming one may wait for the answer before it ends it, and reading
-  it all first would wait with it.
-- A held request never follows a configuration change: the plugin's
-  `next` is the chain built for the configuration the request entered
-  (at the router or on the entrypoint alike, both sit below Traefik's
-  switcher), so a service that was empty or gone then stays so for its
-  retries, and only the same address coming back answers it (a container
-  restarted, or recreated with the same IP; on 3.7.13, measured: a
-  stopped container with `traefik.docker.allowNonRunning=true` keeps its
-  router with an empty service, and a request held through its start
-  ends 503 at the limit while a new one gets 200 at once). So `hold`
-  covers a backend that answers 503 itself, a restart and most recreates;
-  not a clone or deploy that drops the router meanwhile.
-- `docker pause` alone does not hold. Traefik 3.7 filters any container
-  whose status is not `running` (`keepContainer`, health aside), so a
-  paused one loses its router the next time Traefik reads the containers:
-  it ignores pause and unpause events, but any start, die or
-  health_status event on the host (a clone stopping a database, a deploy)
-  makes it re-read, and the router is back only at the next such event
-  after the unpause, which a container without a healthcheck never
-  produces by itself (checked on OrbStack: paused whoami plus an event,
-  router gone; unpaused, still gone until another event). On Docker 29.9 a
-  paused container with a healthcheck is also `unhealthy` at once, and
-  stays so after the unpause until its next check, which is the event
-  that brings it back. `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true`
-  keeps the router of an unhealthy or `starting` container, with an empty
-  service answering 503, which `hold` retries, so new requests meet a
-  wait instead of 404 (the earlier claim that a paused app plus an event
-  was held then answered 200 did not hold up on 3.7.13: the paused
-  container is filtered before health counts, and the maintenance router
-  answered after the limit). The cost: an unhealthy container of any
-  project answers 503 (held on routers with `hold@file`) instead of 404.
-  `docker stop` and `down` remove the container from the list, so its
-  router goes either way (Traefik 404, nothing to hold): only another
-  router can answer, the server-wide maintenance router (`priority: 1`, a
-  `HostRegexp` under the wildcard domain) or a project's own at 2 or more,
-  and what that router's service answers is what the held request gets.
+  `proxies`, and every router is dropped while the container looks
+  healthy; stopped, it restarts in a loop, `up --wait` fails and the
+  release rolls back. Checked on v3.7.13 with a broken plugin.
+- Why the `hold` plugin went (measured on 3.7.13, October 2026): a
+  middleware's retries never follow a configuration change. Its `next` is
+  the chain built for the configuration the request entered (at the
+  router or on the entrypoint alike, both sit below Traefik's switcher),
+  so a service that was empty or gone then stays so, and only the same
+  address coming back answers the held request (a container restarted,
+  or recreated with the same IP). A clone or a deploy drops the app's
+  router, so requests held meanwhile ended on the maintenance page after
+  the whole limit although the site was back in seconds; with the writer
+  wrapped, streamed responses lost their flushes on every request. Hence
+  holding belongs in the project's request path, where a proxy can wait
+  for its upstream and stream (devopsy-template-drupal11's `alwaysup`).
+  Two more facts from then: `traefik.docker.allowNonRunning=true` keeps a
+  stopped container's router with an empty service, and
+  `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true` keeps an unhealthy or
+  starting one's; neither helps a request already waiting, and with
+  nothing retrying, both only turn 404 into 503. Not set.
+- `docker pause`: Traefik 3.7 filters any container whose status is not
+  `running` (`keepContainer`, health aside), so a paused one loses its
+  router the next time Traefik reads the containers: it ignores pause
+  and unpause events, but any start, die or health_status event on the
+  host (a clone stopping a database, a deploy) makes it re-read, and the
+  router is back only at the next such event after the unpause, which a
+  container without a healthcheck never produces by itself (checked on
+  OrbStack). On Docker 29.9 a paused container with a healthcheck is
+  also `unhealthy` at once, and stays so after the unpause until its
+  next check, which is the event that brings it back. `docker stop` and
+  `down` remove the container from the list, so its router goes either
+  way: only another router can answer, the server-wide maintenance
+  router (`priority: 1`, a `HostRegexp` under the wildcard domain) or a
+  project's own at 2 or more.
 - The maintenance service has no Traefik labels: with a service label and
   no router, the Docker provider makes a default router with a Host rule,
   and the default resolver would request a certificate for it. The file
@@ -315,7 +285,7 @@ Traefik's interpreter (Yaegi is stricter than Go), from `plugins-local`:
 
 ```sh
 go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1   # Traefik's version
-GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
+GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/proxies
 ```
 
 Run it locally on other ports, and route a `traefik/whoami` container
@@ -340,11 +310,7 @@ For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
 Check all containers are healthy, `http://` redirects, `https://` reaches
-whoami, and the Traefik log has no new warnings. For `hold` (the whoami's
-router labeled `traefik.http.routers.whoami.middlewares=hold@file`): `docker pause`
-the whoami, a curl waits and answers after `docker unpause`; whoami's
-`/health` answers what a POST to it set (`curl -d 503 -X POST .../health`),
-so a GET of it is held until a POST sets 200. With a test
+whoami, and the Traefik log has no new warnings. With a test
 `DEVOPSY_PROXY_WILDCARD_DOMAIN` and `DEVOPSY_MAINTENANCE_PAGE=true`, a
 stopped whoami under it, or any other host there, gets the maintenance
 page (`curl --resolve`). Then `devopsy down`.

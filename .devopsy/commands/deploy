@@ -8,7 +8,6 @@
 #   later: the Docker socket's group, and acme-dns's public IP.
 # - The public wildcard certificate (DEVOPSY_PROXY_WILDCARD_DOMAIN), or none.
 # - The server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE), or none.
-# - The hold middleware's limit (DEVOPSY_HOLD), for routers naming hold@file.
 # - Static settings: the entrypoint's middlewares (static_env), and trusted
 #   proxies' ranges, fetched again (`devopsy proxies refresh`).
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
@@ -131,9 +130,16 @@ if [ "${DEVOPSY_MAINTENANCE_PAGE:-false}" = false ]; then
   quiet rm -s -f maintenance >/dev/null
 fi
 
-# The hold middleware, then the entrypoint's; `up` below restarts Traefik
-# when the static ones change.
-hold_middleware
+# Releases up to October 2026 wrote a hold middleware (mnt/dynamic/hold.yaml,
+# its plugin gone since): a router naming a missing middleware is dropped,
+# so projects drop the `hold@file` label before this Traefik is released.
+if [ -f "$dir/mnt/dynamic/hold.yaml" ]; then
+  rm -f "$dir/mnt/dynamic/hold.yaml"
+  echo "deploy: the hold middleware is gone; routers naming hold@file are dropped until their project drops the label"
+fi
+
+# The entrypoint's middlewares; `up` below restarts Traefik when the static
+# settings change.
 static_env --no-restart
 
 # Ranges from URLs can change. A failed fetch keeps the current ones.
