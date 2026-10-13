@@ -433,8 +433,12 @@ request. Turning it off and running `deploy` again removes both.
 **A maintenance service** per project, for its own domains and page: a
 small static server with a router on the app's rule at `priority=2`. A
 router's priority defaults to its rule's length, so the app's router wins
-while the app runs; when it stops, the maintenance router answers, at once,
-without holding. Priority 2 beats the server-wide page's 1:
+while the app runs; when it stops, the maintenance router answers: at
+once when its page carries `Retry-After` (down on purpose), after
+holding otherwise (`hold` retries until the app's router is back or its
+limit passes: a wait through restarts and clones, the page after longer
+stops; devopsy-template-drupal11 does both, with a flag for the
+`Retry-After`). Priority 2 beats the server-wide page's 1:
 
 ```yaml
 services:
