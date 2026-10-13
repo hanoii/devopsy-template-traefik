@@ -149,6 +149,7 @@ static_env() {
   _hold=${DEVOPSY_HOLD:-60s}
   printf '%s\n' "$_hold" | grep -Eq '^(0|([0-9]+(\.[0-9]+)?(ms|s|m|h))+)$' ||
     die "DEVOPSY_HOLD must be a duration like 60s, or 0 for none: $_hold"
+  case $_hold in 0ms | 0s | 0m | 0h) _hold=0 ;; esac
 
   _middlewares=
   _env="# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.
