@@ -58,8 +58,11 @@ project_hosts() {
 # Network checks from this server, in the curl service: the server's IP on
 # the first line, then one tab-separated line per name (jq turns them into
 # JSON). DNS over HTTPS from 1.1.1.1, the certificate this server presents
-# (valid: curl's verification; issuer and expiry, from its verbose output),
-# and a request through what DNS returns.
+# (issuer and expiry from an unverified handshake's verbose output, valid
+# from a verified one's, printed before any request: Traefik's hold plugin
+# may keep the request itself for a paused or restarting site, so no
+# request waits more than a few seconds), and a short request through
+# what DNS returns.
 # shellcheck disable=SC2016
 check_script='
 if [ -z "$IP" ]; then
@@ -74,13 +77,13 @@ for name; do
   case $a in "{"*) a=$(printf "%s" "$a" | tr -d "\t\n\r") ;; *) a=null ;; esac
   challenge=$(doh "_acme-challenge.$base" CNAME)
   case $challenge in "{"*) challenge=$(printf "%s" "$challenge" | tr -d "\t\n\r") ;; *) challenge=null ;; esac
-  info=$(curl -skv -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" 2>&1 || true)
+  info=$(curl -skv -o /dev/null --max-time 10 --resolve "$name:443:$IP" "https://$name/" 2>&1 || true)
   issuer=$(printf "%s\n" "$info" | sed -n "s/^\*  issuer: //p" | head -n 1 | sed "s/.*O=\([^;]*\);.*CN=\(.*\)/\1 \2/; s/^CN=//" | tr -d "\t")
   expire=$(printf "%s\n" "$info" | sed -n "s/^\*  expire date: //p" | head -n 1)
   expire=$(date -u -D "%b %e %H:%M:%S %Y GMT" -d "$expire" +%F 2>/dev/null || printf "%s" "$expire")
   valid=false
-  curl -s -o /dev/null --max-time 15 --resolve "$name:443:$IP" "https://$name/" && valid=true
-  headers=$(curl -s -o /dev/null -D - --max-time 15 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
+  curl -sv -o /dev/null --max-time 5 --resolve "$name:443:$IP" "https://$name/" 2>&1 | grep -q "^\*  *SSL certificate verify ok" && valid=true
+  headers=$(curl -s -o /dev/null -D - --max-time 5 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
   status=$(printf "%s\n" "$headers" | sed -n "1s/^HTTP[^ ]* \([0-9]*\).*/\1/p")
   cf=false
   printf "%s\n" "$headers" | grep -qi "^cf-ray:" && cf=true

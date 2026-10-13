@@ -183,7 +183,9 @@ certificate retries and a network per project.
   devopsy-cli from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
-  DigitalOcean), a request through what DNS returns, all in the `curl`
+  DigitalOcean; validity from the verified handshake's verbose line,
+  since `hold` may keep the request itself for a paused site, so every
+  request there has a short `--max-time`), a request through what DNS returns, all in the `curl`
   service. It prints the `devopsy --probe` line for the outside view. The
   public IP comes from `DEVOPSY_PUBLIC_IP`, else 1.1.1.1's `/cdn-cgi/trace`
   (the default route's address is private behind NAT, as on OrbStack). The
