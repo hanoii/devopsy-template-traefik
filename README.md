@@ -23,7 +23,7 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 ## Using this template
 
 A starting point to own, not a dependency: start a project from it on
-GitHub ("Use this template"), or clone it and keep this repository as a
+GitHub ("Use this template"), or sync it and keep this repository as a
 remote (`upstream`) to pull its changes when you choose. Nothing updates
 your copy, or what runs on your servers, but your own release.
 
@@ -382,10 +382,10 @@ or unhealthy, Traefik drops its router and the other one answers. Priority
 2 beats the server-wide page's 1. devopsy-template-drupal11's `alwaysup`
 is the worked example: a Caddy that tries the app every second for up to
 a minute and streams its answer, so visitors who arrive during a deploy or
-a clone get the real page, late, and the maintenance page only when the
+a sync get the real page, late, and the maintenance page only when the
 app does not come back in time, or at once in its maintenance mode. Give
 such a router the app's certificate resolver label too, and no
-`devopsy.clone` label: a clone never stops it. Nothing of it needs this
+`devopsy.sync` label: a sync never stops it. Nothing of it needs this
 Traefik beyond routing.
 
 ## Dashboard
