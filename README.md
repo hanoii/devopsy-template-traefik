@@ -339,10 +339,10 @@ The proxies are kept in `mnt/proxies/proxies.conf`. Adding the first proxy,
 removing the last one, or changing the ranges of an `X-Forwarded-For` or
 `X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
 restarts Traefik; anything else does not. Those are static settings, which
-`deploy` and `devopsy proxies` write together in `mnt/traefik.env`, with
-the [hold](#holding-requests) middleware's. Releases from before it kept
-the proxies' part in `mnt/proxies/proxies.env`: the next `deploy` rewrites
-it as `mnt/traefik.env` and removes it, nothing to do by hand.
+`deploy` and `devopsy proxies` write together in `mnt/traefik.env`.
+Releases from before it kept them in `mnt/proxies/proxies.env`: the next
+`deploy` rewrites it as `mnt/traefik.env` and removes it, nothing to do by
+hand.
 
 Every `deploy`, so every release, fetches URL ranges again. Cloudflare's
 change rarely. For regular refreshes in between, schedule `devopsy
@@ -366,11 +366,23 @@ unhealthy, Traefik answers 502, 503 or 504. The bundled `hold` plugin
 (`plugins-local/`, standard library only) holds those requests instead:
 it retries each one every second, its body replayed, and answers as soon as
 the backend does, for up to 60 seconds (under Cloudflare's 100). Visitors
-see a slow page instead of an error. `deploy` puts it on the `websecure`
-entrypoint, so every site gets it (`mnt/dynamic/hold.yaml`):
+see a slow page instead of an error. `deploy` writes the middleware,
+`hold@file` (`mnt/dynamic/hold.yaml`), and a project puts it on the
+routers it wants held, by label:
+
+```yaml
+labels:
+  - traefik.http.routers.myapp.middlewares=hold@file
+```
+
+The templates' app and maintenance routers do. Nothing is held without
+the label: holding has a cost on every response, held or not (streamed
+responses lose their flushes, below), and a project's own routers can
+leave it off, an admin path or an API on a router of their own. The limit
+is the server's:
 
 ```dotenv
-DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
+DEVOPSY_HOLD=60s     # the longest a request is held; 0 passes everything through
 ```
 
 - The first status the backend writes decides: anything else, including
@@ -395,17 +407,18 @@ DEVOPSY_HOLD=60s     # the longest a request is held; 0 turns it off
   that look at a site, like `domains`, which get the backend's answer at
   once. Anyone can send it, and only gets the raw 502 or 503 for it.
 - Event streams (`Accept: text/event-stream`) and gRPC skip holding. Under
-  Traefik's plugin interpreter a held response cannot be flushed early, so
-  other streamed responses (Drupal's BigPipe, for one) arrive in 4 KB
-  pieces or at the end instead of chunk by chunk.
+  Traefik's plugin interpreter a response through the middleware cannot
+  be flushed early, held or not, so other streamed responses (Drupal's
+  BigPipe, for one) arrive in 4 KB pieces or at the end instead of chunk
+  by chunk. Routers without the middleware stream as usual.
 - A paused or still starting container keeps its router, answering 503
   until it is healthy again (`allowEmptyServices` in `compose.yaml`), so
   its requests are held like any other. A stopped container loses its
   router: see "Maintenance pages".
 
 When the limit passes, the last response goes through, unless the
-middleware has a page. A project gives its routers their own instance by
-labels, with a page or other limits; it takes over from the entrypoint's:
+middleware has a page. A project gives a router its own instance instead
+of `hold@file`, with a page or other limits:
 
 ```yaml
 labels:
@@ -416,7 +429,9 @@ labels:
 
 The page is answered as a 503 with `Retry-After: 30` and `Cache-Control:
 no-store`. Its other settings: `interval` (`1s`), `statuses` (`502,503,504`)
-and `maxBody` (bytes, `1048576`).
+and `maxBody` (bytes, `1048576`). A router naming `hold@file` needs this
+Traefik released on its server first: Traefik drops a router whose
+middleware does not exist.
 
 ## Maintenance pages
 
@@ -439,10 +454,11 @@ small static server with a router on the app's rule at `priority=2`. A
 router's priority defaults to its rule's length, so the app's router wins
 while the app runs; when it stops, the maintenance router answers: at
 once when its page carries `Retry-After` (down on purpose), after
-holding otherwise (`hold` retries until the app's router is back or its
-limit passes: a wait through restarts and clones, the page after longer
-stops; devopsy-template-drupal11 does both, with a flag for the
-`Retry-After`). Priority 2 beats the server-wide page's 1:
+holding otherwise, with `hold@file` on the maintenance router too
+(`hold` retries until the app's router is back or its limit passes: a
+wait through restarts and clones, the page after longer stops;
+devopsy-template-drupal11 does both, with a flag for the `Retry-After`).
+Priority 2 beats the server-wide page's 1:
 
 ```yaml
 services:
@@ -462,6 +478,7 @@ services:
       - traefik.enable=true
       - traefik.http.routers.${COMPOSE_PROJECT_NAME}-maintenance.rule=${SITE_HOST_RULE}
       - traefik.http.routers.${COMPOSE_PROJECT_NAME}-maintenance.priority=2
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-maintenance.middlewares=hold@file
       - traefik.http.routers.${COMPOSE_PROJECT_NAME}-maintenance.service=${COMPOSE_PROJECT_NAME}-maintenance
       - traefik.http.services.${COMPOSE_PROJECT_NAME}-maintenance.loadbalancer.server.port=8080
     networks: [traefik]
