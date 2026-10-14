@@ -152,7 +152,11 @@ certificate retries and a network per project.
   and sending its header through a whoami.
 - The `traefik` network is shared by every routed container: one of them,
   compromised, reaches the others' ports directly, past Traefik's
-  middlewares. Accepted while projects on a server trust each other and
+  middlewares. Also, Docker's DNS answers a service alias (`app`) with any
+  project's container carrying it on that network: a service on it that
+  proxies to a sibling must use the network-scoped name,
+  `app.<project>_default` (devopsy-template-drupal11's alwaysup; seen
+  resolving to another site's app while its own was stopped). Accepted while projects on a server trust each other and
   none relies on a middleware for access control (the recipes do not; only
   their web service joins it). The design for a network per project, tested,
   is in the roadmap. What a taken web container cannot reach: the socket
