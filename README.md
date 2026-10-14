@@ -47,10 +47,12 @@ devopsy @vm1:main setup   # vm1: the server's SSH destination
 
 It asks for the settings (email, wildcard URLs and their certificates,
 Cloudflare's proxy), writes them with `--vars`, releases, prints the DNS
-records to create, checks them with `domains`, offers production
-certificates and adds the alias below. Each step is a devopsy command,
-printed before it runs; run it again to change a setting. The rest of this
-section is the same by hand.
+records to create (the wildcard's DNS only, never proxied), checks them
+with `domains`, and adds the alias below under a name you give. It
+defaults to production certificates; answer no for staging. Each step is
+a devopsy command, printed before it runs; run it again to change a
+setting, like the wildcard's resolver. The rest of this section is the
+same by hand.
 
 Its one environment, `main`, is the same on every server:
 `devopsy @<server>:main` from your checkout (`traefik/main` under the
