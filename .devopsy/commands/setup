@@ -19,13 +19,28 @@ set -eu
 [ -r /dev/tty ] || die "needs a terminal"
 cd "$dir/.."
 
+# Colors at a terminal, unless NO_COLOR.
+bold='' dim='' cyan='' green='' yellow='' reset=''
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  esc=$(printf '\033')
+  bold="${esc}[1m" dim="${esc}[2m" cyan="${esc}[36m" green="${esc}[32m" yellow="${esc}[33m" reset="${esc}[0m"
+fi
+
+# say <text>: a step, its first line bold.
 say() {
-  printf '\n%s\n' "$*"
+  first=${1%%"
+"*}
+  printf '\n%s%s%s%s\n' "$bold" "$first" "$reset" "${1#"$first"}"
+}
+
+# note <text>: something to fix in an answer.
+note() {
+  printf '%s%s%s\n' "$yellow" "$*" "$reset"
 }
 
 # ask <question> [<default>]: the answer, or the default when empty.
 ask() {
-  printf '%s%s: ' "$1" "${2:+ [$2]}" >/dev/tty
+  printf '%s%s%s%s: ' "$cyan" "$1" "$reset" "${2:+ ${dim}[$2]$reset}" >/dev/tty
   read -r answer </dev/tty || answer=
   printf '%s\n' "${answer:-${2:-}}"
 }
@@ -42,7 +57,7 @@ confirm() {
 
 # secret <question>: a hidden answer.
 secret() {
-  printf '%s: ' "$1" >/dev/tty
+  printf '%s%s%s: ' "$cyan" "$1" "$reset" >/dev/tty
   stty -echo </dev/tty
   read -r answer </dev/tty || answer=
   stty echo </dev/tty
@@ -52,7 +67,7 @@ secret() {
 
 # run <devopsy arguments>: printed, then run.
 run() {
-  printf '+ devopsy %s\n' "$*" >&2
+  printf '%s+ devopsy %s%s\n' "$dim" "$*" "$reset" >&2
   devopsy "$@"
 }
 
@@ -65,14 +80,18 @@ case $DEVOPSY_COMMAND_TARGET in
 esac
 
 echo "Reading $t's settings..."
-if ! names=$(devopsy "$t" --vars 2>/dev/null); then
+# Every value in one session, as --env prints them (KEY='value'). Before
+# the first release there is none: --vars only tells the server is there.
+if env=$(devopsy "$t" --env 2>/dev/null); then
+  names=$(printf '%s\n' "$env" | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p')
+elif devopsy "$t" --vars >/dev/null 2>&1; then
+  env='' names=''
+else
   die "cannot reach $t. Set the server up first (devopsy-server's setup.sh), then check: ssh <server> docker info"
 fi
 # current <name>: its value on the server, or nothing.
 current() {
-  if printf '%s\n' "$names" | grep -qx "$1"; then
-    devopsy "$t" --vars get "$1" 2>/dev/null || true
-  fi
+  printf '%s\n' "$env" | sed -n "s/^$1='\(.*\)'\$/\1/p" | head -n 1
 }
 
 email_var=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL
@@ -123,8 +142,8 @@ if confirm "Production? (n: staging)" "$d"; then
 else
   letsencrypt=staging
 fi
-# A new server starts on the right one; one already configured switches
-# after the release (letsencrypt moves the old certificates aside).
+# A server not released yet starts on the right one; a released one
+# switches after the release (letsencrypt moves the old certificates aside).
 if [ -z "$names" ]; then
   [ "$letsencrypt" = staging ] || setting "$ca_var" "$production_ca"
   letsencrypt=
@@ -249,7 +268,7 @@ case $choice in
     public_ip
     say "DNS: create this record where $domain's zone is hosted:
 
-  *.$domain.  A  $ip
+  $green*.$domain.  A  $ip$reset
 
 At Cloudflare, keep it DNS only (grey cloud). Its free edge certificate
 only covers one level below the zone: proxied, *.$domain fails HTTPS
@@ -284,10 +303,10 @@ devopsy @vm1-traefik domains. Added to $config."
     alias=$(ask "Alias name (Enter to skip)")
     case $alias in
       '') break ;;
-      *[!A-Za-z0-9._-]*) echo "Letters, digits, '.', '_' and '-' only." ;;
+      *[!A-Za-z0-9._-]*) note "Letters, digits, '.', '_' and '-' only." ;;
       *)
         if [ -f "$config" ] && grep -Eq "^[[:space:]]+$alias:" "$config"; then
-          echo "@$alias is already in $config."
+          note "@$alias is already in $config."
         else
           break
         fi
@@ -319,8 +338,8 @@ if [ -n "$alias" ]; then
     printf '  %s\n' "$line"
     alias=
   fi
-  [ -z "$alias" ] || echo "Added. devopsy @$alias domains"
+  [ -z "$alias" ] || echo "${green}Added.$reset devopsy @$alias domains"
 fi
 
-say "Done. Sites route through this Traefik by joining the \`traefik\` network;
+say "${green}Done.$reset$bold Sites route through this Traefik by joining the \`traefik\` network;
 devopsy-template-whoami is the smallest example."
