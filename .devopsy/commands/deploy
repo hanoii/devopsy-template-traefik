@@ -86,8 +86,6 @@ if [ -f "$dir/mnt/dynamic/maintenance.yaml" ]; then
   rm -f "$dir/mnt/dynamic/maintenance.yaml"
   echo "deploy: the server-wide maintenance page is gone; unrouted hosts get Traefik's 404"
 fi
-[ -z "${DEVOPSY_MAINTENANCE_PAGE:-}" ] ||
-  warn "DEVOPSY_MAINTENANCE_PAGE does nothing any more: remove it from .env"
 
 # Releases up to October 2026 wrote a hold middleware (mnt/dynamic/hold.yaml,
 # its plugin gone since): a router naming a missing middleware is dropped,

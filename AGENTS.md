@@ -254,9 +254,9 @@ certificate retries and a network per project.
   only answered for environments that were down or removed, and only on
   wildcard URLs: custom domains, what visitors use, never matched. A
   removed environment saying "back soon" forever is worse than a 404.
-  `deploy` removes its `mnt/dynamic/maintenance.yaml`, `up
-  --remove-orphans` its container, and it warns while the variable is
-  set; `mnt/maintenance/` stays (the operator's page).
+  `deploy` removes its `mnt/dynamic/maintenance.yaml` and `up
+  --remove-orphans` its container; `mnt/maintenance/` stays (the
+  operator's page).
 
 ## Releases
 
