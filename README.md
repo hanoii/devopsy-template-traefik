@@ -42,7 +42,7 @@ A server needs Docker, a deploy user in the `docker` group, and
 Debian. Then, from your checkout:
 
 ```sh
-devopsy setup vm1   # vm1: the server's SSH destination
+devopsy @vm1 setup   # vm1: the server's SSH destination
 ```
 
 It asks for the settings (email, wildcard URLs and their certificates,
