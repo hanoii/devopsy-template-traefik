@@ -197,6 +197,10 @@ certificate retries and a network per project.
   check script prints tab-separated lines that jq turns into JSON, and only
   names matching a host name reach it: hosts come from every project's
   rules, and one stray quote broke hand-built JSON for the whole server.
+  Cloudflare's proxy is recognized by `cf-ray` on the HTTPS answer, else
+  on plain HTTP: its free edge certificate covers one level below the
+  zone only, so a proxied `*.prod1.example.com` fails the handshake at
+  the edge while HTTP still answers (seen October 2026).
 - Traefik's API and dashboard (entrypoint `traefik`, `:8080`) listen on
   every network Traefik joins, `traefik` included, so they are not
   insecure: `api_access` (lib/common.sh, after every `up` in `deploy` and

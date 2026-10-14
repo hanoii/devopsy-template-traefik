@@ -84,6 +84,11 @@ for name; do
   status=$(printf "%s\n" "$headers" | sed -n "1s/^HTTP[^ ]* \([0-9]*\).*/\1/p")
   cf=false
   printf "%s\n" "$headers" | grep -qi "^cf-ray:" && cf=true
+  # No HTTPS answer: Cloudflare still answers plain HTTP when its edge has
+  # no certificate for the name (status stays 0).
+  if [ -z "$status" ]; then
+    curl -s -o /dev/null -D - --max-time 10 --doh-url https://1.1.1.1/dns-query "http://$name/" 2>/dev/null | grep -qi "^cf-ray:" && cf=true
+  fi
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf"
 done
 '
@@ -97,7 +102,7 @@ report_filter='
     if ($r.routed | not) then "Traefik does not route it: is the site running, with a router rule for it?"
     elif $r.valid and $r.on_server then "live"
     elif $r.cdn then
-      if $r.status == 0 then "Cloudflare did not answer"
+      if $r.status == 0 then "Cloudflare answers HTTP but not HTTPS: its edge has no certificate for this name. Its free one only covers names one level below the zone (*.example.com), not deeper ones like this. Set the DNS record to DNS only (grey cloud), or get an edge certificate for it (Advanced Certificate Manager)"
       elif ($r.status | IN(521, 522, 523)) then "Cloudflare cannot reach the server (\($r.status)): check its DNS origin is \($ip) and ports 80 and 443 are open"
       elif $r.status == 525 then "Cloudflare'"'"'s TLS handshake with the server fails (525): does the server have a certificate for this name?"
       elif $r.status == 526 then "Cloudflare rejects the server'"'"'s certificate (526): get a valid one first, or set its SSL mode to Full"
@@ -132,7 +137,7 @@ text_filter='
   .[] |
   "\(.host)  [\(if .live then "live" else "pending" end)]",
   "  resolver     \(.resolver // "-")",
-  "  dns          \(if (.ips | length) == 0 then "does not resolve" else (.ips | join(", ")) + (if .on_server then " (this server)" elif .cdn then " (Cloudflare proxy, HTTP \(.status) through it)" else " (not this server)" end) end)",
+  "  dns          \(if (.ips | length) == 0 then "does not resolve" else (.ips | join(", ")) + (if .on_server then " (this server)" elif .cdn then " (Cloudflare proxy, \(if .status == 0 then "HTTPS fails at its edge" else "HTTP \(.status) through it" end))" else " (not this server)" end) end)",
   (if .method == "dns-cname" and ((.valid | not) or .have != "") then
      "  challenge    \(if .have == "" then "missing" elif (.have | ascii_downcase) == (.want | ascii_downcase) then "ok" else "points to \(.have)" end)" else empty end),
   (if .valid then "  certificate  valid, \(.issuer), expires \(.expire)"
