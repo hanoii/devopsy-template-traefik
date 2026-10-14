@@ -392,8 +392,7 @@ Nothing of it needs this Traefik beyond routing.
 
 Until October 2026 this Traefik had a server-wide maintenance page
 (`DEVOPSY_MAINTENANCE_PAGE`) for hosts under the wildcard domain; see
-AGENTS.md for why it went. `deploy` removes its router and container;
-`mnt/maintenance/` is left alone.
+AGENTS.md for why it went.
 
 ## Dashboard
 
