@@ -33,6 +33,11 @@ case ",${COMPOSE_PROFILES:-}," in
       echo "deploy: DEVOPSY_ACMEDNS_IP=$ip in .env"
     fi
     ;;
+  *)
+    # Turned off: `up` leaves a service whose profile is off running.
+    # Named, compose finds it anyway.
+    quiet rm -s -f acmedns >/dev/null
+    ;;
 esac
 
 # One wildcard certificate for every project's wildcard URL. It needs a DNS-01
