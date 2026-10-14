@@ -115,9 +115,10 @@ setting "$email_var" "$email"
 ca_var=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER
 production_ca=https://acme-v02.api.letsencrypt.org/directory
 case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
-say "Let's Encrypt staging gives test certificates that browsers do not trust,
-for trying things out without its rate limits."
-if confirm "Production certificates?" "$d"; then
+say "Certificates come from Let's Encrypt: production, trusted by browsers, or
+staging, test certificates browsers warn about, for trying things out
+without production's rate limits."
+if confirm "Production? (n: staging)" "$d"; then
   letsencrypt=production
 else
   letsencrypt=staging
