@@ -1,17 +1,16 @@
 #!/bin/sh
 ## Description: Set up this Traefik on a server, step by step
 ## Run: local
-## Needs: server
+## Needs: target
 # Asks for the settings, writes them to the server's shared/.env through
 # `--vars`, releases, then walks through what comes after: acme-dns's DNS
 # records, trusted proxies, production certificates and an alias. Every
 # step is a devopsy command, printed before it runs: setup has no state of
 # its own, and running it again shows the current values as defaults.
 #
-#   devopsy @<server> setup
+#   devopsy @<server>:main setup     (or an alias: @vm1-traefik setup)
 #
-# <server> is an SSH destination, like any target's; given a target
-# (@vm1:main), its server. The server needs
+# <server> is an SSH destination, like any target's. The server needs
 # Docker, the devopsy deploy user and devopsy: devopsy-server's setup.sh
 # on Debian.
 set -eu
@@ -57,13 +56,17 @@ run() {
   devopsy "$@"
 }
 
-# The address as typed: vm1, vm1: or vm1:main.
-server=${DEVOPSY_COMMAND_TARGET%%:*}
-t=@$server:main
+# The target as typed, used as is: vm1:main, or an alias. Its server,
+# for its IP and the alias, only when the address names one.
+t=@$DEVOPSY_COMMAND_TARGET
+case $DEVOPSY_COMMAND_TARGET in
+  *:*) server=${DEVOPSY_COMMAND_TARGET%%:*} ;;
+  *) server= ;;
+esac
 
-echo "Reading $server's settings..."
+echo "Reading $t's settings..."
 if ! names=$(devopsy "$t" --vars 2>/dev/null); then
-  die "cannot reach $server as its deploy user. Set the server up first (devopsy-server's setup.sh), then: ssh $server docker info"
+  die "cannot reach $t. Set the server up first (devopsy-server's setup.sh), then check: ssh <server> docker info"
 fi
 # current <name>: its value on the server, or nothing.
 current() {
@@ -130,7 +133,8 @@ case $choice in
     setting DEVOPSY_PROXY_WILDCARD_DOMAIN "$domain"
     ;;
   3)
-    ip=$(ssh -G "$server" 2>/dev/null | awk '$1 == "hostname" { print $2 }')
+    ip=
+    [ -z "$server" ] || ip=$(ssh -G "$server" 2>/dev/null | awk '$1 == "hostname" { print $2 }')
     printf '%s\n' "$ip" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || ip=
     ip=$(ask "The server's public IPv4" "$ip")
     printf '%s\n' "$ip" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || die "not an IPv4 address: $ip"
@@ -204,7 +208,7 @@ fi
   run "$t" --vars set $set_names
 )
 
-say "Releasing Traefik to $server."
+say "Releasing Traefik to $t."
 run "$t" --release
 
 if [ -n "$cloudflare_proxy" ]; then
@@ -241,12 +245,15 @@ else
   echo "Later: devopsy $t letsencrypt production"
 fi
 
-# vm1-traefik; from deploy@203.0.113.10, 203-0-113-10-traefik.
+# vm1-traefik; from deploy@203.0.113.10, 203-0-113-10-traefik. None when
+# called through one.
 alias=$(printf '%s' "$server" | sed 's/^.*@//' | tr . -)-traefik
 config=${DEVOPSY_HOME:-$HOME/.config/devopsy}/config.yaml
 checkout=$(pwd)
-line="$alias: {source: $checkout, to: \"$server:main\"}"
-if [ -f "$config" ] && grep -Eq "^[[:space:]]+$alias:" "$config"; then
+line="$alias: {source: $checkout, to: \"$DEVOPSY_COMMAND_TARGET\"}"
+if [ -z "$server" ]; then
+  :
+elif [ -f "$config" ] && grep -Eq "^[[:space:]]+$alias:" "$config"; then
   say "Alias: @$alias already in $config."
 else
   say "An alias runs this Traefik's commands from anywhere:

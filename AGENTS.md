@@ -17,9 +17,9 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `## Description:` line): `deploy` (what release and rollback run),
   `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`, `forget`,
   and `setup`, the only one run on the operator's machine (`## Run:
-  local`, `## Needs: server`: `devopsy @<server> setup`, the address in
-  `DEVOPSY_COMMAND_TARGET`): it drives the others
-  through `@<server>:main`, setting values with `--vars set` from its
+  local`, `## Needs: target`: `devopsy @<server>:main setup`, or an
+  alias, the address as typed in `DEVOPSY_COMMAND_TARGET`): it drives the
+  others through that target, setting values with `--vars set` from its
   environment, never as arguments, and keeps no state.
 - `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
   the retry router file, for `domains`. devopsy-cli knows no proxy: the
