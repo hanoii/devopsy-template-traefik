@@ -7,18 +7,6 @@
 
 dir=${DEVOPSY_PROJECT_DIR:?run through devopsy}
 
-# DEVOPSY_MAINTENANCE_PAGE=true turns the maintenance profile on for every
-# devopsy these scripts run, next to COMPOSE_PROFILES' own.
-if [ "${DEVOPSY_MAINTENANCE_PAGE:-}" = true ]; then
-  case ",${COMPOSE_PROFILES:-}," in
-    *,maintenance,*) ;;
-    *)
-      COMPOSE_PROFILES=${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}maintenance
-      export COMPOSE_PROFILES
-      ;;
-  esac
-fi
-
 die() {
   echo "$(basename "$0"): $*" >&2
   exit 1
