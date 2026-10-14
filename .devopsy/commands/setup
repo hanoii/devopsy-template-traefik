@@ -1,5 +1,6 @@
 #!/bin/sh
-## Description: Set up this Traefik on a server, from your machine, step by step (setup [<server>])
+## Description: Set up this Traefik on a server, step by step (setup [<server>])
+## Scope: local
 # Asks for the settings, writes them to the server's shared/.env through
 # `--vars`, releases, then walks through what comes after: acme-dns's DNS
 # records, trusted proxies, production certificates and an alias. Every
@@ -14,9 +15,6 @@
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
-# Only on your machine: releases upload commands/ too, and on a server
-# target.env sets DEVOPSY_TARGET.
-[ -z "${DEVOPSY_TARGET:-}" ] || die "runs on your machine, in the checkout: devopsy setup [<server>]"
 [ -r /dev/tty ] || die "needs a terminal"
 cd "$dir/.."
 
