@@ -2,10 +2,10 @@
 
 devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run with
 [devopsy-cli](https://github.com/hanoii/devopsy-cli) and released onto each
-server like any devopsy project (`traefik/main` under the server's release
+server like any devopsy project (`traefik/prod` under the server's release
 root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 
-- `config.yaml`: `project: traefik`, its one environment `main` and the
+- `config.yaml`: `project: traefik`, its one environment `prod` and the
   release steps; no servers, which are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
@@ -17,7 +17,7 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `## Description:` line): `deploy` (what release and rollback run),
   `restart`, `acmedns`, `letsencrypt`, `proxies`, `domains`, `forget`,
   and `setup`, the only one run on the operator's machine (`## Run:
-  local`, `## Needs: target`: `devopsy @<server>:main setup`, or an
+  local`, `## Needs: target`: `devopsy @<server>:prod setup`, or an
   alias, the address as typed in `DEVOPSY_COMMAND_TARGET`): it drives the
   others through that target, setting values with `--vars set` from its
   environment, never as arguments, and keeps no state.
@@ -262,10 +262,10 @@ certificate retries and a network per project.
 
 ## Releases
 
-Servers get it with `devopsy @<server>:main --release` from a checkout, or
+Servers get it with `devopsy @<server>:prod --release` from a checkout, or
 an operator's alias (`~/.config/devopsy/config.yaml`, `source:` naming the
 checkout): servers are the operator's, never in this repository.
-`config.yaml` gives `main` `mode: image` (only `.devopsy/` is uploaded) and
+`config.yaml` gives `prod` `mode: image` (only `.devopsy/` is uploaded) and
 `deploy` for `--release` and `--rollback`. Settings go in the server's
 `shared/.env` through `--vars`. No migration code: a breaking change to
 `shared/` is moved by hand on each server.
@@ -278,6 +278,17 @@ cannot remove a network with endpoints and leaves Traefik stopped.
 Disconnect them and remove the old network first, release Traefik, then
 `docker network connect` them to the new one until each project's own
 release.
+
+The environment was `main` until October 2026 (`traefik/main`, compose
+project `traefik-main`). A fresh `prod` release fails while `traefik-main`
+owns the `traefik` network and ports 80 and 443, and `--destroy` would
+take `shared/` with it: certificates and acme-dns registrations. Moved by
+hand per server, Traefik down about a minute: disconnect every container
+from `traefik`, `docker compose -p traefik-main down` in
+`traefik/main/current/.devopsy`, `mv traefik/main/shared
+traefik/prod/shared`, release `prod`, `docker network connect traefik`
+each container again, remove `traefik/main`, point the aliases at `:prod`.
+Done on weh.devopsy.prod1 (October 2026), certificates kept.
 
 ## Checks
 

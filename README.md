@@ -42,7 +42,7 @@ A server needs Docker, a deploy user in the `docker` group, and
 Debian. Then, from your checkout:
 
 ```sh
-devopsy @vm1:main setup   # vm1: the server's SSH destination
+devopsy @vm1:prod setup   # vm1: the server's SSH destination
 ```
 
 It asks for the settings (email, wildcard URLs and their certificates,
@@ -54,16 +54,18 @@ a devopsy command, printed before it runs; run it again to change a
 setting, like the wildcard's resolver. The rest of this section is the
 same by hand.
 
-Its one environment, `main`, is the same on every server:
-`devopsy @<server>:main` from your checkout (`traefik/main` under the
-server's release root, compose project `traefik-main`). Add an alias per
+Its one environment, `prod`, is the same on every server:
+`devopsy @<server>:prod` from your checkout (`traefik/prod` under the
+server's release root, compose project `traefik-prod`). Add an alias per
 server to your user config, with `source:` naming your checkout: releases
 run only from there, and every other command works from any directory.
+Until October 2026 the environment was `main`: a server still on
+`traefik/main` is moved by hand, keeping `shared/` (AGENTS.md, Releases).
 
 ```yaml
 # ~/.config/devopsy/config.yaml
 aliases:
-  vm1-traefik: {source: ~/src/devopsy-template-traefik, to: "devopsy@203.0.113.10:main"}
+  vm1-traefik: {source: ~/src/devopsy-template-traefik, to: "devopsy@203.0.113.10:prod"}
 ```
 
 Set its settings before the first release, then release it:
@@ -74,7 +76,7 @@ devopsy @vm1-traefik --release
 ```
 
 `.devopsy/.env.example` lists every setting. They live in the server's
-`traefik/main/shared/.env` (under its release root); change one with `--vars set`, then `devopsy
+`traefik/prod/shared/.env` (under its release root); change one with `--vars set`, then `devopsy
 @vm1-traefik deploy` (or the next release) applies it. `deploy` is what each
 release runs: it prepares `mnt/`, writes the public wildcard certificate,
 refreshes trusted proxies' ranges and starts or updates every service.
@@ -366,7 +368,7 @@ deploy user's crontab on the server; the release lock keeps it out of a
 release:
 
 ```cron
-17 4 * * 1  cd ~/traefik/main/current && flock ~/traefik/main/.lock devopsy proxies refresh
+17 4 * * 1  cd ~/traefik/prod/current && flock ~/traefik/prod/.lock devopsy proxies refresh
 ```
 
 Load balancers that pass TCP connections with the PROXY protocol (HAProxy, most
