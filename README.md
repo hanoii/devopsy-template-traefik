@@ -359,34 +359,28 @@ cloud network load balancers) need no plugin: Traefik supports it natively,
 for example `TRAEFIK_ENTRYPOINTS_WEBSECURE_PROXYPROTOCOL_TRUSTEDIPS` in a
 compose override.
 
-## Maintenance pages
+## Stopped sites
 
 Traefik drops a stopped container's router, so its hosts get Traefik's 404
-at once: only another router can answer them.
+at once: only another router can answer them, and that router belongs to
+the project, which knows its own domains and whether its app is coming back.
 
-**Server-wide:** with `DEVOPSY_MAINTENANCE_PAGE=true` and a wildcard domain,
-`deploy` starts the `maintenance` service (the `maintenance` profile, nginx
-as 10001) and routes every host under the wildcard domain to it at the
-lowest priority (`mnt/dynamic/maintenance.yaml`). Any stopped, destroyed
-or not yet released environment there gets a generic page, a 503 with
-`Retry-After: 30`; custom domains and unknown hosts keep the 404. Put your
-own page in `mnt/maintenance/index.html` (on a server
-`traefik/main/shared/mnt/maintenance/index.html`); it is read on each
-request. Turning it off and running `deploy` again removes both.
+A small service with a router on the app's rule at `priority=2`. A
+router's priority defaults to its rule's length, so the app's router wins
+while the app runs; when the app is stopped, recreated or unhealthy,
+Traefik drops its router and the other one answers.
+devopsy-template-drupal11's `alwaysup` is the worked example: a Caddy that
+tries the app every second for up to a minute and streams its answer, so
+visitors who arrive during a deploy or a sync get the real page, late, and
+a maintenance page only when the app does not come back in time, or at
+once in its maintenance mode. Give such a router the app's certificate
+resolver label too, and no `devopsy.sync` label: a sync never stops it.
+Nothing of it needs this Traefik beyond routing.
 
-**Per project,** for its own domains, and to wait for the app instead of
-showing a page: a small service with a router on the app's rule at
-`priority=2`. A router's priority defaults to its rule's length, so the
-app's router wins while the app runs; when the app is stopped, recreated
-or unhealthy, Traefik drops its router and the other one answers. Priority
-2 beats the server-wide page's 1. devopsy-template-drupal11's `alwaysup`
-is the worked example: a Caddy that tries the app every second for up to
-a minute and streams its answer, so visitors who arrive during a deploy or
-a sync get the real page, late, and the maintenance page only when the
-app does not come back in time, or at once in its maintenance mode. Give
-such a router the app's certificate resolver label too, and no
-`devopsy.sync` label: a sync never stops it. Nothing of it needs this
-Traefik beyond routing.
+Until October 2026 this Traefik had a server-wide maintenance page
+(`DEVOPSY_MAINTENANCE_PAGE`) for hosts under the wildcard domain; see
+AGENTS.md for why it went. `deploy` removes its router and container;
+`mnt/maintenance/` is left alone.
 
 ## Dashboard
 

@@ -274,41 +274,6 @@ services:
     networks:
       - acmedns
 
-  # Optional server-wide maintenance page (DEVOPSY_MAINTENANCE_PAGE=true,
-  # which turns this profile on for deploy and the other commands): hosts
-  # under the wildcard domain that no project routes, like a stopped
-  # environment, get maintenance/index.html (or mnt/maintenance/index.html
-  # when present) as a 503 with Retry-After, instead of Traefik's 404.
-  # Routed by mnt/dynamic/maintenance.yaml (deploy) through its alias; no
-  # labels, which would give it a router of its own.
-  maintenance:
-    profiles: [maintenance]
-    restart: unless-stopped
-    # The official image, its entrypoint (which edits its own default
-    # configuration) skipped: nginx.conf keeps everything it writes in
-    # /tmp, so it runs as 10001 on a read-only root filesystem.
-    image: nginx:1.30.5-alpine-slim
-    entrypoint: ['nginx', '-c', '/maintenance/nginx.conf', '-g', 'daemon off;']
-    healthcheck:
-      test: ['CMD', 'wget', '-Y', 'off', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/']
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    user: "10001:10001"
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges
-    volumes:
-      - ./maintenance:/maintenance:ro
-      - ./mnt/maintenance:/maintenance-custom:ro
-    networks:
-      default:
-        aliases: [devopsy-maintenance]
-
   # jq for commands and capabilities: `devopsy run --rm -T jq ...`. The
   # official image, nothing else in it; never started by `up`.
   jq:

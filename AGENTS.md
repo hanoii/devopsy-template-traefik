@@ -9,11 +9,8 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   release steps; no servers, which are the operator's.
 
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
-  (Compose profile `acmedns`), the optional `maintenance` page (profile
-  `maintenance`, turned on by `DEVOPSY_MAINTENANCE_PAGE=true` in
-  `lib/common.sh`; its nginx config and page in `maintenance/`), `init`
-  (ownership of `mnt/`), and `jq`, `curl` and `sqlite` (profile `tools`,
-  for scripts only).
+  (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq`,
+  `curl` and `sqlite` (profile `tools`, for scripts only).
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/`: devopsy custom commands (POSIX `sh`, each with a
@@ -26,9 +23,9 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `jq`, `quiet`, `env_set`, `static_env`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
-  provider: the public wildcard, proxies, maintenance, retries),
-  `proxies/` (`proxies.conf`, `forwarded-ips`), `maintenance/` (an
-  optional page) and `traefik.env` (static settings, see below).
+  provider: the public wildcard, proxies, retries), `proxies/`
+  (`proxies.conf`, `forwarded-ips`) and `traefik.env` (static settings,
+  see below).
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
   `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
   from that proxy's header. `devopsy proxies` keeps the proxies in
@@ -246,18 +243,16 @@ certificate retries and a network per project.
   also `unhealthy` at once, and stays so after the unpause until its
   next check, which is the event that brings it back. `docker stop` and
   `down` remove the container from the list, so its router goes either
-  way: only another router can answer, the server-wide maintenance
-  router (`priority: 1`, a `HostRegexp` under the wildcard domain) or a
-  project's own at 2 or more.
-- The maintenance service has no Traefik labels: with a service label and
-  no router, the Docker provider makes a default router with a Host rule,
-  and the default resolver would request a certificate for it. The file
-  provider routes to its network alias, `devopsy-maintenance`, which
-  Docker's DNS keeps current across restarts. Its profile comes from
-  `DEVOPSY_MAINTENANCE_PAGE` through `lib/common.sh`, so every command's
-  `up` keeps it; a plain `devopsy up` without it leaves it running, and
-  `deploy` removes it (`rm -s -f maintenance`, which finds the service by
-  name with its profile off) when turned off.
+  way: only another router can answer, a project's own at 2 or more.
+- There was a server-wide maintenance page (`DEVOPSY_MAINTENANCE_PAGE`,
+  an nginx at priority 1 for every host under the wildcard domain);
+  removed in October 2026. With holding in the project (alwaysup), it
+  only answered for environments that were down or removed, and only on
+  wildcard URLs: custom domains, what visitors use, never matched. A
+  removed environment saying "back soon" forever is worse than a 404.
+  `deploy` removes its `mnt/dynamic/maintenance.yaml`, `up
+  --remove-orphans` its container, and it warns while the variable is
+  set; `mnt/maintenance/` stays (the operator's page).
 
 ## Releases
 
@@ -314,10 +309,7 @@ For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
 Check all containers are healthy, `http://` redirects, `https://` reaches
-whoami, and the Traefik log has no new warnings. With a test
-`DEVOPSY_PROXY_WILDCARD_DOMAIN` and `DEVOPSY_MAINTENANCE_PAGE=true`, a
-stopped whoami under it, or any other host there, gets the maintenance
-page (`curl --resolve`). Then `devopsy down`.
+whoami, and the Traefik log has no new warnings. Then `devopsy down`.
 
 ## Commits
 
