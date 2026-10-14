@@ -39,7 +39,20 @@ it.
 A server needs Docker, a deploy user in the `docker` group, and
 [devopsy](https://github.com/hanoii/devopsy-cli).
 [devopsy-server](https://github.com/hanoii/devopsy-server) sets that up on
-Debian. Its one environment, `main`, is the same on every server:
+Debian. Then, from your checkout:
+
+```sh
+devopsy setup vm1   # vm1: the server's SSH destination
+```
+
+It asks for the settings (email, wildcard URLs and their certificates,
+Cloudflare's proxy), writes them with `--vars`, releases, prints the DNS
+records to create, checks them with `domains`, offers production
+certificates and adds the alias below. Each step is a devopsy command,
+printed before it runs; run it again to change a setting. The rest of this
+section is the same by hand.
+
+Its one environment, `main`, is the same on every server:
 `devopsy @<server>:main` from your checkout (`traefik/main` under the
 server's release root, compose project `traefik-main`). Add an alias per
 server to your user config, with `source:` naming your checkout: releases
