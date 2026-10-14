@@ -1,15 +1,17 @@
 #!/bin/sh
-## Description: Set up this Traefik on a server, step by step (setup [<server>])
-## Scope: local
+## Description: Set up this Traefik on a server, step by step
+## Run: local
+## Needs: server
 # Asks for the settings, writes them to the server's shared/.env through
 # `--vars`, releases, then walks through what comes after: acme-dns's DNS
 # records, trusted proxies, production certificates and an alias. Every
 # step is a devopsy command, printed before it runs: setup has no state of
 # its own, and running it again shows the current values as defaults.
 #
-#   devopsy setup [<server>]
+#   devopsy @<server> setup
 #
-# <server> is an SSH destination, like any target's. The server needs
+# <server> is an SSH destination, like any target's; given a target
+# (@vm1:main), its server. The server needs
 # Docker, the devopsy deploy user and devopsy: devopsy-server's setup.sh
 # on Debian.
 set -eu
@@ -55,9 +57,8 @@ run() {
   devopsy "$@"
 }
 
-server=${1:-}
-[ -n "$server" ] || server=$(ask "Server (an SSH destination)" "${DEVOPSY_SERVER:-}")
-[ -n "$server" ] || die "no server"
+# The address as typed: vm1, vm1: or vm1:main.
+server=${DEVOPSY_COMMAND_TARGET%%:*}
 t=@$server:main
 
 echo "Reading $server's settings..."
