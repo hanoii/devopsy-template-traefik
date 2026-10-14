@@ -79,14 +79,6 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
-# Releases up to October 2026 had a server-wide maintenance page: its
-# router goes here, its container with `up --remove-orphans` below.
-# mnt/maintenance/ stays, it may hold the operator's own page.
-if [ -f "$dir/mnt/dynamic/maintenance.yaml" ]; then
-  rm -f "$dir/mnt/dynamic/maintenance.yaml"
-  echo "deploy: the server-wide maintenance page is gone; unrouted hosts get Traefik's 404"
-fi
-
 # Releases up to October 2026 wrote a hold middleware (mnt/dynamic/hold.yaml,
 # its plugin gone since): a router naming a missing middleware is dropped,
 # so projects drop the `hold@file` label before this Traefik is released.
