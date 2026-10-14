@@ -91,12 +91,43 @@ unsetting() {
   fi
 }
 
+# The server's public IPv4, asked once: what DNS records point at.
+ip=
+public_ip() {
+  if [ -z "$ip" ]; then
+    [ -z "$server" ] || ip=$(ssh -G "$server" 2>/dev/null | awk '$1 == "hostname" { print $2 }')
+    is_ipv4 "$ip" || ip=
+    ip=$(ask "The server's public IPv4" "$ip")
+    is_ipv4 "$ip" || die "not an IPv4 address: $ip"
+  fi
+}
+is_ipv4() {
+  printf '%s\n' "$1" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}'
+}
+
 say "Let's Encrypt's account email, for expiry notices."
 email=
 while [ -z "$email" ]; do
   email=$(ask "Email" "$(current "$email_var")")
 done
 setting "$email_var" "$email"
+
+ca_var=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER
+production_ca=https://acme-v02.api.letsencrypt.org/directory
+case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
+say "Let's Encrypt staging gives test certificates that browsers do not trust,
+for trying things out without its rate limits."
+if confirm "Production certificates?" "$d"; then
+  letsencrypt=production
+else
+  letsencrypt=staging
+fi
+# A new server starts on the right one; one already configured switches
+# after the release (letsencrypt moves the old certificates aside).
+if [ -z "$names" ]; then
+  [ "$letsencrypt" = staging ] || setting "$ca_var" "$production_ca"
+  letsencrypt=
+fi
 
 profiles=$(current COMPOSE_PROFILES)
 # Without acmedns; added back below when chosen.
@@ -133,11 +164,7 @@ case $choice in
     setting DEVOPSY_PROXY_WILDCARD_DOMAIN "$domain"
     ;;
   3)
-    ip=
-    [ -z "$server" ] || ip=$(ssh -G "$server" 2>/dev/null | awk '$1 == "hostname" { print $2 }')
-    printf '%s\n' "$ip" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || ip=
-    ip=$(ask "The server's public IPv4" "$ip")
-    printf '%s\n' "$ip" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || die "not an IPv4 address: $ip"
+    public_ip
     domain=$(printf '%s' "$ip" | tr . -).sslip.io
     setting DEVOPSY_PROXY_WILDCARD_DOMAIN "$domain"
     setting DEVOPSY_WILDCARD_CERTRESOLVER none
@@ -210,6 +237,7 @@ fi
 
 say "Releasing Traefik to $t."
 run "$t" --release
+[ -z "$letsencrypt" ] || run "$t" letsencrypt "$letsencrypt"
 
 if [ -n "$cloudflare_proxy" ]; then
   run "$t" proxies add cloudflare
@@ -217,7 +245,15 @@ fi
 
 case $choice in
   1 | 2)
-    say "DNS: create an A record for *.$domain to this server's IP."
+    public_ip
+    say "DNS: create this record where $domain's zone is hosted:
+
+  *.$domain.  A  $ip
+
+At Cloudflare, keep it DNS only (grey cloud). Its free edge certificate
+only covers one level below the zone: proxied, *.$domain fails HTTPS
+unless $domain is the zone itself. Sites can still use the proxy for
+their own domains."
     if [ "$dns01" = acmedns ]; then
       say "acme-dns: open port 53, UDP and TCP, in your provider's firewall,
 and create these records, once:"
@@ -236,53 +272,53 @@ elif [ -n "$domain" ]; then
   run "$t" domains
 fi
 
-say "Certificates are from Let's Encrypt's staging until you switch: browsers
-do not trust them. Switch once the report above looks right; certificates
-are requested again."
-if confirm "Switch to production now?" n; then
-  run "$t" letsencrypt production
-else
-  echo "Later: devopsy $t letsencrypt production"
-fi
-
-# vm1-traefik; from deploy@203.0.113.10, 203-0-113-10-traefik. None when
-# called through one.
-alias=$(printf '%s' "$server" | sed 's/^.*@//' | tr . -)-traefik
+# An alias, named by the operator; none when called through one.
 config=${DEVOPSY_HOME:-$HOME/.config/devopsy}/config.yaml
 checkout=$(pwd)
+alias=
+if [ -n "$server" ]; then
+  say "An alias runs this Traefik's commands from anywhere, like
+devopsy @vm1-traefik domains. Added to $config."
+  while :; do
+    alias=$(ask "Alias name (Enter to skip)")
+    case $alias in
+      '') break ;;
+      *[!A-Za-z0-9._-]*) echo "Letters, digits, '.', '_' and '-' only." ;;
+      *)
+        if [ -f "$config" ] && grep -Eq "^[[:space:]]+$alias:" "$config"; then
+          echo "@$alias is already in $config."
+        else
+          break
+        fi
+        ;;
+    esac
+  done
+fi
 line="$alias: {source: $checkout, to: \"$DEVOPSY_COMMAND_TARGET\"}"
-if [ -z "$server" ]; then
-  :
-elif [ -f "$config" ] && grep -Eq "^[[:space:]]+$alias:" "$config"; then
-  say "Alias: @$alias already in $config."
-else
-  say "An alias runs this Traefik's commands from anywhere:
-devopsy @$alias domains"
-  if confirm "Add @$alias to $config?" y; then
-    if [ ! -f "$config" ]; then
-      mkdir -p "$(dirname "$config")"
-      printf 'aliases:\n  %s\n' "$line" >"$config"
-    elif grep -q '^aliases:[[:space:]]*$' "$config"; then
-      # After `aliases:`, indented like the next line, else two spaces.
-      tmp=$config.setup
-      awk -v line="$line" '
-        done != 1 && prev == 1 {
-          indent = $0; sub(/[^ ].*/, "", indent)
-          if (indent == "") indent = "  "
-          print indent line; done = 1
-        }
-        { print; prev = ($0 ~ /^aliases:[ \t]*$/) }
-        END { if (prev == 1 && done != 1) print "  " line }
-      ' "$config" >"$tmp"
-      cat "$tmp" >"$config"
-      rm -f "$tmp"
-    else
-      echo "Add it under aliases: in $config:"
-      printf '  %s\n' "$line"
-      alias=
-    fi
-    [ -z "$alias" ] || echo "Added. devopsy @$alias domains"
+if [ -n "$alias" ]; then
+  if [ ! -f "$config" ]; then
+    mkdir -p "$(dirname "$config")"
+    printf 'aliases:\n  %s\n' "$line" >"$config"
+  elif grep -q '^aliases:[[:space:]]*$' "$config"; then
+    # After `aliases:`, indented like the next line, else two spaces.
+    tmp=$config.setup
+    awk -v line="$line" '
+      done != 1 && prev == 1 {
+        indent = $0; sub(/[^ ].*/, "", indent)
+        if (indent == "") indent = "  "
+        print indent line; done = 1
+      }
+      { print; prev = ($0 ~ /^aliases:[ \t]*$/) }
+      END { if (prev == 1 && done != 1) print "  " line }
+    ' "$config" >"$tmp"
+    cat "$tmp" >"$config"
+    rm -f "$tmp"
+  else
+    echo "Add it under aliases: in $config:"
+    printf '  %s\n' "$line"
+    alias=
   fi
+  [ -z "$alias" ] || echo "Added. devopsy @$alias domains"
 fi
 
 say "Done. Sites route through this Traefik by joining the \`traefik\` network;
