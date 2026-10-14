@@ -1,5 +1,5 @@
 # devopsy config: see devopsy-cli's README, "Remote targets".
-# One environment, main, on every server: devopsy @<server>:main, or an
+# One environment, prod, on every server: devopsy @<server>:prod, or an
 # alias in the user-level ~/.config/devopsy/config.yaml (README, Setup).
 project: traefik
 secrets: [DEVOPSY_CLOUDFLARE_DNS_API_TOKEN]
@@ -8,4 +8,4 @@ defaults:
   release: deploy
   rollback: deploy
 environments:
-  main: {}
+  prod: {}

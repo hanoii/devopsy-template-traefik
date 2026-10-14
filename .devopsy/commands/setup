@@ -8,7 +8,7 @@
 # step is a devopsy command, printed before it runs: setup has no state of
 # its own, and running it again shows the current values as defaults.
 #
-#   devopsy @<server>:main setup     (or an alias: @vm1-traefik setup)
+#   devopsy @<server>:prod setup     (or an alias: @vm1-traefik setup)
 #
 # <server> is an SSH destination, like any target's. The server needs
 # Docker, the devopsy deploy user and devopsy: devopsy-server's setup.sh
@@ -71,7 +71,7 @@ run() {
   devopsy "$@"
 }
 
-# The target as typed, used as is: vm1:main, or an alias. Its server,
+# The target as typed, used as is: vm1:prod, or an alias. Its server,
 # for the alias, only when the address names one.
 t=@$DEVOPSY_COMMAND_TARGET
 case $DEVOPSY_COMMAND_TARGET in
