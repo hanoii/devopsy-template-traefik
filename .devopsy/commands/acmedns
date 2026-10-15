@@ -1,7 +1,7 @@
 #!/bin/sh
-## Description: DNS records the acmedns resolver needs (delegation and per-domain CNAMEs)
+## Description: DNS records the acmedns resolver needs (delegation, a CNAME per certificate)
 # Prints the DNS records the acmedns resolver needs: the one-time delegation
-# of DEVOPSY_ACMEDNS_DOMAIN to this server, and one CNAME per domain Traefik
+# of DEVOPSY_ACMEDNS_DOMAIN to this server, and one CNAME per certificate Traefik
 # has registered with acme-dns. See README.md.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
@@ -14,26 +14,37 @@ fi
 
 ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
 
-echo "Once, in the zone that contains $domain:"
+echo "Add these two records once, where ${domain#*.}'s DNS is hosted. They hand"
+echo "$domain, a name only acme-dns uses, to this server:"
 echo
 printf '  %s.  A   %s\n' "ns-$domain" "${ip:-<public IPv4 of this server>}"
 printf '  %s.  NS  %s.\n' "$domain" "ns-$domain"
 echo
+echo "At Cloudflare, keep them DNS only (grey cloud), like the CNAMEs below:"
+echo "proxied, acme-dns is unreachable and lookups see Cloudflare's addresses."
 echo "Port 53 (UDP and TCP) must be open to the Internet."
 echo "How it works: https://github.com/hanoii/devopsy-traefik#acme-dns"
 echo
 
 # 10001's file: read in a Traefik container.
 records=$(in_traefik 'cat /letsencrypt/acme-dns-accounts.json 2>/dev/null || echo "{}"' \
-  | jq -r 'to_entries[] | "\(.key | ltrimstr("*.")) \(.value.fulldomain)"' | sort -u)
+  | jq -r 'to_entries[] | "\(.key) \(.value.fulldomain)"' | sort -u)
 if [ -z "$records" ]; then
-  echo "No domains registered yet. Route a site with the acmedns resolver,"
-  echo "then run this again."
+  echo "No certificates registered yet: the public wildcard registers at"
+  echo "Traefik's first try, a site when it routes with the acmedns resolver."
+  echo "Run this again then."
   exit 0
 fi
 
-echo "Once per domain, at its DNS host:"
-echo
+# One CNAME per certificate registered with acme-dns, not per site: the
+# public wildcard's covers every site under it.
+echo "One CNAME per certificate registered with acme-dns, at its domain's DNS host,"
+echo "DNS only at Cloudflare:"
 printf '%s\n' "$records" | while read -r name target; do
-  printf '  _acme-challenge.%s.  CNAME  %s.\n' "$name" "$target"
+  base=${name#\*.}
+  what=$name
+  [ "$base" != "${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}" ] || what="$name, the public wildcard"
+  echo
+  echo "  # $what"
+  printf '  _acme-challenge.%s.  CNAME  %s.\n' "$base" "$target"
 done
