@@ -65,6 +65,15 @@ secret() {
   printf '%s\n' "$answer"
 }
 
+# acmedns_records: the records acme-dns needs, printed and kept in
+# $records.
+records=
+acmedns_records() {
+  printf '%s+ devopsy %s acmedns%s\n' "$dim" "$t" "$reset" >&2
+  records=$(devopsy "$t" acmedns) || die "could not list acme-dns's records"
+  printf '%s\n' "$records"
+}
+
 # run <devopsy arguments>: printed, then run.
 run() {
   printf '%s+ devopsy %s%s\n' "$dim" "$*" "$reset" >&2
@@ -227,7 +236,7 @@ case $choice in
     say "DNS-01 through:
 
   1. acme-dns, on this server: no API token. Needs port 53 open (UDP and
-     TCP), two records once, and one CNAME per domain.
+     TCP), two records and the wildcard's CNAME, once.
   2. Cloudflare's API: a token for the zone that holds the challenges."
     case $resolver in cloudflare) d=2 ;; *) d=1 ;; esac
     while :; do
@@ -302,16 +311,23 @@ their own domains."
     if [ "$dns01" = acmedns ]; then
       say "acme-dns: open port 53, UDP and TCP, in your provider's firewall,
 and create these records, once:"
-      run "$t" acmedns
+      acmedns_records
     fi
     ask "Press Enter once they exist" >/dev/null
     ;;
 esac
 if [ "$dns01" = acmedns ]; then
-  say "The wildcard certificate registered with acme-dns on its first try and
-waits for its CNAME, the last record listed here:"
-  run "$t" acmedns
-  ask "Press Enter once it exists" >/dev/null
+  # Traefik registers the wildcard with acme-dns on its first try, usually
+  # before the listing above: its CNAME was there unless it was not yet.
+  case $records in
+    *_acme-challenge.*) ;;
+    *)
+      say "The wildcard certificate has registered with acme-dns since, and
+waits for its CNAME, the one marked the public wildcard:"
+      acmedns_records
+      ask "Press Enter once it exists" >/dev/null
+      ;;
+  esac
   run "$t" domains --retry
 elif [ -n "$domain" ]; then
   run "$t" domains
