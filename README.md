@@ -282,7 +282,7 @@ imports"):
 ```
 
 A project imports it, and each of its releases writes it into the release's
-`target.env`, unless the target sets `DEVOPSY_WILDCARD_DOMAIN` itself
+`devopsy-target.env`, unless the target sets `DEVOPSY_WILDCARD_DOMAIN` itself
 (empty: no automatic URL). A release fails while no proxy runs, unless the
 import ends in `?`. devopsy-cli knows no URL: the site templates compute
 their hosts from the compose project name (`COMPOSE_PROJECT_NAME`, which
