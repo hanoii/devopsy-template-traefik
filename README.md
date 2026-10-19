@@ -60,8 +60,6 @@ Its one environment, `prod`, is the same on every server:
 server's release root, compose project `traefik-prod`). Add an alias per
 server to your user config, with `source:` naming your checkout: releases
 run only from there, and every other command works from any directory.
-Until October 2026 the environment was `main`: a server still on
-`traefik/main` is moved by hand, keeping `shared/` (AGENTS.md, Releases).
 
 ```yaml
 # ~/.config/devopsy/config.yaml
@@ -359,8 +357,7 @@ The proxies are kept in `mnt/proxies/proxies.conf`. Adding the first proxy,
 removing the last one, or changing the ranges of an `X-Forwarded-For` or
 `X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
 restarts Traefik; anything else does not. Those are static settings, which
-`deploy` and `devopsy proxies` write together in `mnt/traefik.env` (a
-`mnt/proxies/proxies.env` from older releases is replaced by it).
+`deploy` and `devopsy proxies` write together in `mnt/traefik.env`.
 
 Every `deploy`, so every release, fetches URL ranges again. Cloudflare's
 change rarely. For regular refreshes in between, schedule `devopsy

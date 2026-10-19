@@ -84,14 +84,6 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
-# Releases up to October 2026 wrote a hold middleware (mnt/dynamic/hold.yaml,
-# its plugin gone since): a router naming a missing middleware is dropped,
-# so projects drop the `hold@file` label before this Traefik is released.
-if [ -f "$dir/mnt/dynamic/hold.yaml" ]; then
-  rm -f "$dir/mnt/dynamic/hold.yaml"
-  echo "deploy: the hold middleware is gone; routers naming hold@file are dropped until their project drops the label"
-fi
-
 # The entrypoint's middlewares; `up` below restarts Traefik when the static
 # settings change.
 static_env --no-restart

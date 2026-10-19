@@ -187,8 +187,6 @@ Everything lives in `.devopsy/`:
   (`~/.docker/config.json`, `proxies`), and busybox's `wget` (Traefik's,
   acme-dns's) ignores `no_proxy`. Fetches from the internet keep the
   proxy.
-- **`mnt/proxies/proxies.env` is gone:** `static_env` replaced it with
-  `mnt/traefik.env` and removes the old file.
 
 ### Proxies, plugins and Yaegi
 
@@ -282,8 +280,7 @@ Everything lives in `.devopsy/`:
   drops the app's router, so held requests ended on the maintenance
   page after the whole limit although the site was back in seconds;
   and with the writer wrapped, streamed responses lost their flushes
-  (Yaegi, above). `deploy` still removes its `mnt/dynamic/hold.yaml`,
-  so a router naming `hold@file` is dropped.
+  (Yaegi, above).
 - **Neither `allowNonRunning` nor `ALLOWEMPTYSERVICES` is set:**
   `traefik.docker.allowNonRunning=true` keeps a stopped container's
   router with an empty service, and
@@ -327,17 +324,6 @@ Everything lives in `.devopsy/`:
   Disconnect them and remove the old network first, release Traefik,
   then `docker network connect` them to the new one until each
   project's own release.
-- **The environment was `main` (`traefik/main`, compose project
-  `traefik-main`):** a fresh `prod` release fails while `traefik-main`
-  owns the `traefik` network and ports 80 and 443, and `--destroy`
-  would take `shared/` with it, certificates and acme-dns registrations
-  included. Moved by hand per server, Traefik down about a minute:
-  disconnect every container from `traefik`, `docker compose -p
-  traefik-main down` in `traefik/main/current/.devopsy`, `mv
-  traefik/main/shared traefik/prod/shared`, release `prod`, `docker
-  network connect traefik` each container again, remove
-  `traefik/main`, point the aliases at `:prod`. Certificates and
-  acme-dns registrations survive (checked on one server).
 
 ## Checks
 
