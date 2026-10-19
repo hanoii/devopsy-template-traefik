@@ -17,13 +17,13 @@ project on it, with automatic Let's Encrypt certificates. It is run with
   only.
 - Released like any devopsy project: upgrades and settings changes are
   releases, and a bad one rolls back.
-- The host needs Docker and devopsy only: scripts use Traefik's own `wget`
-  and the official jq image.
+- The host needs Docker and devopsy only: commands use Traefik's own
+  `wget` and official jq, curl and sqlite images (profile `tools`).
 
 ## Using this template
 
 A starting point to own, not a dependency: start a project from it on
-GitHub ("Use this template"), or sync it and keep this repository as a
+GitHub ("Use this template"), or clone it and keep this repository as a
 remote (`upstream`) to pull its changes when you choose. Nothing updates
 your copy, or what runs on your servers, but your own release.
 
@@ -76,8 +76,9 @@ devopsy @vm1-traefik --release
 ```
 
 `.devopsy/.env.example` lists every setting. They live in the server's
-`traefik/prod/shared/.env` (under its release root); change one with `--vars set`, then `devopsy
-@vm1-traefik deploy` (or the next release) applies it. `deploy` is what each
+`traefik/prod/shared/.env` (under its release root); change one with
+`--vars set`, then `devopsy @vm1-traefik deploy` (or the next release)
+applies it. `deploy` is what each
 release runs: it prepares `mnt/`, writes the public wildcard certificate,
 refreshes trusted proxies' ranges and starts or updates every service.
 
@@ -178,7 +179,8 @@ This is how hosting panels like Forge do DNS validation.
 3. Open port 53, UDP and TCP, in your provider's firewall.
 4. Route a site with the `acmedns` resolver. Its first attempt registers the
    domain and fails with a "CNAME required" error in Traefik's log. Run
-   `devopsy acmedns` again: it lists the CNAME each domain needs, like
+   `devopsy @vm1-traefik acmedns` again: it lists the CNAME each domain
+   needs, like
 
    ```
    _acme-challenge.client.org.  CNAME  5400f461-...acme-vm1.example.com.
@@ -269,14 +271,14 @@ breaks the next renewal, about 30 days before expiry.
 
 ## Wildcard URLs
 
-With a wildcard domain for the server, like `vm1.example.com`, every project
-gets a URL next to its own domains: `<project>.vm1.example.com`. Set it
-once, here, as `DEVOPSY_PROXY_WILDCARD_DOMAIN`. Traefik exports it to
-projects with devopsy's labels (devopsy-cli's README, "Roles, exports and
-imports"):
+With a wildcard domain for the server, like `vm1.example.com`, every
+environment gets a URL next to its own domains, its compose project's:
+`whoami-prod.vm1.example.com`. Set it once, in this Traefik's settings, as
+`DEVOPSY_PROXY_WILDCARD_DOMAIN`. Traefik exports it to projects with
+devopsy's labels (devopsy-cli's README, "Roles, exports and imports"):
 
 ```yaml
-# here, on the traefik service
+# this template's traefik service
 - devopsy.role=proxy
 - devopsy.export.WILDCARD_DOMAIN=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
 ```
@@ -356,16 +358,14 @@ The proxies are kept in `mnt/proxies/proxies.conf`. Adding the first proxy,
 removing the last one, or changing the ranges of an `X-Forwarded-For` or
 `X-Real-Ip` proxy (those are also trusted for Traefik's forwarded headers)
 restarts Traefik; anything else does not. Those are static settings, which
-`deploy` and `devopsy proxies` write together in `mnt/traefik.env`.
-Releases from before it kept them in `mnt/proxies/proxies.env`: the next
-`deploy` rewrites it as `mnt/traefik.env` and removes it, nothing to do by
-hand.
+`deploy` and `devopsy proxies` write together in `mnt/traefik.env` (a
+`mnt/proxies/proxies.env` from older releases is replaced by it).
 
 Every `deploy`, so every release, fetches URL ranges again. Cloudflare's
 change rarely. For regular refreshes in between, schedule `devopsy
 @vm1-traefik proxies refresh` from CI or your machine, or add a cron to the
-deploy user's crontab on the server; the release lock keeps it out of a
-release:
+deploy user's crontab on the server (releases in its home, below); the
+release lock keeps it out of a release:
 
 ```cron
 17 4 * * 1  cd ~/traefik/prod/current && flock ~/traefik/prod/.lock devopsy proxies refresh
@@ -393,10 +393,6 @@ a maintenance page only when the app does not come back in time, or at
 once in its maintenance mode. Give such a router the app's certificate
 resolver label too, and no `devopsy.sync` label: a sync never stops it.
 Nothing of it needs this Traefik beyond routing.
-
-Until October 2026 this Traefik had a server-wide maintenance page
-(`DEVOPSY_MAINTENANCE_PAGE`) for hosts under the wildcard domain; see
-AGENTS.md for why it went.
 
 ## Dashboard
 
@@ -479,8 +475,8 @@ database. Delete its `_acme-challenge` CNAME afterwards.
 Traefik reads its stores only when it starts, so they are edited while it
 is stopped. Queued domains wait for the next `deploy` (a release) or
 `restart`, which stops Traefik for them: sites are unavailable for a few
-seconds. `--now` does that at once, for everything queued. Nothing stops when nothing is stored
-for the queued domains. Each edited store keeps a copy next to it
+seconds. `--now` does that at once, for everything queued. Nothing stops
+when nothing is stored for the queued domains. Each edited store keeps a copy next to it
 (`mnt/letsencrypt/<file>.forget-<time>`).
 
 Forget a domain once nothing routes it: one a router still names gets a

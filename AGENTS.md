@@ -1,13 +1,12 @@
 # AGENTS.md
 
-devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run with
-[devopsy-cli](https://github.com/hanoii/devopsy-cli) and released onto each
-server like any devopsy project (`traefik/prod` under the server's release
-root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
+devopsy-template-traefik is the Traefik reverse proxy for a devopsy
+server, run with [devopsy-cli](https://github.com/hanoii/devopsy-cli) and
+released onto each server like any devopsy project (`traefik/prod` under
+the server's release root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 
 - `config.yaml`: `project: traefik`, its one environment `prod` and the
   release steps; no servers, which are the operator's.
-
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
   (Compose profile `acmedns`), `init` (ownership of `mnt/`), and `jq`,
   `curl` and `sqlite` (profile `tools`, for scripts only).
@@ -28,9 +27,9 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   `jq`, `quiet`, `env_set`, `static_env`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage, 10001's), `acmedns/` (10001's), `dynamic/` (Traefik's file
-  provider: the public wildcard, proxies, retries), `proxies/`
-  (`proxies.conf`, `forwarded-ips`) and `traefik.env` (static settings,
-  see below).
+  provider: the public wildcard, the API's router, proxies, retries),
+  `proxies/` (`proxies.conf`, `forwarded-ips`), `traefik.env` (static
+  settings, see below) and `forget.pending`.
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library only).
   `proxies` maps a request from a trusted proxy's ranges to the visitor's IP
   from that proxy's header. `devopsy proxies` keeps the proxies in
@@ -44,12 +43,8 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
   written before the env names them and removed only once the running
   Traefik no longer does: an entrypoint referencing a missing middleware
   breaks every router. The file used to be `mnt/proxies/proxies.env`,
-  which `static_env` replaces. Unit-test plugins with `go test` in their
-  directory, and under Yaegi (`yaegi test`, see Checks). There was a
-  `hold` plugin (October 2026) that held requests while a backend answered
-  502/503/504; removed, see the gotchas below for why. `deploy` removes
-  its `mnt/dynamic/hold.yaml`, so a project still labeling `hold@file`
-  loses those routers: projects drop the label first.
+  which `static_env` removes. Unit-test plugins with `go test` in their
+  directory, and under Yaegi (`yaegi test`, see Checks).
 - Everything a command writes at runtime lives in `mnt/` or `.env`: a file
   written elsewhere in `.devopsy/` lands in the release directory and is
   gone with the next release. Write `.env` through it (`env_set`, `cat >`),
@@ -57,8 +52,8 @@ root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
 - Containers run as `10001`, like every devopsy project's, never as the
   deploy user (in the docker group). `mnt/letsencrypt` and `mnt/acmedns`
   are 10001's, mode 700: scripts touch them only through `in_traefik`, a
-  one-off Traefik container as 10001. The host needs no `jq` or `curl`: the
-  `jq` service and Traefik's `wget` cover them.
+  one-off Traefik container as 10001. The host needs no `jq`, `curl` or
+  `sqlite`: the `tools` services and Traefik's `wget` cover them.
 - Configure Traefik with `TRAEFIK_*` environment variables in
   `compose.yaml`, not static config files.
 - Anything a server may need to change is a variable with a default, and goes
@@ -158,10 +153,11 @@ certificate retries and a network per project.
   project's container carrying it on that network: a service on it that
   proxies to a sibling must use the network-scoped name,
   `app.<project>_default` (devopsy-template-drupal11's alwaysup; seen
-  resolving to another site's app while its own was stopped). Accepted while projects on a server trust each other and
-  none relies on a middleware for access control (the recipes do not; only
-  their web service joins it). The design for a network per project, tested,
-  is in the roadmap. What a taken web container cannot reach: the socket
+  resolving to another site's app while its own was stopped). Accepted
+  while projects on a server trust each other and none relies on a
+  middleware for access control (the templates do not; only their web
+  service joins it). The design for a network per project, tested, is in
+  the roadmap. What a taken web container cannot reach: the socket
   proxy and acme-dns (their own networks) and Traefik's API (403).
 - The socket proxy allows only what Traefik's Docker provider calls
   (version, list, inspect, events): `containers/.*` also let through
@@ -184,9 +180,10 @@ certificate retries and a network per project.
   configuration, so projects cannot change it with labels; raise it per
   server, where a registry runs.
 - The wildcard domain setting is `DEVOPSY_PROXY_WILDCARD_DOMAIN`, not the
-  projects' `DEVOPSY_WILDCARD_DOMAIN`: with that name devopsy-cli computed a
-  wildcard URL for Traefik itself. Projects get the value through the export label, read by
-  devopsy-cli from the running container at each project release.
+  projects' `DEVOPSY_WILDCARD_DOMAIN`: that is what each project imports
+  (and a target may override), and the server's setting stays apart from
+  it. Projects get the value through the export label, read by devopsy-cli
+  from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
   DigitalOcean; validity from the verified handshake's verbose line), a
@@ -224,19 +221,21 @@ certificate retries and a network per project.
   `proxies`, and every router is dropped while the container looks
   healthy; stopped, it restarts in a loop, `up --wait` fails and the
   release rolls back. Checked on v3.7.13 with a broken plugin.
-- Why the `hold` plugin went (measured on 3.7.13, October 2026): a
-  middleware's retries never follow a configuration change. Its `next` is
-  the chain built for the configuration the request entered (at the
-  router or on the entrypoint alike, both sit below Traefik's switcher),
-  so a service that was empty or gone then stays so, and only the same
-  address coming back answers the held request (a container restarted,
-  or recreated with the same IP). A sync or a deploy drops the app's
-  router, so requests held meanwhile ended on the maintenance page after
-  the whole limit although the site was back in seconds; with the writer
-  wrapped, streamed responses lost their flushes on every request. Hence
-  holding belongs in the project's request path, where a proxy can wait
-  for its upstream and stream (devopsy-template-drupal11's `alwaysup`).
-  Two more facts from then: `traefik.docker.allowNonRunning=true` keeps a
+- No holding in Traefik: a `hold` plugin, which held requests while a
+  backend answered 502/503/504, went in October 2026 (`deploy` still
+  removes its `mnt/dynamic/hold.yaml`; a router naming `hold@file` is
+  dropped). Measured on 3.7.13: a middleware's retries never follow a
+  configuration change. Its `next` is the chain built for the
+  configuration the request entered (at the router or on the entrypoint
+  alike, both below Traefik's switcher), so a service that was empty or
+  gone then stays so, and only the same address coming back answers the
+  held request. A sync or a deploy drops the app's router, so held
+  requests ended on the maintenance page after the whole limit although
+  the site was back in seconds; and with the writer wrapped, streamed
+  responses lost their flushes (Yaegi, above). Hence holding belongs in
+  the project's request path, where a proxy can wait for its upstream
+  and stream (devopsy-template-drupal11's `alwaysup`). Also measured:
+  `traefik.docker.allowNonRunning=true` keeps a
   stopped container's router with an empty service, and
   `TRAEFIK_PROVIDERS_DOCKER_ALLOWEMPTYSERVICES=true` keeps an unhealthy or
   starting one's; neither helps a request already waiting, and with
@@ -253,12 +252,12 @@ certificate retries and a network per project.
   next check, which is the event that brings it back. `docker stop` and
   `down` remove the container from the list, so its router goes either
   way: only another router can answer, a project's own at 2 or more.
-- There was a server-wide maintenance page (`DEVOPSY_MAINTENANCE_PAGE`,
-  an nginx at priority 1 for every host under the wildcard domain);
-  removed in October 2026. With holding in the project (alwaysup), it
-  only answered for environments that were down or removed, and only on
-  wildcard URLs: custom domains, what visitors use, never matched. A
-  removed environment saying "back soon" forever is worse than a 404.
+- No server-wide maintenance page: one (`DEVOPSY_MAINTENANCE_PAGE`, an
+  nginx at priority 1 for every host under the wildcard domain) went in
+  October 2026. With holding in the project, it only answered for
+  environments that were down or removed, and only on wildcard URLs, never
+  the custom domains visitors use; a removed environment saying "back
+  soon" forever is worse than a 404.
 
 ## Releases
 
@@ -272,12 +271,11 @@ checkout): servers are the operator's, never in this repository.
 
 The network projects join is fixed, `traefik`: one Traefik per host (the
 `proxy` role refuses a second), so nothing varies, and it is the public
-interface other projects name. Changing it (done once, from `traefik-main`)
-fails the release while projects are still attached to the old one: compose
-cannot remove a network with endpoints and leaves Traefik stopped.
-Disconnect them and remove the old network first, release Traefik, then
-`docker network connect` them to the new one until each project's own
-release.
+interface other projects name. Changing it fails the release while
+projects are still attached to the old one: compose cannot remove a
+network with endpoints and leaves Traefik stopped. Disconnect them and
+remove the old network first, release Traefik, then `docker network
+connect` them to the new one until each project's own release.
 
 The environment was `main` until October 2026 (`traefik/main`, compose
 project `traefik-main`). A fresh `prod` release fails while `traefik-main`
@@ -288,7 +286,7 @@ from `traefik`, `docker compose -p traefik-main down` in
 `traefik/main/current/.devopsy`, `mv traefik/main/shared
 traefik/prod/shared`, release `prod`, `docker network connect traefik`
 each container again, remove `traefik/main`, point the aliases at `:prod`.
-Done on weh.devopsy.prod1 (October 2026), certificates kept.
+Certificates and acme-dns registrations survive (checked on one server).
 
 ## Checks
 
@@ -312,8 +310,8 @@ DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
   DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 
-End to end, with a template importing from it: devopsy-cli's AGENTS.md,
-Checks ("Roles and imports").
+End to end, with a template importing from it: on an OrbStack machine,
+as devopsy-cli's AGENTS.md describes at the end of its Checks.
 
 lib's scripts run directly with the project's environment loaded, for
 example `env $(devopsy --env | grep -v '^#' | xargs) DEVOPSY_PROJECT_DIR=$PWD/.devopsy
