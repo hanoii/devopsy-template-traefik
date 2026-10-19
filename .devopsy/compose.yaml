@@ -125,7 +125,7 @@ services:
       - TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true
 
       # Extra dynamic configuration, like the public wildcard certificate:
-      # files in mnt/dynamic (see dynamic.example/).
+      # files deploy and the commands write in mnt/dynamic.
       - TRAEFIK_PROVIDERS_FILE_DIRECTORY=/dynamic
       - TRAEFIK_PROVIDERS_FILE_WATCH=true
 
