@@ -153,8 +153,8 @@ Everything lives in `.devopsy/`:
   resolving to another site's app while its own was stopped). Accepted
   while projects on a server trust each other and none relies on a
   middleware for access control (the templates do not; only their web
-  service joins it). A network per project is an idea, not built. What a taken web container cannot reach: the socket
-  proxy and acme-dns (their own networks) and Traefik's API (403).
+  service joins it). What a taken web container cannot reach: the
+  socket proxy and acme-dns (their own networks) and Traefik's API (403).
 - The socket proxy allows only what Traefik's Docker provider calls
   (version, list, inspect, events): `containers/.*` also let through
   `export`, `archive`, `logs` and `attach` of every container. Inspect still
