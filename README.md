@@ -133,7 +133,7 @@ one, on any port, without going through Traefik. So:
   directly. The application checks access itself.
 
 That is fine for projects that trust each other, the usual case on a
-server. A network per project, for the others, is an idea, not built.
+server; projects that do not belong on separate servers.
 
 ## Certificates
 
