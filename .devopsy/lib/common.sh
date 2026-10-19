@@ -128,9 +128,7 @@ $_list
 # middleware's file is written before the env names it, and removed only
 # once the running Traefik no longer names it. Static settings need a
 # restart: done here when the file changed, unless --no-restart (deploy,
-# whose `up` follows). Rewrites a mnt/proxies/proxies.env from older
-# releases, and a mnt/traefik.env from releases that put a `hold`
-# middleware on the entrypoint (gone since).
+# whose `up` follows).
 static_env() {
   _restart=true
   [ "${1:-}" != --no-restart ] || _restart=false
@@ -156,7 +154,6 @@ static_env() {
 "
   fi
 
-  rm -f "$dir/mnt/proxies/proxies.env"
   if write_if_changed "$dir/mnt/traefik.env" "$_env" && [ "$_restart" = true ]; then
     echo "$(basename "$0"): restarting Traefik for its new static settings"
     devopsy up -d --wait
