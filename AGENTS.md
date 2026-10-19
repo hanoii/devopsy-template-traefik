@@ -42,6 +42,11 @@ Everything lives in `.devopsy/`:
 
 ## Rules
 
+- **Every change carries its test** where the repository can test it:
+  a plugin's fix or feature comes with a Go test that runs under Yaegi
+  too (Checks), and a command's comes with shellcheck clean and a run
+  against a local Traefik (Checks). A fix's test fails without it.
+  Why: a later change breaks what nobody re-tests.
 - **Projects already routed must keep working:** the `traefik` network
   name, the `letsencrypt1`, `acmedns` and `cloudflare` resolver names,
   the `web`/`websecure` entrypoints, and the `devopsy.role=proxy` and
