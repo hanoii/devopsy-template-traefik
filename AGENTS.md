@@ -183,8 +183,9 @@ certificate retries and a network per project.
 - The wildcard domain setting is `DEVOPSY_PROXY_WILDCARD_DOMAIN`, not the
   projects' `DEVOPSY_WILDCARD_DOMAIN`: that is what each project imports
   (and a target may override), and the server's setting stays apart from
-  it. Projects get the value through the export label, read by devopsy-cli
-  from the running container at each project release.
+  it. Not a `TRAEFIK_*` name either: Traefik reads those as its static
+  configuration. Projects get the value through the export label, read
+  by devopsy-cli from the running container at each project release.
 - `domains` checks from the server, not the operator's machine: DNS over
   HTTPS to 1.1.1.1, TLS to the server's own public IP (works on
   DigitalOcean; validity from the verified handshake's verbose line), a
