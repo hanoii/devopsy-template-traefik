@@ -73,10 +73,6 @@ Everything lives in `.devopsy/`:
 
 ## Design decisions and gotchas
 
-The workspace README (`../devopsy/README.md` locally) describes how the repos
-fit together, and `../devopsy/ROADMAP.md` the open ideas, like automatic
-certificate retries and a network per project.
-
 - `letsencrypt1` uses HTTP-01, not TLS-ALPN: it also works behind a CDN
   proxy, and Traefik's ACME challenge router has top priority, ahead of the
   HTTPS redirect.
@@ -157,8 +153,7 @@ certificate retries and a network per project.
   resolving to another site's app while its own was stopped). Accepted
   while projects on a server trust each other and none relies on a
   middleware for access control (the templates do not; only their web
-  service joins it). The design for a network per project, tested, is in
-  the roadmap. What a taken web container cannot reach: the socket
+  service joins it). A network per project is an idea, not built. What a taken web container cannot reach: the socket
   proxy and acme-dns (their own networks) and Traefik's API (403).
 - The socket proxy allows only what Traefik's Docker provider calls
   (version, list, inspect, events): `containers/.*` also let through
