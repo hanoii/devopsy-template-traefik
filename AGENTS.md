@@ -3,7 +3,8 @@
 devopsy-template-traefik is the Traefik reverse proxy for a devopsy
 server, run with [devopsy-cli](https://github.com/hanoii/devopsy-cli) and
 released onto each server like any devopsy project (`traefik/prod` under
-the server's release root: `releases/`, `current`, `shared/`). Everything lives in `.devopsy/`:
+the server's release root: `releases/`, `current`, `shared/`).
+Everything lives in `.devopsy/`:
 
 - `config.yaml`: `project: traefik`, its one environment `prod` and the
   release steps; no servers, which are the operator's.
