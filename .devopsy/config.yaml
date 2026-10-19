@@ -1,4 +1,4 @@
-# devopsy config: see devopsy-cli's README, "Remote targets".
+# devopsy config: see devopsy-cli's README, "Servers".
 # One environment, prod, on every server: devopsy @<server>:prod, or an
 # alias in the user-level ~/.config/devopsy/config.yaml (README, Setup).
 project: traefik
