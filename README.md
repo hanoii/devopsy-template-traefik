@@ -18,7 +18,8 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - Released like any devopsy project: upgrades and settings changes are
   releases, and a bad one rolls back.
 - The host needs Docker and devopsy only: commands use Traefik's own
-  `wget` and official jq, curl and sqlite images (profile `tools`).
+  `wget` and the jq, curl and Python images (profile `tools`: sqlite is
+  Python's module, curl the `curlimages/curl` image).
 
 ## Using this template
 
@@ -363,9 +364,10 @@ restarts Traefik; anything else does not. Those are static settings, which
 
 Every `deploy`, so every release, fetches URL ranges again. Cloudflare's
 change rarely. For regular refreshes in between, schedule `devopsy
-@vm1-traefik proxies refresh` from CI or your machine, or add a cron to the
-deploy user's crontab on the server (releases in its home, below); the
-release lock keeps it out of a release:
+@vm1-traefik proxies refresh` from CI or locally, or add a cron to the
+deploy user's crontab on the server (the cron below assumes the release
+root is the deploy user's home); the release lock keeps it out of a
+release:
 
 ```cron
 17 4 * * 1  cd ~/traefik/prod/current && flock ~/traefik/prod/.lock devopsy proxies refresh
