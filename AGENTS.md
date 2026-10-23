@@ -89,10 +89,17 @@ Everything lives in `.devopsy/`:
   without capabilities, reads files the deploy user cannot. A tool
   whose image only works as root would be the one exception: say why
   here.
-- **Pin exact image versions.** When upgrading Traefik, read the
-  migration notes (https://doc.traefik.io/traefik/migrate/v3/) for
-  every version in between; when upgrading socket-proxy, its release
-  notes.
+- **Float images on the series upstream patches, bump minors by
+  hand.** `traefik:v3.7` gets upstream's fixes with every release (each
+  one pulls its images again); a minor brings migration notes and a new
+  Yaegi for the plugins, so moving to the next one is a commit: read the
+  notes (https://doc.traefik.io/traefik/migrate/v3/) for every version
+  in between. Never `latest`, never a major tag. What publishes no minor
+  tag stays an exact pin (socket-proxy, whose allow-list flags are
+  security settings: read its release notes when upgrading; acme-dns;
+  jq and curl). A pinned name changes with a bump, so a rollback across
+  one goes back exactly; a floating name goes forward on a rollback
+  (devopsy-cli's README, "Choosing tags").
 - **`setup` keeps no state:** it drives the other commands through its
   target, setting values with `--vars set` from its environment, never
   as arguments.
