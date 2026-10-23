@@ -13,7 +13,9 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
   dropped, so PHP backends cannot be fooled by them.
 - Traefik and acme-dns run as UID 10001, like every devopsy project's
-  containers, never as the deploy user. The dashboard listens on localhost
+  containers, never as the deploy user, with no capabilities, a read-only
+  root filesystem and `no-new-privileges`. devopsy gives them their `mnt`
+  directories (`devopsy.mnt.owner`). The dashboard listens on localhost
   only.
 - Released like any devopsy project: upgrades and settings changes are
   releases, and a bad one rolls back.

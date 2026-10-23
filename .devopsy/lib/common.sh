@@ -1,8 +1,9 @@
 # Shared by commands/ and lib/'s scripts: sourced, never run. POSIX sh.
 #
 # Traefik and acme-dns run as 10001, which owns mnt/letsencrypt and
-# mnt/acmedns, mode 700: the deploy user running these scripts cannot read
-# them. Anything touching them runs in a container as 10001 (in_traefik).
+# mnt/acmedns and everything in them, files mode 600: the deploy user
+# running these scripts cannot read them. Anything touching them runs in a
+# container as 10001 (in_traefik).
 # jq comes from the jq service, so the host needs neither jq nor curl.
 
 dir=${DEVOPSY_PROJECT_DIR:?run through devopsy}
