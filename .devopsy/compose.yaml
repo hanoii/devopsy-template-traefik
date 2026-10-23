@@ -40,31 +40,6 @@ services:
     networks:
       - dockerproxy
 
-  # Gives mnt/letsencrypt and mnt/acmedns to the containers' user, 10001.
-  # shared/mnt starts empty on a server, Docker creates missing bind-mount
-  # directories as root, and the deploy user cannot chown. Runs before
-  # Traefik and acme-dns on every start, so moved files are fixed too.
-  init:
-    image: traefik:v3.7.13
-    user: "0:0"
-    entrypoint: ['/bin/sh', '-c']
-    command:
-      - |
-        set -eu
-        chown -R 10001:10001 /letsencrypt /acmedns
-        chmod 700 /letsencrypt /acmedns
-        find /letsencrypt -maxdepth 1 -name '*.json' -exec chmod 600 {} +
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - FOWNER
-      - DAC_OVERRIDE
-    network_mode: none
-    volumes:
-      - ./mnt/letsencrypt:/letsencrypt
-      - ./mnt/acmedns:/acmedns
-
   traefik:
     restart: unless-stopped
     image: traefik:v3.7.13
@@ -74,11 +49,15 @@ services:
     labels:
       - devopsy.role=proxy
       - devopsy.export.WILDCARD_DOMAIN=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
+      # devopsy creates mnt/letsencrypt and gives it, and everything in it,
+      # to this UID before the run step: shared/mnt starts empty and
+      # belongs to the deploy user, which cannot chown. Keep it in step
+      # with user. Traefik creates its ACME files with mode 600, which it
+      # insists on (see AGENTS.md).
+      - devopsy.mnt.owner=10001:10001
     depends_on:
       dockerproxy:
         condition: service_healthy
-      init:
-        condition: service_completed_successfully
     environment:
       # Dashboard and API on port 8080, published on localhost only (see
       # ports). Reach it with an SSH tunnel. Not insecure: its router
@@ -184,10 +163,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-    # The UID every devopsy project's containers use, never the deploy user's
-    # (in the docker group). It owns mnt/letsencrypt (see init).
+    # Hardening checklist, for every service here and the ones you add:
+    # - a fixed non-root UID, from its first process: 10001, which every
+    #   devopsy project's containers use, never the deploy user's (1000,
+    #   in the docker group);
+    # - a read-only root filesystem, with tmpfs or a mnt entry for what must
+    #   be written;
+    # - cap_drop ALL, adding back only a capability a stated reason needs
+    #   (none here: Docker lets containers bind ports below 1024 without
+    #   NET_BIND_SERVICE);
+    # - no-new-privileges, so nothing gains privilege through setuid files;
+    # - in images you build, no setuid binaries and no file capabilities
+    #   the service does not need.
     user: "10001:10001"
-    # Docker lets containers bind ports below 1024 without NET_BIND_SERVICE.
     read_only: true
     cap_drop:
       - ALL
@@ -217,6 +205,10 @@ services:
     image: joohoi/acme-dns:v2.0.2
     environment:
       - ACMEDNS_DOMAIN=${DEVOPSY_ACMEDNS_DOMAIN-}
+    labels:
+      # devopsy gives mnt/acmedns to this UID, like mnt/letsencrypt above.
+      # acme-dns creates its database with mode 600.
+      - devopsy.mnt.owner=10001:10001
     # acme-dns only reads a config file: write it from the environment.
     entrypoint: ['/bin/sh', '-c']
     command:
@@ -248,9 +240,6 @@ services:
         logformat = "text"
         EOF
         exec acme-dns -c /tmp/config.cfg
-    depends_on:
-      init:
-        condition: service_completed_successfully
     healthcheck:
       test: ['CMD', 'wget', '-Y', 'off', '-q', '-O', '/dev/null', 'http://127.0.0.1/health']
       interval: 10s
@@ -279,6 +268,7 @@ services:
   jq:
     profiles: [tools]
     image: ghcr.io/jqlang/jq:1.8.1
+    user: "10001:10001"
     network_mode: none
     read_only: true
     cap_drop:
@@ -307,6 +297,7 @@ services:
   curl:
     profiles: [tools]
     image: curlimages/curl:8.15.0
+    user: "10001:10001"
     network_mode: bridge
     read_only: true
     cap_drop:
