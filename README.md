@@ -390,7 +390,8 @@ tries the app every second for up to a minute and streams its answer, so
 visitors who arrive during a deploy or a sync get the real page, late, and
 a maintenance page only when the app does not come back in time, or at
 once in its maintenance mode. Give such a router the app's certificate
-resolver label too, and no `devopsy.sync` label: a sync never stops it.
+resolver label too, no `devopsy.data` label and no `depends_on` on the app
+(it would stop with it): a sync or an import never stops it.
 Nothing of it needs this Traefik beyond routing.
 
 ## Dashboard
