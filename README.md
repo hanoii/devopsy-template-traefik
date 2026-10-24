@@ -87,6 +87,13 @@ Upgrading is a release from a newer checkout; `devopsy @vm1-traefik
 --rollback` goes back. Routed sites see a few seconds without Traefik when
 its container is recreated.
 
+Traefik floats on its minor (`traefik:v3.7`): every release pulls the
+image again, so patches arrive with your next release. A new minor brings
+[migration notes](https://doc.traefik.io/traefik/migrate/v3/) and a new
+Yaegi for the plugins, so you move to it by editing the tag in
+`.devopsy/compose.yaml`. socket-proxy, acme-dns and the tools (jq, curl)
+publish no minor tag and stay exact pins.
+
 Without a CA server in `.env`, certificates come from Let's Encrypt
 **staging**. Switch every resolver with:
 
@@ -107,7 +114,7 @@ Join the `traefik` network and add labels:
 ```yaml
 services:
   web:
-    image: traefik/whoami
+    image: traefik/whoami:v1.12
     labels:
       - traefik.enable=true
       - traefik.http.routers.myapp.rule=Host(`example.com`)

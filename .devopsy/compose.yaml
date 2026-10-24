@@ -2,6 +2,8 @@ services:
   # Read-only, filtered access to the Docker API for Traefik, so Traefik never
   # mounts the Docker socket itself.
   # https://github.com/wollomatic/socket-proxy
+  # Pinned exactly: it publishes no minor tag, and its allow-list flags are
+  # security settings, so a bump is read in its release notes first.
   dockerproxy:
     restart: unless-stopped
     image: wollomatic/socket-proxy:1.13.1
@@ -40,9 +42,11 @@ services:
     networks:
       - dockerproxy
 
+  # Floats on v3.7: every release pulls its patches. Minors (v3.8) bring
+  # migration notes and a new Yaegi for the plugins: bump them by hand.
   traefik:
     restart: unless-stopped
-    image: traefik:v3.7.13
+    image: traefik:v3.7
     # For devopsy (see its README, "Roles, exports and imports"): this is the
     # host's proxy, and projects importing proxy/WILDCARD_DOMAIN get the
     # server's wildcard domain (empty: none) in each release.
@@ -199,6 +203,9 @@ services:
   # after a one-time CNAME, without DNS provider tokens. Runs only with
   # COMPOSE_PROFILES=acmedns. Its API is only reachable from Traefik.
   # https://github.com/joohoi/acme-dns
+  # Pinned exactly: it publishes no series tag. Its database (mnt/acmedns)
+  # carries no devopsy.data label, so a rollback across a bump goes back to
+  # the older image on data the newer one may have changed.
   acmedns:
     profiles: [acmedns]
     restart: unless-stopped
@@ -281,7 +288,7 @@ services:
   # official image, as the database's owner; never started by `up`.
   sqlite:
     profiles: [tools]
-    image: python:3.14.8-alpine
+    image: python:3.14-alpine
     user: "10001:10001"
     network_mode: none
     read_only: true
