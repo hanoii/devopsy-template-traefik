@@ -17,8 +17,8 @@ Everything lives in `.devopsy/`:
 - `config.yaml`: `project: traefik`, its one environment `prod` and the
   release steps; no servers, which are the operator's.
 - `compose.yaml`: Traefik, socket-proxy, the optional acme-dns service
-  (profile `acmedns`), `init` (ownership of `mnt/`), and `jq`, `curl`
-  and `sqlite` (profile `tools`, for scripts only).
+  (profile `acmedns`), and `jq`, `curl` and `sqlite` (profile `tools`,
+  for scripts only).
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/` (POSIX `sh`, each with a `## Description:` line):
@@ -55,7 +55,9 @@ Everything lives in `.devopsy/`:
   `shared/.env`.
 - **Containers run as `10001`,** like every devopsy project's, never as
   the deploy user, who is in the docker group. `mnt/letsencrypt` and
-  `mnt/acmedns` are 10001's, mode 700: scripts touch them only through
+  `mnt/acmedns` are 10001's (devopsy gives them, with everything in
+  them, before the run step: `devopsy.mnt.owner` on `traefik` and
+  `acmedns`), their files mode 600: scripts touch them only through
   `in_traefik`, a one-off Traefik container as 10001. The host needs no
   `jq`, `curl` or `sqlite`: the `tools` services and Traefik's `wget`
   cover them.
@@ -76,6 +78,17 @@ Everything lives in `.devopsy/`:
 - **Keep the hardening:** Traefik never mounts the Docker socket,
   socket-proxy stays read-only and only accepts the `traefik`
   container, both run unprivileged, the dashboard stays on localhost.
+  Every service has a fixed non-root UID (10001; socket-proxy's
+  65534, in the socket's group), `read_only`, `cap_drop: [ALL]` and
+  `no-new-privileges`, adding back only a capability a stated reason
+  needs (none today); a new service gets all four, and an image we
+  build would have no setuid binaries or file capabilities it does not
+  need. The `jq` and `curl` tools get 10001 too, though their images
+  default to root and UID 100: both work as 10001 with a read-only
+  root (jq 1.8.1 and curl 8.15.0, checked), and a tool as root, even
+  without capabilities, reads files the deploy user cannot. A tool
+  whose image only works as root would be the one exception: say why
+  here.
 - **Pin exact image versions.** When upgrading Traefik, read the
   migration notes (https://doc.traefik.io/traefik/migrate/v3/) for
   every version in between; when upgrading socket-proxy, its release
@@ -136,7 +149,7 @@ Everything lives in `.devopsy/`:
   systemd-resolved holds 127.0.0.53:53 on many cloud images, and Docker
   cannot publish 0.0.0.0:53 then. Its log level is `warn`, not
   `warning`. It runs as 10001, so `mnt/acmedns` must be 10001's (the
-  `init` service); otherwise registration fails with "no such table:
+  `devopsy.mnt.owner` label); otherwise registration fails with "no such table:
   records", which Traefik reports as EOF.
 - **Cloudflare does not allow NS and A records on the same name,** hence
   the nameserver `ns-<acme-dns domain>`. The A record must not be
@@ -159,13 +172,35 @@ Everything lives in `.devopsy/`:
 
 ### Settings and ownership
 
-- **`init` gives `mnt/` to 10001:** `shared/mnt` starts empty, Docker
-  creates missing bind-mount directories as root, and the deploy user
-  cannot chown to 10001. `init` (the Traefik image as root, minimal
-  capabilities, no network), which Traefik and acme-dns wait for, runs
-  `chown -R` on every start, so files moved in by hand are fixed too.
-  `deploy` creates the host-written directories first, so they are the
-  deploy user's.
+- **devopsy gives `mnt/letsencrypt` and `mnt/acmedns` to 10001,**
+  through `devopsy.mnt.owner=10001:10001` on `traefik` and `acmedns`:
+  `shared/mnt` starts empty, Docker creates missing bind-mount
+  directories as root, and the deploy user cannot chown to 10001. Before
+  the run step devopsy creates each entry (mode 755) and gives it, and
+  everything in it, to 10001, on every release, so files moved in by
+  hand are fixed too. `deploy` creates only the host-written directories
+  (`dynamic`, `proxies`), so they are the deploy user's.
+- **No `init` service, because both programs create their files as they
+  need them** (checked 2026-10-23 on Traefik v3.7.13 and acme-dns v2.0.2,
+  as 10001 with `cap_drop: [ALL]` and `read_only`, in a 755 directory
+  owned by 10001): Traefik creates `acme.json` and the other resolvers'
+  files with mode 600 at startup (`local_store.go` opens them with 0600);
+  lego creates `acme-dns-accounts.json` with 0600 (goacmedns' `File`,
+  lego v4.35); acme-dns creates `acme-dns.db` with mode 600. The old
+  `init` also forced 700 on the directories and 600 on the files; the
+  directories are 755 now (new servers; an existing 700 stays), which
+  exposes only file names, since every file inside is 600. One thing
+  `init` did that nothing does now: Traefik refuses an ACME file with
+  any group or other permission (`permissions 644 for
+  /letsencrypt/acme.json are too open, please use 600`, logged as an
+  error while the container stays healthy, and that resolver is skipped,
+  so no certificates are requested). A file restored from a backup or
+  copied by hand with a wider mode is the only way there; the fix is
+  `chmod 600` in `in_traefik`. Everything devopsy-template-traefik's own
+  scripts write keeps 600 (`umask 077`, `cp -p`, writes through the
+  file, `mv`). A fresh named volume is no test of this: Docker copies
+  the image's directory ownership into an empty volume at each mount
+  unless it is `nocopy`.
 - **`deploy` saves values it detects** (`DEVOPSY_DOCKER_GID`,
   `DEVOPSY_ACMEDNS_IP`) into `.env`, so a plain `devopsy up` later
   interpolates the same compose file.
@@ -360,7 +395,7 @@ For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `DEVOPSY_ACMEDNS_DOMAIN` and `DEVOPSY_ACMEDNS_PORT=15353`, then query it
 with `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
-On macOS, OrbStack fakes ownership changes on bind mounts: test `init`,
+On macOS, OrbStack fakes ownership changes on bind mounts: test ownership,
 a release and the commands on an OrbStack Linux machine. End to end,
 with a template importing from it: on an OrbStack machine, as
 devopsy-cli's AGENTS.md describes at the end of its Checks.
