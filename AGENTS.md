@@ -43,9 +43,10 @@ Everything lives in `.devopsy/`:
 ## Rules
 
 - **Projects already routed must keep working:** the `traefik` network
-  name, the `letsencrypt1`, `acmedns` and `cloudflare` resolver names,
+  name, the `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`
+  resolver names,
   the `web`/`websecure` entrypoints, and the `devopsy.role=proxy` and
-  `devopsy.export.WILDCARD_DOMAIN` labels projects import from are a
+  `devopsy.export.BASE_DOMAIN` labels projects import from are a
   public interface. Why: other projects name them in their own compose
   files, released on their own schedule.
 - **Everything a command writes at runtime lives in `mnt/` or `.env`.**
@@ -110,7 +111,7 @@ Everything lives in `.devopsy/`:
 
 ### Certificates
 
-- **`letsencrypt1` uses HTTP-01, not TLS-ALPN:** it also works behind a
+- **`le-http01` uses HTTP-01, not TLS-ALPN:** it also works behind a
   CDN proxy, and Traefik's ACME challenge router has top priority,
   ahead of the HTTPS redirect.
 - **Traefik requests or retries a certificate only when a router's
@@ -152,7 +153,7 @@ Everything lives in `.devopsy/`:
 
 ### acme-dns and DNS resolvers
 
-- **acme-dns binds the public IP only** (`DEVOPSY_ACMEDNS_IP`):
+- **acme-dns binds the public IP only** (`PROXY_ACMEDNS_IP`):
   systemd-resolved holds 127.0.0.53:53 on many cloud images, and Docker
   cannot publish 0.0.0.0:53 then. Its log level is `warn`, not
   `warning`. It runs as 10001, so `mnt/acmedns` must be 10001's (the
@@ -161,21 +162,22 @@ Everything lives in `.devopsy/`:
 - **Cloudflare does not allow NS and A records on the same name,** hence
   the nameserver `ns-<acme-dns domain>`. The A record must not be
   proxied.
-- **The `cloudflare` resolver checks propagation through
-  `DEVOPSY_DNS_RESOLVERS`,** the host's first (`127.0.0.11`, Docker's
+- **`le-dns01-cloudflare` checks propagation through
+  `PROXY_DNS_RESOLVERS`,** the host's first (`127.0.0.11`, Docker's
   embedded DNS, on every network Traefik joins), then 1.1.1.1: lego's
   `dnsQuery` asks the next resolver on an error or an empty answer.
   Then the zone's authoritative nameservers, directly on port 53.
   Servers behind firewalls that block outbound DNS skip all checks
-  (`DEVOPSY_DNS_SKIP_CHECKS`) and wait
-  (`DEVOPSY_DNS_PROPAGATION_DELAY`). Why: lego looks the challenge name
+  (`PROXY_DNS_SKIP_CHECKS`) and wait
+  (`PROXY_DNS_PROPAGATION_DELAY`). Why: lego looks the challenge name
   up (following CNAMEs) before writing the record, so the host's
   resolver caches NXDOMAIN and the recursive check fails until its
   negative TTL ends (seen behind a corporate resolver).
-- **The `cloudflare` resolver is always defined,** like `acmedns`:
+- **`le-dns01-cloudflare` is always defined,** like
+  `le-dns01-selfhosted`:
   Traefik starts fine without a token (checked on v3.7.13) and only
   fails when a router uses it. Its token is
-  `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` in `.env`.
+  `PROXY_CLOUDFLARE_DNS_API_TOKEN` in `.env`.
 
 ### Settings and ownership
 
@@ -190,7 +192,7 @@ Everything lives in `.devopsy/`:
 - **No `init` service, because both programs create their files as they
   need them** (checked 2026-10-23 on Traefik v3.7.13 and acme-dns v2.0.2,
   as 10001 with `cap_drop: [ALL]` and `read_only`, in a 755 directory
-  owned by 10001): Traefik creates `acme.json` and the other resolvers'
+  owned by 10001): Traefik creates `acme-le-http01.json` and the other resolvers'
   files with mode 600 at startup (`local_store.go` opens them with 0600);
   lego creates `acme-dns-accounts.json` with 0600 (goacmedns' `File`,
   lego v4.35); acme-dns creates `acme-dns.db` with mode 600. The old
@@ -199,7 +201,7 @@ Everything lives in `.devopsy/`:
   exposes only file names, since every file inside is 600. One thing
   `init` did that nothing does now: Traefik refuses an ACME file with
   any group or other permission (`permissions 644 for
-  /letsencrypt/acme.json are too open, please use 600`, logged as an
+  /letsencrypt/acme-le-http01.json are too open, please use 600`, logged as an
   error while the container stays healthy, and that resolver is skipped,
   so no certificates are requested). A file restored from a backup or
   copied by hand with a wider mode is the only way there; the fix is
@@ -208,17 +210,46 @@ Everything lives in `.devopsy/`:
   file, `mv`). A fresh named volume is no test of this: Docker copies
   the image's directory ownership into an empty volume at each mount
   unless it is `nocopy`.
-- **`deploy` saves values it detects** (`DEVOPSY_DOCKER_GID`,
-  `DEVOPSY_ACMEDNS_IP`) into `.env`, so a plain `devopsy up` later
+- **`deploy` saves values it detects** (`PROXY_DOCKER_GID`,
+  `PROXY_ACMEDNS_IP`) into `.env`, so a plain `devopsy up` later
   interpolates the same compose file.
-- **The wildcard domain setting is `DEVOPSY_PROXY_WILDCARD_DOMAIN`,** not
-  the projects' `DEVOPSY_WILDCARD_DOMAIN`, which is what each project
-  imports (and a target may override): the server's setting stays
-  apart. Not a `TRAEFIK_*` name either: Traefik reads those as its
-  static configuration. Projects get the value through the export
-  label, read by devopsy-cli from the running container at each
-  project release.
-- **`DEVOPSY_READ_TIMEOUT` is the websecure entrypoint's
+- **Names are `PROXY_*`: the proxy role's contract and this template's
+  settings** (decided 2026-10-26): never `DEVOPSY_*`, which are
+  devopsy-cli's own and made these look like devopsy's, nor `TRAEFIK_*`,
+  which Traefik reads as its static configuration. A name means one fact
+  on both sides: `PROXY_BASE_DOMAIN` is this server's setting, exported
+  as `BASE_DOMAIN` (which said nothing as `WILDCARD_DOMAIN`: the domain
+  every environment's default host goes under) and imported by sites
+  under the same name (a target may override it there);
+  `PROXY_CERTRESOLVER` is the default here and a site's own choice
+  there; `PROXY_DOMAINS` is a site's. Sites get the base domain through
+  the export label, read by devopsy-cli from the running container at
+  each project release. No migration: a server's keys are renamed by
+  hand.
+- **Resolvers are named by CA, ACME challenge and, for DNS-01, who
+  answers it** (`le-http01`, `le-dns01-selfhosted`,
+  `le-dns01-cloudflare`; decided 2026-10-27, from `letsencrypt1`,
+  `acmedns` and `cloudflare`, which named a CA, a program and a
+  provider): what a site chooses is how its domain proves control, and a
+  second CA (a fallback) adds names without renaming these, since a
+  rename costs every certificate (a resolver's store is its own file,
+  `acme-<resolver>.json`). The ACME settings carry the CA's prefix too
+  (`PROXY_LE_ACME_EMAIL`, `PROXY_LE_ACME_CASERVER`): another CA brings
+  its own email and EAB key. What runs acme-dns keeps its software's
+  name (the `acmedns` profile, service and command, `PROXY_ACMEDNS_*`).
+  `deploy` refuses the old names in `PROXY_CERTRESOLVER` and
+  `PROXY_WILDCARD_CERTRESOLVER`, naming the new one, and any other
+  value in `PROXY_CERTRESOLVER`: a router naming a resolver Traefik
+  lacks gets no certificate, which Traefik only logs. Dashed names work
+  in `TRAEFIK_CERTIFICATESRESOLVERS_LE-HTTP01_...` (checked on v3.7,
+  2026-10-27).
+- **A router with no `tls` label gets the entrypoint's resolver,**
+  `PROXY_CERTRESOLVER` (its `websecure` copy, when it names no
+  entrypoint); one with `tls.certresolver=` empty, or `tls=true`, gets
+  none and no certificate at all (checked on v3.7, 2026-10-27). So a
+  site that leaves the choice to the server must have no resolver label,
+  not an empty one.
+- **`PROXY_READ_TIMEOUT` is the websecure entrypoint's
   `readTimeout`:** how long a request, body included, may take to
   arrive. Traefik v3 defaults to 60s, which cuts large uploads like
   registry layers, and entrypoints are static configuration, so
@@ -296,7 +327,7 @@ Everything lives in `.devopsy/`:
   and a request through what DNS returns, all in the `curl` service. It
   prints the `devopsy --probe` line for the outside view: a server
   never drives local devopsy.
-- **The public IP comes from `DEVOPSY_PUBLIC_IP`,** else 1.1.1.1's
+- **The public IP comes from `PROXY_PUBLIC_IP`,** else 1.1.1.1's
   `/cdn-cgi/trace`: the default route's address is private behind NAT,
   as on OrbStack.
 - **Only names matching a host name reach the check script,** whose
@@ -385,8 +416,8 @@ Run it locally on other ports, and route a `traefik/whoami` container
 through it (network `traefik`):
 
 ```sh
-DEVOPSY_HTTP_PORT=18080 DEVOPSY_HTTPS_PORT=18443 \
-  DEVOPSY_API_PORT=127.0.0.1:18081 devopsy deploy
+PROXY_HTTP_PORT=18080 PROXY_HTTPS_PORT=18443 \
+  PROXY_API_PORT=127.0.0.1:18081 devopsy deploy
 ```
 
 Check all containers are healthy, `http://` redirects, `https://`
@@ -399,7 +430,7 @@ DEVOPSY_PROJECT_DIR=$PWD/.devopsy sh .devopsy/lib/facts --all` (with the
 same test variables).
 
 For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
-`DEVOPSY_ACMEDNS_DOMAIN` and `DEVOPSY_ACMEDNS_PORT=15353`, then query it
+`PROXY_ACMEDNS_DOMAIN` and `PROXY_ACMEDNS_PORT=15353`, then query it
 with `dig @127.0.0.1 -p 15353 <domain> SOA`.
 
 On macOS, OrbStack fakes ownership changes on bind mounts: test ownership,

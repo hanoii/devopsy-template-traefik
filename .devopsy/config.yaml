@@ -2,7 +2,7 @@
 # One environment, prod, on every server: devopsy @<server>:prod, or an
 # alias in the user-level ~/.config/devopsy/config.yaml (README, Setup).
 project: traefik
-secrets: [DEVOPSY_CLOUDFLARE_DNS_API_TOKEN]
+secrets: [PROXY_CLOUDFLARE_DNS_API_TOKEN]
 defaults:
   mode: image                    # only .devopsy/: nothing to build
   release: deploy

@@ -182,7 +182,7 @@ forget_stores() {
   in_traefik '
     printf "{"
     sep=
-    for f in acme.json acme-acmedns.json acme-cloudflare.json acme-dns-accounts.json; do
+    for f in acme-le-http01.json acme-le-dns01-selfhosted.json acme-le-dns01-cloudflare.json acme-dns-accounts.json; do
       [ -s "/letsencrypt/$f" ] || continue
       printf "%s\"%s\":" "$sep" "$f"
       cat "/letsencrypt/$f"
@@ -250,7 +250,7 @@ forget_apply() {
           rest=${line#"file$tab"}
           name=${rest%%"$tab"*}
           case $name in
-            acme.json | acme-acmedns.json | acme-cloudflare.json | acme-dns-accounts.json) ;;
+            acme-le-http01.json | acme-le-dns01-selfhosted.json | acme-le-dns01-cloudflare.json | acme-dns-accounts.json) ;;
             *) continue ;;
           esac
           cp -p "/letsencrypt/$name" "/letsencrypt/$name.forget-$1"

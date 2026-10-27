@@ -31,10 +31,10 @@ remote (`upstream`) to pull its changes when you choose. Nothing updates
 your copy, or what runs on your servers, but your own release.
 
 The other templates (whoami, drupal11, registry) route through it and
-import its wildcard domain, so a change here can break them: keep its
-interface (`devopsy.role=proxy`, the `WILDCARD_DOMAIN` export, the
-`traefik` network, the `letsencrypt1`, `acmedns` and `cloudflare`
-resolvers, the `web` and `websecure` entrypoints), or change the sites with
+import its base domain, so a change here can break them: keep its
+interface (`devopsy.role=proxy`, the `BASE_DOMAIN` export, the
+`traefik` network, the `le-http01`, `le-dns01-selfhosted` and
+`le-dns01-cloudflare` resolvers, the `web` and `websecure` entrypoints), or change the sites with
 it.
 
 ## Setup
@@ -72,7 +72,7 @@ aliases:
 Set its settings before the first release, then release it:
 
 ```sh
-devopsy @vm1-traefik --vars set --show TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL
+devopsy @vm1-traefik --vars set --show PROXY_LE_ACME_EMAIL
 devopsy @vm1-traefik --release
 ```
 
@@ -144,18 +144,21 @@ server; projects that do not belong on separate servers.
 
 ## Certificates
 
-Three resolvers. Every router uses `letsencrypt1` unless `DEVOPSY_CERTRESOLVER`
-in `.env` changes the default, or the router picks one with
-`traefik.http.routers.<name>.tls.certresolver=<resolver>`.
+Three resolvers, all Let's Encrypt, named by CA (`le`), ACME challenge
+and, for DNS-01, who answers it. Every router uses this server's default,
+`PROXY_CERTRESOLVER` in `.env` (`le-http01` when unset), unless it picks
+one with `traefik.http.routers.<name>.tls.certresolver=<resolver>`. The
+site templates leave it to the server unless their own
+`PROXY_CERTRESOLVER` names one.
 
-- **`letsencrypt1`, HTTP-01.** Always available. Works for any domain that
+- **`le-http01`, HTTP-01.** Always available. Works for any domain that
   points at this server, with or without a CDN proxy like Cloudflare in
   front. Traefik answers the challenge on port 80 before the HTTPS redirect.
-- **`acmedns`, DNS-01 through this server's own acme-dns.** No DNS provider
+- **`le-dns01-selfhosted`, DNS-01 through this server's own acme-dns.** No DNS provider
   token: each domain needs one CNAME, created once by whoever manages its
   DNS. See below.
-- **`cloudflare`, DNS-01 through Cloudflare's API.** Set a token as
-  `DEVOPSY_CLOUDFLARE_DNS_API_TOKEN` (`--vars set`, hidden prompt). See
+- **`le-dns01-cloudflare`, DNS-01 through Cloudflare's API.** Set a token as
+  `PROXY_CLOUDFLARE_DNS_API_TOKEN` (`--vars set`, hidden prompt). See
   below.
 
 Both DNS-01 resolvers work with a CDN proxy on, before DNS points at this
@@ -173,19 +176,19 @@ This is how hosting panels like Forge do DNS validation.
 
    ```dotenv
    COMPOSE_PROFILES=acmedns
-   DEVOPSY_ACMEDNS_DOMAIN=acme-vm1.example.com
+   PROXY_ACMEDNS_DOMAIN=acme-vm1.example.com
    ```
 
    acme-dns listens only on the server's public IPv4, which avoids clashing
    with systemd-resolved on 127.0.0.53:53. `deploy` detects it and saves it
-   as `DEVOPSY_ACMEDNS_IP`; set it yourself behind NAT.
+   as `PROXY_ACMEDNS_IP`; set it yourself behind NAT.
 
 2. Run `devopsy @vm1-traefik deploy`, then `devopsy @vm1-traefik acmedns`.
    It prints two records to create once in `example.com`: an A record for
    `ns-acme-vm1.example.com` and an NS record delegating
    `acme-vm1.example.com` to it.
 3. Open port 53, UDP and TCP, in your provider's firewall.
-4. Route a site with the `acmedns` resolver. Its first attempt registers the
+4. Route a site with the `le-dns01-selfhosted` resolver. Its first attempt registers the
    domain and fails with a "CNAME required" error in Traefik's log. Run
    `devopsy @vm1-traefik acmedns` again: it lists the CNAME each domain
    needs, like
@@ -227,7 +230,7 @@ purge Cloudflare's cache.
 ### Propagation checks
 
 Before asking Let's Encrypt, Traefik checks the challenge TXT record: first
-through recursive resolvers, `DEVOPSY_DNS_RESOLVERS` (default the host's,
+through recursive resolvers, `PROXY_DNS_RESOLVERS` (default the host's,
 `127.0.0.11:53` through Docker, then 1.1.1.1 and 1.0.0.1; each is asked in
 turn when one fails or has no answer yet), then at the zone's authoritative
 nameservers on port 53.
@@ -236,7 +239,7 @@ Behind a firewall that blocks outbound DNS, skip the checks and wait
 instead:
 
 ```sh
-devopsy @vm1-traefik --vars set --show DEVOPSY_DNS_SKIP_CHECKS DEVOPSY_DNS_PROPAGATION_DELAY
+devopsy @vm1-traefik --vars set --show PROXY_DNS_SKIP_CHECKS PROXY_DNS_PROPAGATION_DELAY
 # true, 60s
 ```
 
@@ -265,7 +268,7 @@ DNS:
    ```
 
    For a wildcard certificate the same record covers `*.client.org`.
-3. Route the site with the `cloudflare` resolver. Traefik follows the CNAME,
+3. Route the site with the `le-dns01-cloudflare` resolver. Traefik follows the CNAME,
    writes the TXT record at `client.org.example-acme.com` and removes it once
    validated. Renewals need nothing more.
 
@@ -274,36 +277,36 @@ to it. The zones the sites live in stay out of its reach, even when they are
 on Cloudflare too, which makes this the safest setup and not only the one for
 outside domains.
 
-Keep the CNAME as long as the site uses the `cloudflare` resolver. Removing it
+Keep the CNAME as long as the site uses the `le-dns01-cloudflare` resolver. Removing it
 breaks the next renewal, about 30 days before expiry.
 
 ## Wildcard URLs
 
-With a wildcard domain for the server, like `vm1.example.com`, every
+With a base domain for the server, like `vm1.example.com`, every
 environment gets a URL next to its own domains, its compose project's:
 `whoami-prod.vm1.example.com`. Set it once, in this Traefik's settings, as
-`DEVOPSY_PROXY_WILDCARD_DOMAIN`. Traefik exports it to projects with
+`PROXY_BASE_DOMAIN`. Traefik exports it to projects as `BASE_DOMAIN` with
 devopsy's labels (devopsy-cli's README, "Roles, exports and imports"):
 
 ```yaml
 # this template's traefik service
 - devopsy.role=proxy
-- devopsy.export.WILDCARD_DOMAIN=${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}
+- devopsy.export.BASE_DOMAIN=${PROXY_BASE_DOMAIN:-}
 ```
 
 A project imports it, and each of its releases writes it into the release's
-`devopsy-target.env`, unless the target sets `DEVOPSY_WILDCARD_DOMAIN` itself
+`devopsy-target.env`, unless the target sets `PROXY_BASE_DOMAIN` itself
 (empty: no automatic URL). A release fails while no proxy runs, unless the
 import ends in `?`. devopsy-cli knows no URL: the site templates compute
 their hosts from the compose project name (`COMPOSE_PROJECT_NAME`, which
 devopsy sets), the imported domain and the environment's
-`DEVOPSY_DOMAINS`, in their `env` capability
+`PROXY_DOMAINS`, in their `env` capability
 (`.devopsy/capabilities/env/compute`), and use the resulting rule in their
 labels:
 
 ```yaml
 labels:
-  - devopsy.import.DEVOPSY_WILDCARD_DOMAIN=proxy/WILDCARD_DOMAIN
+  - devopsy.import.PROXY_BASE_DOMAIN=proxy/BASE_DOMAIN
   - traefik.enable=true
   - traefik.http.routers.${COMPOSE_PROJECT_NAME:-app}.rule=${SITE_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
 ```
@@ -312,26 +315,27 @@ The fallback is a `HostRegexp` because Traefik requests no certificate for
 one: an environment without hosts would otherwise log an ACME error for
 `app.localhost` on every attempt.
 
-`SITE_HOST_RULE` matches the wildcard host plus `DEVOPSY_DOMAINS`, the
+`SITE_HOST_RULE` matches the wildcard host plus `PROXY_DOMAINS`, the
 environment's own domains, set in its `env` in config.yaml or its `.env`
 (on a server, the target's `shared/.env`):
 
 ```dotenv
-DEVOPSY_DOMAINS="example.org www.example.org"
+PROXY_DOMAINS="example.org www.example.org"
 ```
 
-Without a wildcard domain, a released environment only answers on its
-`DEVOPSY_DOMAINS`; locally, its host is `<project>.localhost`, which
+Without a base domain, a released environment only answers on its
+`PROXY_DOMAINS`; locally, its host is `<project>.localhost`, which
 browsers resolve to the local machine.
 
 DNS: one wildcard record, `*.vm1.example.com A <server IP>`. With
-`DEVOPSY_PROXY_WILDCARD_DOMAIN` set, `deploy` also requests one wildcard
+`PROXY_BASE_DOMAIN` set, `deploy` also requests one wildcard
 certificate for all wildcard URLs (`mnt/dynamic/public-wildcard.yaml`),
 which avoids Let's Encrypt's limit of 50 certificates per domain a week. It
-needs a DNS-01 resolver, `DEVOPSY_WILDCARD_CERTRESOLVER`: `auto` (acmedns
-when configured, else cloudflare with a token, else none), `acmedns`,
-`cloudflare`, or `none` for one HTTP-01 certificate per wildcard URL.
-With `acmedns`, `devopsy acmedns` then lists the CNAME for
+needs a DNS-01 resolver, `PROXY_WILDCARD_CERTRESOLVER`: `auto` (`le-dns01-selfhosted`
+when acme-dns is set up, else `le-dns01-cloudflare` with a token, else
+none), `le-dns01-selfhosted`, `le-dns01-cloudflare`, or `none` for one
+HTTP-01 certificate per wildcard URL. With `le-dns01-selfhosted`,
+`devopsy acmedns` then lists the CNAME for
 `_acme-challenge.vm1.example.com`.
 
 Files in `mnt/dynamic/` are Traefik dynamic configuration (file provider), for
@@ -450,8 +454,8 @@ ready: point its DNS at ...", and prints the `devopsy --probe` line that
 checks the same hosts from your machine (devopsy-cli).
 
 The server's public IP, for "this server" and the `--probe --ip` line, is
-`DEVOPSY_PUBLIC_IP` when set, else what 1.1.1.1 sees (`/cdn-cgi/trace`, so
-it works behind NAT), else `DEVOPSY_ACMEDNS_IP`, else the default route's.
+`PROXY_PUBLIC_IP` when set, else what 1.1.1.1 sees (`/cdn-cgi/trace`, so
+it works behind NAT), else `PROXY_ACMEDNS_IP`, else the default route's.
 Only host names reach the checks: a project's rule that names something
 else is listed as not checked.
 
@@ -489,7 +493,7 @@ when nothing is stored for the queued domains. Each edited store keeps a copy ne
 (`mnt/letsencrypt/<file>.forget-<time>`).
 
 Forget a domain once nothing routes it: one a router still names gets a
-new certificate as Traefik starts, and through `acmedns` a new
+new certificate as Traefik starts, and through `le-dns01-selfhosted` a new
 registration, with a new CNAME.
 
 ## Customizing
