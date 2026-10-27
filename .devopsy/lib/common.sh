@@ -43,15 +43,21 @@ usable_resolver() {
   esac
 }
 check_settings() {
-  for _old in $(env | sed -n 's/^\(DEVOPSY_[A-Z0-9_]*\)=.*/\1/p'); do
+  for _old in DEVOPSY_PROXY_WILDCARD_DOMAIN DEVOPSY_CERTRESOLVER \
+    DEVOPSY_WILDCARD_CERTRESOLVER DEVOPSY_ACMEDNS_DOMAIN DEVOPSY_ACMEDNS_IP \
+    DEVOPSY_ACMEDNS_PORT DEVOPSY_CLOUDFLARE_DNS_API_TOKEN DEVOPSY_DNS_RESOLVERS \
+    DEVOPSY_DNS_PROPAGATION_DELAY DEVOPSY_DNS_SKIP_CHECKS DEVOPSY_PUBLIC_IP \
+    DEVOPSY_DOCKER_GID DEVOPSY_READ_TIMEOUT DEVOPSY_HTTP_PORT DEVOPSY_HTTPS_PORT \
+    DEVOPSY_API_PORT; do
+    eval "_set=\${$_old+x}"
+    [ -n "$_set" ] || continue
     case $_old in
-      DEVOPSY_PROXY_WILDCARD_DOMAIN) die "$_old is PROXY_BASE_DOMAIN now: rename it in .env" ;;
-      DEVOPSY_CERTRESOLVER | DEVOPSY_WILDCARD_CERTRESOLVER | DEVOPSY_ACMEDNS_* | \
-        DEVOPSY_CLOUDFLARE_DNS_API_TOKEN | DEVOPSY_DNS_* | DEVOPSY_PUBLIC_IP | \
-        DEVOPSY_DOCKER_GID | DEVOPSY_READ_TIMEOUT | DEVOPSY_HTTP_PORT | \
-        DEVOPSY_HTTPS_PORT | DEVOPSY_API_PORT)
-        die "$_old is PROXY_${_old#DEVOPSY_} now: rename it in .env" ;;
+      DEVOPSY_PROXY_WILDCARD_DOMAIN) _new=PROXY_BASE_DOMAIN ;;
+      *) _new=PROXY_${_old#DEVOPSY_} ;;
     esac
+    eval "_set=\${$_new+x}"
+    [ -n "$_set" ] && die "$_old is $_new now, which is set: unset $_old"
+    die "$_old is $_new now: rename it in .env"
   done
   # Set at all: an empty CA server meant Traefik's default, production.
   [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL+x}" ] ||
@@ -219,6 +225,7 @@ static_env() {
 
   if write_if_changed "$dir/mnt/traefik.env" "$_env" && [ "$_restart" = true ]; then
     echo "$(basename "$0"): restarting Traefik for its new static settings"
+    check_settings
     devopsy up -d --wait
   fi
 

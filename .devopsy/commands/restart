@@ -3,6 +3,8 @@
 # Pull newer images and recreate whatever changed.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+# Traefik is recreated: on settings deploy would take.
+check_settings
 
 devopsy pull
 # Domains queued by `devopsy forget`.

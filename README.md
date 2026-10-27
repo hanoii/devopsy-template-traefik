@@ -88,7 +88,8 @@ every service.
 
 Upgrading is a release from a newer checkout: after a breaking one
 (`feat!`), `check` names any setting left from before, with its new
-name. `devopsy @vm1-traefik --rollback` goes back. Routed sites see a
+name. `devopsy @vm1-traefik --rollback` goes back (to a release from
+before a breaking one, once its settings are back as it named them). Routed sites see a
 few seconds without Traefik when its container is recreated.
 
 Traefik floats on its minor (`traefik:v3.7`): every release pulls the

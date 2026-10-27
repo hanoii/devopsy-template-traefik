@@ -40,6 +40,8 @@ case "${1:-}" in
     exit 1
     ;;
 esac
+# Traefik restarts below: on settings deploy would take.
+check_settings
 
 if [ "$(name_of "$current")" = "$1" ]; then
   echo "Already on $1."

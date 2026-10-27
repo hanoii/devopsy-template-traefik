@@ -250,7 +250,9 @@ Everything lives in `.devopsy/`:
   `prepare` step (`check`), before the switch: in `deploy`, the run
   step, a refusal came after it, and the restart of the release before,
   reading the same `shared/.env`, refused too (seen on a test machine,
-  2026-10-27). `deploy` runs it as well, for a plain `devopsy deploy`. Dashed names work
+  2026-10-27). So does everything else that starts Traefik (`deploy`,
+  `restart`, `letsencrypt`'s switch, `forget --now`, `static_env`'s
+  restart): sites without a resolver of their own take the entrypoint's. Dashed names work
   in `TRAEFIK_CERTIFICATESRESOLVERS_LE-HTTP01_...` (checked on v3.7,
   2026-10-27).
 - **A router with no `tls` label gets the entrypoint's resolver,**
