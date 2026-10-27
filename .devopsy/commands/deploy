@@ -54,12 +54,12 @@ wildcard=$dir/mnt/dynamic/public-wildcard.yaml
 domain=${PROXY_BASE_DOMAIN:-}
 resolver=${PROXY_WILDCARD_CERTRESOLVER:-auto}
 if [ "$resolver" = auto ]; then
-  if [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ]; then
-    resolver=le-dns01-selfhosted
-  elif [ -n "${PROXY_CLOUDFLARE_DNS_API_TOKEN:-}" ]; then
+  case ",${COMPOSE_PROFILES:-}," in
+    *,acmedns,*) resolver=le-dns01-selfhosted ;;
+    *) resolver=none ;;
+  esac
+  if [ "$resolver" = none ] && [ -n "${PROXY_CLOUDFLARE_DNS_API_TOKEN:-}" ]; then
     resolver=le-dns01-cloudflare
-  else
-    resolver=none
   fi
 fi
 if [ -z "$domain" ] || [ "$resolver" = none ]; then

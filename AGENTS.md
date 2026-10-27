@@ -22,7 +22,7 @@ Everything lives in `.devopsy/`:
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/` (POSIX `sh`, each with a `## Description:` line):
-  `check` (a release's prepare step: the settings), `deploy` (what
+  `check` (a release's and a rollback's prepare step: the settings), `deploy` (what
   release and rollback run), `restart`, `acmedns`,
   `letsencrypt`, `proxies`, `domains`, `forget`, and `setup`, the only
   one run locally (`## Run: local`, `## Needs: target`: `devopsy
@@ -396,8 +396,9 @@ Everything lives in `.devopsy/`:
   @<server>:prod --release`, or an alias in
   `~/.config/devopsy/config.yaml` whose `source:` names the checkout;
   servers are the operator's, never in this repository. `config.yaml`
-  gives `prod` `mode: image` (only `.devopsy/` is uploaded), `check` then
-  `deploy` for `--release`, and `deploy` for `--rollback`. Settings go in the
+  gives `prod` `mode: image` (only `.devopsy/` is uploaded), and `check`
+  then `deploy` for `--release` and `--rollback` (a rollback's prepare
+  runs in the restored release, before its switch). Settings go in the
   server's `shared/.env` through `--vars`.
 - **The network projects join is fixed, `traefik`:** one Traefik per
   host (the `proxy` role refuses a second), so nothing varies, and it

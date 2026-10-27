@@ -48,13 +48,15 @@ check_settings() {
       DEVOPSY_PROXY_WILDCARD_DOMAIN) die "$_old is PROXY_BASE_DOMAIN now: rename it in .env" ;;
       DEVOPSY_CERTRESOLVER | DEVOPSY_WILDCARD_CERTRESOLVER | DEVOPSY_ACMEDNS_* | \
         DEVOPSY_CLOUDFLARE_DNS_API_TOKEN | DEVOPSY_DNS_* | DEVOPSY_PUBLIC_IP | \
-        DEVOPSY_DOCKER_GID | DEVOPSY_READ_TIMEOUT | DEVOPSY_*_PORT)
+        DEVOPSY_DOCKER_GID | DEVOPSY_READ_TIMEOUT | DEVOPSY_HTTP_PORT | \
+        DEVOPSY_HTTPS_PORT | DEVOPSY_API_PORT)
         die "$_old is PROXY_${_old#DEVOPSY_} now: rename it in .env" ;;
     esac
   done
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:-}" ] ||
+  # Set at all: an empty CA server meant Traefik's default, production.
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL+x}" ] ||
     die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL is PROXY_LE_ACME_EMAIL now: rename it in .env"
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}" ] ||
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER+x}" ] ||
     die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER is PROXY_LE_ACME_CASERVER now: rename it in .env"
   renamed_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
   renamed_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
@@ -69,10 +71,6 @@ check_settings() {
   case ",${COMPOSE_PROFILES:-}," in
     *,acmedns,*)
       [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env" ;;
-    *)
-      # The wildcard's auto would pick le-dns01-selfhosted.
-      [ -z "${PROXY_ACMEDNS_DOMAIN:-}" ] ||
-        die "PROXY_ACMEDNS_DOMAIN is set, but COMPOSE_PROFILES has no acmedns: add it, or unset PROXY_ACMEDNS_DOMAIN" ;;
   esac
   usable_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
   usable_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
