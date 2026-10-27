@@ -22,7 +22,8 @@ Everything lives in `.devopsy/`:
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/` (POSIX `sh`, each with a `## Description:` line):
-  `deploy` (what release and rollback run), `restart`, `acmedns`,
+  `check` (a release's prepare step: the settings), `deploy` (what
+  release and rollback run), `restart`, `acmedns`,
   `letsencrypt`, `proxies`, `domains`, `forget`, and `setup`, the only
   one run locally (`## Run: local`, `## Needs: target`: `devopsy
   @<server>:prod setup`, or an alias, the address as typed in
@@ -237,10 +238,15 @@ Everything lives in `.devopsy/`:
   (`PROXY_LE_ACME_EMAIL`, `PROXY_LE_ACME_CASERVER`): another CA brings
   its own email and EAB key. What runs acme-dns keeps its software's
   name (the `acmedns` profile, service and command, `PROXY_ACMEDNS_*`).
-  `deploy` refuses the old names in `PROXY_CERTRESOLVER` and
-  `PROXY_WILDCARD_CERTRESOLVER`, naming the new one, and any other
-  value in `PROXY_CERTRESOLVER`: a router naming a resolver Traefik
-  lacks gets no certificate, which Traefik only logs. Dashed names work
+  `check_settings` (`lib/common.sh`) refuses the old names in
+  `PROXY_CERTRESOLVER` and `PROXY_WILDCARD_CERTRESOLVER`, and the old
+  email and CA variables, naming the new one, and any other value in
+  `PROXY_CERTRESOLVER`: a router naming a resolver Traefik lacks gets no
+  certificate, which Traefik only logs. It runs as the release's
+  `prepare` step (`check`), before the switch: in `deploy`, the run
+  step, a refusal came after it, and the restart of the release before,
+  reading the same `shared/.env`, refused too (seen on a test machine,
+  2026-10-27). `deploy` runs it as well, for a plain `devopsy deploy`. Dashed names work
   in `TRAEFIK_CERTIFICATESRESOLVERS_LE-HTTP01_...` (checked on v3.7,
   2026-10-27).
 - **A router with no `tls` label gets the entrypoint's resolver,**
@@ -386,8 +392,8 @@ Everything lives in `.devopsy/`:
   @<server>:prod --release`, or an alias in
   `~/.config/devopsy/config.yaml` whose `source:` names the checkout;
   servers are the operator's, never in this repository. `config.yaml`
-  gives `prod` `mode: image` (only `.devopsy/` is uploaded) and
-  `deploy` for `--release` and `--rollback`. Settings go in the
+  gives `prod` `mode: image` (only `.devopsy/` is uploaded), `check` then
+  `deploy` for `--release`, and `deploy` for `--rollback`. Settings go in the
   server's `shared/.env` through `--vars`.
 - **The network projects join is fixed, `traefik`:** one Traefik per
   host (the `proxy` role refuses a second), so nothing varies, and it

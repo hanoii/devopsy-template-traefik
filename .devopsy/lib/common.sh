@@ -17,6 +17,37 @@ warn() {
   echo "$(basename "$0"): $*" >&2
 }
 
+# check_settings: refuses settings Traefik would take without a word.
+# Resolvers are named by CA, challenge and who answers it; the names from
+# before are refused, naming their new one. A router naming a resolver
+# Traefik lacks gets no certificate, which Traefik only logs.
+renamed_resolver() {
+  case $2 in
+    letsencrypt1) die "$1: letsencrypt1 is le-http01 now" ;;
+    acmedns) die "$1: acmedns is le-dns01-selfhosted now" ;;
+    cloudflare) die "$1: cloudflare is le-dns01-cloudflare now" ;;
+  esac
+}
+check_settings() {
+  renamed_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
+  renamed_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
+  case ${PROXY_CERTRESOLVER:-le-http01} in
+    le-http01 | le-dns01-selfhosted | le-dns01-cloudflare) ;;
+    *) die "PROXY_CERTRESOLVER must be le-http01, le-dns01-selfhosted or le-dns01-cloudflare: $PROXY_CERTRESOLVER" ;;
+  esac
+  case ${PROXY_WILDCARD_CERTRESOLVER:-auto} in
+    auto | le-dns01-selfhosted | le-dns01-cloudflare | none) ;;
+    *) die "PROXY_WILDCARD_CERTRESOLVER must be auto, le-dns01-selfhosted, le-dns01-cloudflare or none: $PROXY_WILDCARD_CERTRESOLVER" ;;
+  esac
+  case ${PROXY_BASE_DOMAIN:-} in
+    *[!a-z0-9.-]*) die "PROXY_BASE_DOMAIN is not a domain name: $PROXY_BASE_DOMAIN" ;;
+  esac
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:-}" ] ||
+    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL is PROXY_LE_ACME_EMAIL now"
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}" ] ||
+    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER is PROXY_LE_ACME_CASERVER now"
+}
+
 # Runs devopsy, showing its messages (the compose notice, container
 # creation) only when it fails. stdout passes through.
 quiet() {

@@ -1,0 +1,10 @@
+#!/bin/sh
+## Description: Check this server's settings (what a release runs before going live)
+# The release's prepare step: in the new release, before it is current, so
+# a setting Traefik would take without a word (a resolver name from before,
+# an unknown one) refuses the release and nothing live changes. deploy
+# runs the same checks.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+check_settings
+echo "check: settings fine" >&2

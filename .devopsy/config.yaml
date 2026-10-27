@@ -5,7 +5,9 @@ project: traefik
 secrets: [PROXY_CLOUDFLARE_DNS_API_TOKEN]
 defaults:
   mode: image                    # only .devopsy/: nothing to build
-  release: deploy
+  release:
+    prepare: check               # refuses bad settings before the switch
+    run: deploy
   rollback: deploy
 environments:
   prod: {}

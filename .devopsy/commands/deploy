@@ -16,6 +16,10 @@
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
+# A release checks them before its switch (commands/check, its prepare
+# step); a plain deploy here.
+check_settings
+
 mkdir -p "$dir/mnt/dynamic" "$dir/mnt/proxies"
 
 # GNU stat: on macOS the socket is root's and the default of 0 works.
@@ -41,24 +45,6 @@ case ",${COMPOSE_PROFILES:-}," in
     ;;
 esac
 
-# The resolvers' names, by CA, challenge and who answers it. Names from
-# before are refused, naming their new one: a router naming a resolver
-# Traefik lacks gets no certificate, and Traefik only logs it.
-resolvers="le-http01 le-dns01-selfhosted le-dns01-cloudflare"
-check_resolver() {
-  case $2 in
-    letsencrypt1) die "$1: letsencrypt1 is le-http01 now" ;;
-    acmedns) die "$1: acmedns is le-dns01-selfhosted now" ;;
-    cloudflare) die "$1: cloudflare is le-dns01-cloudflare now" ;;
-  esac
-}
-check_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
-check_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
-case " $resolvers " in
-  *" ${PROXY_CERTRESOLVER:-le-http01} "*) ;;
-  *) die "PROXY_CERTRESOLVER must be one of $resolvers: ${PROXY_CERTRESOLVER:-}" ;;
-esac
-
 # One wildcard certificate for every project's wildcard URL. It needs a
 # DNS-01 resolver: auto picks le-dns01-selfhosted (acme-dns), else
 # le-dns01-cloudflare, else none (each wildcard URL then gets its own
@@ -77,13 +63,6 @@ if [ "$resolver" = auto ]; then
     resolver=none
   fi
 fi
-case $resolver in
-  le-dns01-selfhosted | le-dns01-cloudflare | none) ;;
-  *) die "PROXY_WILDCARD_CERTRESOLVER must be auto, le-dns01-selfhosted, le-dns01-cloudflare or none: $resolver" ;;
-esac
-case $domain in
-  *[!a-z0-9.-]*) die "PROXY_BASE_DOMAIN is not a domain name: $domain" ;;
-esac
 if [ -z "$domain" ] || [ "$resolver" = none ]; then
   if [ -f "$wildcard" ]; then
     rm -f "$wildcard"
