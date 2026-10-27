@@ -16,7 +16,7 @@ set -eu
 
 production=https://acme-v02.api.letsencrypt.org/directory
 staging=https://acme-staging-v02.api.letsencrypt.org/directory
-key=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER
+key=PROXY_LE_ACME_CASERVER
 
 name_of() {
   case "$1" in
@@ -26,7 +26,7 @@ name_of() {
   esac
 }
 
-current=${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}
+current=${PROXY_LE_ACME_CASERVER:-}
 
 case "${1:-}" in
   '')
@@ -56,7 +56,7 @@ env_set "$key" "$target"
 suffix=$(name_of "$current" | cut -d' ' -f1).$(date +%Y%m%d%H%M%S)
 # shellcheck disable=SC2016
 in_traefik '
-  for f in acme.json acme-acmedns.json acme-cloudflare.json; do
+  for f in acme-le-http01.json acme-le-dns01-selfhosted.json acme-le-dns01-cloudflare.json; do
     if [ -s "/letsencrypt/$f" ]; then
       mv "/letsencrypt/$f" "/letsencrypt/$f.$1"
       echo "Moved $f to $f.$1"

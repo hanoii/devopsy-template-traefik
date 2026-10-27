@@ -96,13 +96,13 @@ env=$(devopsy "$t" --vars --show 2>/dev/null) ||
   die "cannot reach $t. Set the server up first (devopsy-server's setup.sh), then check: ssh <server> docker info"
 names=$(printf '%s\n' "$env" | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p')
 # Released: deploy saves the Docker socket's group on its first run.
-released=$(printf '%s\n' "$names" | grep -x DEVOPSY_DOCKER_GID || true)
+released=$(printf '%s\n' "$names" | grep -x PROXY_DOCKER_GID || true)
 # current <name>: its value on the server, or nothing.
 current() {
   printf '%s\n' "$env" | sed -n "s/^$1='\(.*\)'\$/\1/p" | head -n 1
 }
 
-email_var=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL
+email_var=PROXY_LE_ACME_EMAIL
 set_names=
 unset_names=
 # setting <name> <value>: set in one --vars call at the end, through the
@@ -119,12 +119,12 @@ unsetting() {
 }
 
 # The server's public IPv4, once: what DNS records point at.
-# DEVOPSY_PUBLIC_IP when set, else as 1.1.1.1 sees the server (right
+# PROXY_PUBLIC_IP when set, else as 1.1.1.1 sees the server (right
 # behind NAT too), else asked.
 ip=
 public_ip() {
   [ -z "$ip" ] || return 0
-  ip=$(current DEVOPSY_PUBLIC_IP)
+  ip=$(current PROXY_PUBLIC_IP)
   if [ -z "$ip" ]; then
     echo "Asking $t for its public IPv4..."
     ip=$(server_ip) || ip=
@@ -161,7 +161,7 @@ while [ -z "$email" ]; do
 done
 setting "$email_var" "$email"
 
-ca_var=TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER
+ca_var=PROXY_LE_ACME_CASERVER
 production_ca=https://acme-v02.api.letsencrypt.org/directory
 case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
 say "Certificates come from Let's Encrypt: production, trusted by browsers, or
@@ -186,13 +186,13 @@ fi
 profiles=$(current COMPOSE_PROFILES)
 # Without acmedns; added back below when chosen.
 profiles=$(printf '%s' "$profiles" | tr ',' '\n' | grep -vx acmedns | paste -sd, - || true)
-domain=$(current DEVOPSY_PROXY_WILDCARD_DOMAIN)
-resolver=$(current DEVOPSY_WILDCARD_CERTRESOLVER)
-acmedns_domain=$(current DEVOPSY_ACMEDNS_DOMAIN)
+domain=$(current PROXY_BASE_DOMAIN)
+resolver=$(current PROXY_WILDCARD_CERTRESOLVER)
+acmedns_domain=$(current PROXY_ACMEDNS_DOMAIN)
 case $domain in
   '') choice=1 ;;
   *.sslip.io) choice=3 ;;
-  *) case $resolver in acmedns | cloudflare) choice=2 ;; *) choice=1 ;; esac ;;
+  *) case $resolver in le-dns01-selfhosted | le-dns01-cloudflare) choice=2 ;; *) choice=1 ;; esac ;;
 esac
 
 say "Wildcard URLs: every environment gets <project>-<environment>.<domain>, with
@@ -215,53 +215,53 @@ case $choice in
     case $domain in *.sslip.io) domain= ;; esac
     domain=$(ask "Domain for this server, like vm1.example.com" "$domain")
     [ -n "$domain" ] || die "no domain"
-    setting DEVOPSY_PROXY_WILDCARD_DOMAIN "$domain"
+    setting PROXY_BASE_DOMAIN "$domain"
     ;;
   3)
     public_ip
     domain=$(printf '%s' "$ip" | tr . -).sslip.io
-    setting DEVOPSY_PROXY_WILDCARD_DOMAIN "$domain"
-    setting DEVOPSY_WILDCARD_CERTRESOLVER none
+    setting PROXY_BASE_DOMAIN "$domain"
+    setting PROXY_WILDCARD_CERTRESOLVER none
     ;;
   4)
     domain=
-    unsetting DEVOPSY_PROXY_WILDCARD_DOMAIN
-    unsetting DEVOPSY_WILDCARD_CERTRESOLVER
+    unsetting PROXY_BASE_DOMAIN
+    unsetting PROXY_WILDCARD_CERTRESOLVER
     ;;
 esac
 
 case $choice in
-  1) setting DEVOPSY_WILDCARD_CERTRESOLVER none ;;
+  1) setting PROXY_WILDCARD_CERTRESOLVER none ;;
   2)
     say "DNS-01 through:
 
   1. acme-dns, on this server: no API token. Needs port 53 open (UDP and
      TCP), two records and the wildcard's CNAME, once.
   2. Cloudflare's API: a token for the zone that holds the challenges."
-    case $resolver in cloudflare) d=2 ;; *) d=1 ;; esac
+    case $resolver in le-dns01-cloudflare) d=2 ;; *) d=1 ;; esac
     while :; do
       d=$(ask "Choice" "$d")
       case $d in 1 | 2) break ;; esac
     done
     if [ "$d" = 1 ]; then
-      dns01=acmedns
+      dns01=le-dns01-selfhosted
       acmedns_domain=$(ask "acme-dns's own subdomain, unique per server" "${acmedns_domain:-acme-$domain}")
-      setting DEVOPSY_ACMEDNS_DOMAIN "$acmedns_domain"
+      setting PROXY_ACMEDNS_DOMAIN "$acmedns_domain"
       profiles=${profiles:+$profiles,}acmedns
     else
-      dns01=cloudflare
+      dns01=le-dns01-cloudflare
       say "A Cloudflare token: Zone > Zone > Read and Zone > DNS > Edit, for the
 zone of $domain only (README.md, \"Cloudflare API token\")."
-      if printf '%s\n' "$names" | grep -qx DEVOPSY_CLOUDFLARE_DNS_API_TOKEN &&
+      if [ -n "$(current PROXY_CLOUDFLARE_DNS_API_TOKEN)" ] &&
         ! confirm "A token is already set. Replace it?" n; then
         :
       else
         token=$(secret "Token (hidden)")
         [ -n "$token" ] || die "no token"
-        setting DEVOPSY_CLOUDFLARE_DNS_API_TOKEN "$token"
+        setting PROXY_CLOUDFLARE_DNS_API_TOKEN "$token"
       fi
     fi
-    setting DEVOPSY_WILDCARD_CERTRESOLVER "$dns01"
+    setting PROXY_WILDCARD_CERTRESOLVER "$dns01"
     ;;
 esac
 
@@ -270,7 +270,35 @@ if [ -n "$profiles" ]; then
 else
   unsetting COMPOSE_PROFILES
 fi
-[ "$dns01" = acmedns ] || unsetting DEVOPSY_ACMEDNS_DOMAIN
+[ "$dns01" = le-dns01-selfhosted ] || unsetting PROXY_ACMEDNS_DOMAIN
+
+# Sites' own domains: the resolver every router naming none uses
+# (PROXY_CERTRESOLVER). Only a DNS-01 one set up above is a choice;
+# otherwise HTTP-01.
+if [ -n "$dns01" ]; then
+  # Unset is HTTP-01 too.
+  case $(current PROXY_CERTRESOLVER) in '' | le-http01) d=1 ;; *) d=2 ;; esac
+  say "Certificates for sites' own domains, by default:
+
+  1. HTTP-01 (le-http01): once a domain points at this server. Nothing to
+     create.
+  2. DNS-01 ($dns01): before DNS moves here, and behind Cloudflare's proxy.
+     $(if [ "$dns01" = le-dns01-selfhosted ]; then echo "One CNAME per domain, created once."; else echo "Domains under the token's zones, or delegating their challenge to one."; fi)
+
+A site can still name its own (the site templates' PROXY_CERTRESOLVER)."
+  while :; do
+    d=$(ask "Choice" "$d")
+    case $d in 1 | 2) break ;; esac
+  done
+  # Set either way, so running setup again offers the answer given.
+  if [ "$d" = 2 ]; then
+    setting PROXY_CERTRESOLVER "$dns01"
+  else
+    setting PROXY_CERTRESOLVER le-http01
+  fi
+else
+  unsetting PROXY_CERTRESOLVER
+fi
 
 cloudflare_proxy=
 say "Sites behind Cloudflare's proxy (orange cloud) need its ranges trusted, so
@@ -308,7 +336,7 @@ At Cloudflare, keep it DNS only (grey cloud). Its free edge certificate
 only covers one level below the zone: proxied, *.$domain fails HTTPS
 unless $domain is the zone itself. Sites can still use the proxy for
 their own domains."
-    if [ "$dns01" = acmedns ]; then
+    if [ "$dns01" = le-dns01-selfhosted ]; then
       say "acme-dns: open port 53, UDP and TCP, in your provider's firewall,
 and create these records, once:"
       acmedns_records
@@ -316,7 +344,7 @@ and create these records, once:"
     ask "Press Enter once they exist" >/dev/null
     ;;
 esac
-if [ "$dns01" = acmedns ]; then
+if [ "$dns01" = le-dns01-selfhosted ]; then
   # Traefik registers the wildcard with acme-dns on its first try, usually
   # before the listing above: its CNAME was there unless it was not yet.
   case $records in

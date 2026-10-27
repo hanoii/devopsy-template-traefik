@@ -1,18 +1,18 @@
 #!/bin/sh
-## Description: DNS records the acmedns resolver needs (delegation, a CNAME per certificate)
-# Prints the DNS records the acmedns resolver needs: the one-time delegation
-# of DEVOPSY_ACMEDNS_DOMAIN to this server, and one CNAME per certificate Traefik
+## Description: DNS records the le-dns01-selfhosted resolver needs (delegation, a CNAME per certificate)
+# Prints the DNS records the le-dns01-selfhosted resolver needs: the one-time delegation
+# of PROXY_ACMEDNS_DOMAIN to this server, and one CNAME per certificate Traefik
 # has registered with acme-dns. See README.md.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
-domain=${DEVOPSY_ACMEDNS_DOMAIN:-}
+domain=${PROXY_ACMEDNS_DOMAIN:-}
 if [ -z "$domain" ]; then
-  echo "DEVOPSY_ACMEDNS_DOMAIN is not set in .devopsy/.env" >&2
+  echo "PROXY_ACMEDNS_DOMAIN is not set in .devopsy/.env" >&2
   exit 1
 fi
 
-ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
+ip=${PROXY_ACMEDNS_IP:-$(detect_ip)}
 
 echo "Add these two records once, where ${domain#*.}'s DNS is hosted. They hand"
 echo "$domain, a name only acme-dns uses, to this server:"
@@ -31,7 +31,7 @@ records=$(in_traefik 'cat /letsencrypt/acme-dns-accounts.json 2>/dev/null || ech
   | jq -r 'to_entries[] | "\(.key) \(.value.fulldomain)"' | sort -u)
 if [ -z "$records" ]; then
   echo "No certificates registered yet: the public wildcard registers at"
-  echo "Traefik's first try, a site when it routes with the acmedns resolver."
+  echo "Traefik's first try, a site when it routes with the le-dns01-selfhosted resolver."
   echo "Run this again then."
   exit 0
 fi
@@ -43,7 +43,7 @@ echo "DNS only at Cloudflare:"
 printf '%s\n' "$records" | while read -r name target; do
   base=${name#\*.}
   what=$name
-  [ "$base" != "${DEVOPSY_PROXY_WILDCARD_DOMAIN:-}" ] || what="$name, the public wildcard"
+  [ "$base" != "${PROXY_BASE_DOMAIN:-}" ] || what="$name, the public wildcard"
   echo
   echo "  # $what"
   printf '  _acme-challenge.%s.  CNAME  %s.\n' "$base" "$target"

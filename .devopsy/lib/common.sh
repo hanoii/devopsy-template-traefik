@@ -17,6 +17,41 @@ warn() {
   echo "$(basename "$0"): $*" >&2
 }
 
+# check_settings: refuses settings Traefik would take without a word. A
+# router naming a resolver Traefik lacks, or one nothing answers, gets no
+# certificate, which Traefik only logs.
+# usable_resolver VAR VALUE: a DNS-01 resolver needs what answers it.
+usable_resolver() {
+  case $2 in
+    le-dns01-selfhosted)
+      case ",${COMPOSE_PROFILES:-}," in *,acmedns,*) ;; *)
+        die "$1 is le-dns01-selfhosted: add acmedns to COMPOSE_PROFILES (devopsy setup)" ;;
+      esac ;;
+    le-dns01-cloudflare)
+      [ -n "${PROXY_CLOUDFLARE_DNS_API_TOKEN:-}" ] ||
+        die "$1 is le-dns01-cloudflare: set PROXY_CLOUDFLARE_DNS_API_TOKEN (devopsy setup)" ;;
+  esac
+}
+check_settings() {
+  case ${PROXY_CERTRESOLVER:-le-http01} in
+    le-http01 | le-dns01-selfhosted | le-dns01-cloudflare) ;;
+    *) die "PROXY_CERTRESOLVER must be le-http01, le-dns01-selfhosted or le-dns01-cloudflare: $PROXY_CERTRESOLVER" ;;
+  esac
+  case ${PROXY_WILDCARD_CERTRESOLVER:-auto} in
+    auto | le-dns01-selfhosted | le-dns01-cloudflare | none) ;;
+    *) die "PROXY_WILDCARD_CERTRESOLVER must be auto, le-dns01-selfhosted, le-dns01-cloudflare or none: $PROXY_WILDCARD_CERTRESOLVER" ;;
+  esac
+  case ",${COMPOSE_PROFILES:-}," in
+    *,acmedns,*)
+      [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env" ;;
+  esac
+  usable_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
+  usable_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
+  case ${PROXY_BASE_DOMAIN:-} in
+    *[!a-z0-9.-]* | .* | *. | *..*) die "PROXY_BASE_DOMAIN is not a domain name: $PROXY_BASE_DOMAIN" ;;
+  esac
+}
+
 # Runs devopsy, showing its messages (the compose notice, container
 # creation) only when it fails. stdout passes through.
 quiet() {
@@ -182,7 +217,7 @@ forget_stores() {
   in_traefik '
     printf "{"
     sep=
-    for f in acme.json acme-acmedns.json acme-cloudflare.json acme-dns-accounts.json; do
+    for f in acme-le-http01.json acme-le-dns01-selfhosted.json acme-le-dns01-cloudflare.json acme-dns-accounts.json; do
       [ -s "/letsencrypt/$f" ] || continue
       printf "%s\"%s\":" "$sep" "$f"
       cat "/letsencrypt/$f"
@@ -250,7 +285,7 @@ forget_apply() {
           rest=${line#"file$tab"}
           name=${rest%%"$tab"*}
           case $name in
-            acme.json | acme-acmedns.json | acme-cloudflare.json | acme-dns-accounts.json) ;;
+            acme-le-http01.json | acme-le-dns01-selfhosted.json | acme-le-dns01-cloudflare.json | acme-dns-accounts.json) ;;
             *) continue ;;
           esac
           cp -p "/letsencrypt/$name" "/letsencrypt/$name.forget-$1"

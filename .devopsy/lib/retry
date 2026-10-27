@@ -10,6 +10,8 @@
 # callers apart, like each project. Traefik keeps and renews certificates
 # once the file is gone.
 set -eu
+# Hosts like *.example.org are words, never file patterns.
+set -f
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
 [ $# -ge 2 ] || die "usage: retry <name> <host>... | retry <name> --done"

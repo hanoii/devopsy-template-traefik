@@ -15,6 +15,8 @@
 #            check again. The request is withdrawn once every certificate
 #            exists.
 set -eu
+# Hosts like *.example.org are words, never file patterns.
+set -f
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
 project=
@@ -40,10 +42,10 @@ if [ -n "$project" ] && [ -z "$(docker ps -q --filter "label=com.docker.compose.
   die "no running containers of compose project $project"
 fi
 
-# The server's public IPv4: DEVOPSY_PUBLIC_IP, else as 1.1.1.1 sees it (in
+# The server's public IPv4: PROXY_PUBLIC_IP, else as 1.1.1.1 sees it (in
 # the check script, right behind NAT too), else acme-dns's, else the default
 # route's.
-fallback_ip=${DEVOPSY_ACMEDNS_IP:-$(detect_ip)}
+fallback_ip=${PROXY_ACMEDNS_IP:-$(detect_ip)}
 
 # The hosts a compose project's running containers route, from their Traefik
 # rules as compose interpolated them.
@@ -161,9 +163,9 @@ reports() {
   # project's rule can say anything.
   names=$(printf '%s\n' "$facts" | jq -r '.hosts[] | .probe // .host | select(test("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"))')
   # shellcheck disable=SC2086
-  out=$(quiet run --rm --no-deps -T -e IP="${DEVOPSY_PUBLIC_IP:-}" -e FALLBACK_IP="$fallback_ip" --entrypoint sh curl -c "$check_script" sh $names)
+  out=$(quiet run --rm --no-deps -T -e IP="${PROXY_PUBLIC_IP:-}" -e FALLBACK_IP="$fallback_ip" --entrypoint sh curl -c "$check_script" sh $names)
   ip=$(printf '%s\n' "$out" | head -n 1)
-  [ -n "$ip" ] || die "could not tell this server's public IP: set DEVOPSY_PUBLIC_IP in .env"
+  [ -n "$ip" ] || die "could not tell this server's public IP: set PROXY_PUBLIC_IP in .env"
   checks=$(printf '%s\n' "$out" | tail -n +2 | jq -R 'select(. != "") | split("\t") | {name: .[0], a: (.[1] | fromjson? // null),
     challenge: (.[2] | fromjson? // null), issuer: .[3], expire: .[4], valid: (.[5] == "true"),
     status: (.[6] | tonumber? // 0), cf: (.[7] == "true")}')
