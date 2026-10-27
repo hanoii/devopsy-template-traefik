@@ -49,7 +49,7 @@ services:
     image: traefik:v3.7
     # For devopsy (see its README, "Roles, exports and imports"): this is the
     # host's proxy, and projects importing proxy/BASE_DOMAIN get the
-    # server's wildcard domain (empty: none) in each release.
+    # server's base domain (empty: none) in each release.
     labels:
       - devopsy.role=proxy
       - devopsy.export.BASE_DOMAIN=${PROXY_BASE_DOMAIN:-}

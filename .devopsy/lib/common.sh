@@ -17,10 +17,12 @@ warn() {
   echo "$(basename "$0"): $*" >&2
 }
 
-# check_settings: refuses settings Traefik would take without a word.
-# Resolvers are named by CA, challenge and who answers it; the names from
-# before are refused, naming their new one. A router naming a resolver
-# Traefik lacks gets no certificate, which Traefik only logs.
+# check_settings: refuses settings Traefik would take without a word, and
+# the names from before, naming their new one (an old key nothing reads
+# would silently drop what it set: the base domain, a token, the ports).
+# Resolvers are named by CA, challenge and who answers it. A router naming
+# a resolver Traefik lacks, or one that cannot answer its challenge, gets
+# no certificate, which Traefik only logs.
 renamed_resolver() {
   case $2 in
     letsencrypt1) die "$1: letsencrypt1 is le-http01 now" ;;
@@ -28,7 +30,32 @@ renamed_resolver() {
     cloudflare) die "$1: cloudflare is le-dns01-cloudflare now" ;;
   esac
 }
+# usable_resolver VAR VALUE: a DNS-01 resolver needs what answers it.
+usable_resolver() {
+  case $2 in
+    le-dns01-selfhosted)
+      case ",${COMPOSE_PROFILES:-}," in *,acmedns,*) ;; *)
+        die "$1 is le-dns01-selfhosted: add acmedns to COMPOSE_PROFILES (devopsy setup)" ;;
+      esac ;;
+    le-dns01-cloudflare)
+      [ -n "${PROXY_CLOUDFLARE_DNS_API_TOKEN:-}" ] ||
+        die "$1 is le-dns01-cloudflare: set PROXY_CLOUDFLARE_DNS_API_TOKEN (devopsy setup)" ;;
+  esac
+}
 check_settings() {
+  for _old in $(env | sed -n 's/^\(DEVOPSY_[A-Z0-9_]*\)=.*/\1/p'); do
+    case $_old in
+      DEVOPSY_PROXY_WILDCARD_DOMAIN) die "$_old is PROXY_BASE_DOMAIN now: rename it in .env" ;;
+      DEVOPSY_CERTRESOLVER | DEVOPSY_WILDCARD_CERTRESOLVER | DEVOPSY_ACMEDNS_* | \
+        DEVOPSY_CLOUDFLARE_DNS_API_TOKEN | DEVOPSY_DNS_* | DEVOPSY_PUBLIC_IP | \
+        DEVOPSY_DOCKER_GID | DEVOPSY_READ_TIMEOUT | DEVOPSY_*_PORT)
+        die "$_old is PROXY_${_old#DEVOPSY_} now: rename it in .env" ;;
+    esac
+  done
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:-}" ] ||
+    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL is PROXY_LE_ACME_EMAIL now: rename it in .env"
+  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}" ] ||
+    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER is PROXY_LE_ACME_CASERVER now: rename it in .env"
   renamed_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
   renamed_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
   case ${PROXY_CERTRESOLVER:-le-http01} in
@@ -39,13 +66,19 @@ check_settings() {
     auto | le-dns01-selfhosted | le-dns01-cloudflare | none) ;;
     *) die "PROXY_WILDCARD_CERTRESOLVER must be auto, le-dns01-selfhosted, le-dns01-cloudflare or none: $PROXY_WILDCARD_CERTRESOLVER" ;;
   esac
-  case ${PROXY_BASE_DOMAIN:-} in
-    *[!a-z0-9.-]*) die "PROXY_BASE_DOMAIN is not a domain name: $PROXY_BASE_DOMAIN" ;;
+  case ",${COMPOSE_PROFILES:-}," in
+    *,acmedns,*)
+      [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env" ;;
+    *)
+      # The wildcard's auto would pick le-dns01-selfhosted.
+      [ -z "${PROXY_ACMEDNS_DOMAIN:-}" ] ||
+        die "PROXY_ACMEDNS_DOMAIN is set, but COMPOSE_PROFILES has no acmedns: add it, or unset PROXY_ACMEDNS_DOMAIN" ;;
   esac
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL:-}" ] ||
-    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL is PROXY_LE_ACME_EMAIL now"
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER:-}" ] ||
-    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER is PROXY_LE_ACME_CASERVER now"
+  usable_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
+  usable_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
+  case ${PROXY_BASE_DOMAIN:-} in
+    *[!a-z0-9.-]* | .* | *. | *..*) die "PROXY_BASE_DOMAIN is not a domain name: $PROXY_BASE_DOMAIN" ;;
+  esac
 }
 
 # Runs devopsy, showing its messages (the compose notice, container

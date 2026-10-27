@@ -239,10 +239,14 @@ Everything lives in `.devopsy/`:
   its own email and EAB key. What runs acme-dns keeps its software's
   name (the `acmedns` profile, service and command, `PROXY_ACMEDNS_*`).
   `check_settings` (`lib/common.sh`) refuses the old names in
-  `PROXY_CERTRESOLVER` and `PROXY_WILDCARD_CERTRESOLVER`, and the old
-  email and CA variables, naming the new one, and any other value in
-  `PROXY_CERTRESOLVER`: a router naming a resolver Traefik lacks gets no
-  certificate, which Traefik only logs. It runs as the release's
+  `PROXY_CERTRESOLVER` and `PROXY_WILDCARD_CERTRESOLVER`, the old
+  email and CA variables and every old `DEVOPSY_*` key, naming the new
+  one (a key nothing reads drops what it set without a word: the base
+  domain, a token, the ports), any other value in
+  `PROXY_CERTRESOLVER`, and a DNS-01 resolver, the default or the
+  wildcard's, without what answers it (acme-dns's profile, Cloudflare's
+  token): a router naming a resolver Traefik lacks, or one that cannot
+  answer, gets no certificate, which Traefik only logs. It runs as the release's
   `prepare` step (`check`), before the switch: in `deploy`, the run
   step, a refusal came after it, and the restart of the release before,
   reading the same `shared/.env`, refused too (seen on a test machine,

@@ -32,7 +32,6 @@ fi
 # systemd-resolved's 127.0.0.53:53 on many cloud images.
 case ",${COMPOSE_PROFILES:-}," in
   *,acmedns,*)
-    [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env"
     if [ -z "${PROXY_ACMEDNS_IP:-}" ] && ip=$(detect_ip) && [ -n "$ip" ]; then
       env_set PROXY_ACMEDNS_IP "$ip"
       echo "deploy: PROXY_ACMEDNS_IP=$ip in .env"

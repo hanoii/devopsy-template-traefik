@@ -49,7 +49,7 @@ devopsy @vm1:prod setup   # vm1: the server's SSH destination
 ```
 
 It asks for the settings (email, wildcard URLs and their certificates,
-Cloudflare's proxy), writes them with `--vars`, releases, prints the DNS
+the resolver sites use by default, Cloudflare's proxy), writes them with `--vars`, releases, prints the DNS
 records to create (the wildcard's DNS only, never proxied), checks them
 with `domains`, and adds the alias below under a name you give. It
 defaults to production certificates; answer no for staging. Each step is
@@ -79,13 +79,17 @@ devopsy @vm1-traefik --release
 `.devopsy/.env.example` lists every setting. They live in the server's
 `traefik/prod/shared/.env` (under its release root); change one with
 `--vars set`, then `devopsy @vm1-traefik deploy` (or the next release)
-applies it. `deploy` is what each
-release runs: it prepares `mnt/`, writes the public wildcard certificate,
-refreshes trusted proxies' ranges and starts or updates every service.
+applies it. A release first runs `check`, which refuses settings
+Traefik would take without a word (a resolver it lacks or that nothing
+answers, a name from before), before anything changes. `deploy` is what
+each release runs then: it prepares `mnt/`, writes the public wildcard
+certificate, refreshes trusted proxies' ranges and starts or updates
+every service.
 
-Upgrading is a release from a newer checkout; `devopsy @vm1-traefik
---rollback` goes back. Routed sites see a few seconds without Traefik when
-its container is recreated.
+Upgrading is a release from a newer checkout: a breaking one (`feat!`)
+says in its commit what to rename, and `check` names any old setting
+left. `devopsy @vm1-traefik --rollback` goes back. Routed sites see a
+few seconds without Traefik when its container is recreated.
 
 Traefik floats on its minor (`traefik:v3.7`): every release pulls the
 image again, so patches arrive with your next release. A new minor brings
