@@ -81,15 +81,13 @@ devopsy @vm1-traefik --release
 `--vars set`, then `devopsy @vm1-traefik deploy` (or the next release)
 applies it. A release first runs `check`, which refuses settings
 Traefik would take without a word (a resolver it lacks or that nothing
-answers, a name from before), before anything changes. `deploy` is what
+answers), before anything changes. `deploy` is what
 each release runs then: it prepares `mnt/`, writes the public wildcard
 certificate, refreshes trusted proxies' ranges and starts or updates
 every service.
 
-Upgrading is a release from a newer checkout: after a breaking one
-(`feat!`), `check` names any setting left from before, with its new
-name. `devopsy @vm1-traefik --rollback` goes back (to a release from
-before a breaking one, once its settings are back as it named them). Routed sites see a
+Upgrading is a release from a newer checkout; `devopsy @vm1-traefik
+--rollback` goes back. Routed sites see a
 few seconds without Traefik when its container is recreated.
 
 Traefik floats on its minor (`traefik:v3.7`): every release pulls the

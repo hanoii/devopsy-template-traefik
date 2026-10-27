@@ -73,7 +73,6 @@ for name in "$@"; do
 done
 
 if [ "$now" = true ]; then
-  check_settings
   forget_apply
   devopsy up -d --wait
   api_access

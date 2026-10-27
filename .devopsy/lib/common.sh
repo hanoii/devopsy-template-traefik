@@ -17,19 +17,9 @@ warn() {
   echo "$(basename "$0"): $*" >&2
 }
 
-# check_settings: refuses settings Traefik would take without a word, and
-# the names from before, naming their new one (an old key nothing reads
-# would silently drop what it set: the base domain, a token, the ports).
-# Resolvers are named by CA, challenge and who answers it. A router naming
-# a resolver Traefik lacks, or one that cannot answer its challenge, gets
-# no certificate, which Traefik only logs.
-renamed_resolver() {
-  case $2 in
-    letsencrypt1) die "$1: letsencrypt1 is le-http01 now" ;;
-    acmedns) die "$1: acmedns is le-dns01-selfhosted now" ;;
-    cloudflare) die "$1: cloudflare is le-dns01-cloudflare now" ;;
-  esac
-}
+# check_settings: refuses settings Traefik would take without a word. A
+# router naming a resolver Traefik lacks, or one nothing answers, gets no
+# certificate, which Traefik only logs.
 # usable_resolver VAR VALUE: a DNS-01 resolver needs what answers it.
 usable_resolver() {
   case $2 in
@@ -43,29 +33,6 @@ usable_resolver() {
   esac
 }
 check_settings() {
-  for _old in DEVOPSY_PROXY_WILDCARD_DOMAIN DEVOPSY_CERTRESOLVER \
-    DEVOPSY_WILDCARD_CERTRESOLVER DEVOPSY_ACMEDNS_DOMAIN DEVOPSY_ACMEDNS_IP \
-    DEVOPSY_ACMEDNS_PORT DEVOPSY_CLOUDFLARE_DNS_API_TOKEN DEVOPSY_DNS_RESOLVERS \
-    DEVOPSY_DNS_PROPAGATION_DELAY DEVOPSY_DNS_SKIP_CHECKS DEVOPSY_PUBLIC_IP \
-    DEVOPSY_DOCKER_GID DEVOPSY_READ_TIMEOUT DEVOPSY_HTTP_PORT DEVOPSY_HTTPS_PORT \
-    DEVOPSY_API_PORT; do
-    eval "_set=\${$_old+x}"
-    [ -n "$_set" ] || continue
-    case $_old in
-      DEVOPSY_PROXY_WILDCARD_DOMAIN) _new=PROXY_BASE_DOMAIN ;;
-      *) _new=PROXY_${_old#DEVOPSY_} ;;
-    esac
-    eval "_set=\${$_new+x}"
-    [ -n "$_set" ] && die "$_old is $_new now, which is set: unset $_old"
-    die "$_old is $_new now: rename it in .env"
-  done
-  # Set at all: an empty CA server meant Traefik's default, production.
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL+x}" ] ||
-    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_EMAIL is PROXY_LE_ACME_EMAIL now: rename it in .env"
-  [ -z "${TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER+x}" ] ||
-    die "TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT1_ACME_CASERVER is PROXY_LE_ACME_CASERVER now: rename it in .env"
-  renamed_resolver PROXY_CERTRESOLVER "${PROXY_CERTRESOLVER:-}"
-  renamed_resolver PROXY_WILDCARD_CERTRESOLVER "${PROXY_WILDCARD_CERTRESOLVER:-}"
   case ${PROXY_CERTRESOLVER:-le-http01} in
     le-http01 | le-dns01-selfhosted | le-dns01-cloudflare) ;;
     *) die "PROXY_CERTRESOLVER must be le-http01, le-dns01-selfhosted or le-dns01-cloudflare: $PROXY_CERTRESOLVER" ;;
@@ -225,7 +192,6 @@ static_env() {
 
   if write_if_changed "$dir/mnt/traefik.env" "$_env" && [ "$_restart" = true ]; then
     echo "$(basename "$0"): restarting Traefik for its new static settings"
-    check_settings
     devopsy up -d --wait
   fi
 

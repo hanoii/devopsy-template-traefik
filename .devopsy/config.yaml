@@ -8,8 +8,6 @@ defaults:
   release:
     prepare: check               # refuses bad settings before the switch
     run: deploy
-  rollback:
-    prepare: check               # in the restored release, before its switch
-    run: deploy
+  rollback: deploy
 environments:
   prod: {}

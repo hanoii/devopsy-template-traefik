@@ -22,7 +22,7 @@ Everything lives in `.devopsy/`:
 - `.env.example`: the variables a server sets in its `shared/.env`, with
   `devopsy @<server>-traefik --vars`.
 - `commands/` (POSIX `sh`, each with a `## Description:` line):
-  `check` (a release's and a rollback's prepare step: the settings), `deploy` (what
+  `check` (a release's prepare step: the settings), `deploy` (what
   release and rollback run), `restart`, `acmedns`,
   `letsencrypt`, `proxies`, `domains`, `forget`, and `setup`, the only
   one run locally (`## Run: local`, `## Needs: target`: `devopsy
@@ -238,23 +238,16 @@ Everything lives in `.devopsy/`:
   (`PROXY_LE_ACME_EMAIL`, `PROXY_LE_ACME_CASERVER`): another CA brings
   its own email and EAB key. What runs acme-dns keeps its software's
   name (the `acmedns` profile, service and command, `PROXY_ACMEDNS_*`).
-  `check_settings` (`lib/common.sh`) refuses the old names in
-  `PROXY_CERTRESOLVER` and `PROXY_WILDCARD_CERTRESOLVER`, the old
-  email and CA variables and every old `DEVOPSY_*` key, naming the new
-  one (a key nothing reads drops what it set without a word: the base
-  domain, a token, the ports), any other value in
-  `PROXY_CERTRESOLVER`, and a DNS-01 resolver, the default or the
-  wildcard's, without what answers it (acme-dns's profile, Cloudflare's
-  token): a router naming a resolver Traefik lacks, or one that cannot
-  answer, gets no certificate, which Traefik only logs. It runs as the release's
+  `check_settings` (`lib/common.sh`) refuses a resolver Traefik lacks,
+  or a DNS-01 one, the default or the wildcard's, without what answers
+  it (acme-dns's profile, Cloudflare's token): a router naming one gets
+  no certificate, which Traefik only logs. It runs as the release's
   `prepare` step (`check`), before the switch: in `deploy`, the run
   step, a refusal came after it, and the restart of the release before,
   reading the same `shared/.env`, refused too (seen on a test machine,
-  2026-10-27). So does everything else that starts Traefik (`deploy`,
-  `restart`, `letsencrypt`'s switch, `forget --now`, `static_env`'s
-  restart): sites without a resolver of their own take the entrypoint's. Dashed names work
-  in `TRAEFIK_CERTIFICATESRESOLVERS_LE-HTTP01_...` (checked on v3.7,
-  2026-10-27).
+  2026-10-27); `deploy` runs it as well, for a plain `devopsy deploy`.
+  Dashed names work in `TRAEFIK_CERTIFICATESRESOLVERS_LE-HTTP01_...`
+  (checked on v3.7, 2026-10-27).
 - **A router with no `tls` label gets the entrypoint's resolver,**
   `PROXY_CERTRESOLVER` (its `websecure` copy, when it names no
   entrypoint); one with `tls.certresolver=` empty, or `tls=true`, gets
@@ -398,9 +391,8 @@ Everything lives in `.devopsy/`:
   @<server>:prod --release`, or an alias in
   `~/.config/devopsy/config.yaml` whose `source:` names the checkout;
   servers are the operator's, never in this repository. `config.yaml`
-  gives `prod` `mode: image` (only `.devopsy/` is uploaded), and `check`
-  then `deploy` for `--release` and `--rollback` (a rollback's prepare
-  runs in the restored release, before its switch). Settings go in the
+  gives `prod` `mode: image` (only `.devopsy/` is uploaded), `check` then
+  `deploy` for `--release`, and `deploy` for `--rollback`. Settings go in the
   server's `shared/.env` through `--vars`.
 - **The network projects join is fixed, `traefik`:** one Traefik per
   host (the `proxy` role refuses a second), so nothing varies, and it
