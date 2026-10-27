@@ -86,9 +86,9 @@ each release runs then: it prepares `mnt/`, writes the public wildcard
 certificate, refreshes trusted proxies' ranges and starts or updates
 every service.
 
-Upgrading is a release from a newer checkout: a breaking one (`feat!`)
-says in its commit what to rename, and `check` names any old setting
-left. `devopsy @vm1-traefik --rollback` goes back. Routed sites see a
+Upgrading is a release from a newer checkout: after a breaking one
+(`feat!`), `check` names any setting left from before, with its new
+name. `devopsy @vm1-traefik --rollback` goes back. Routed sites see a
 few seconds without Traefik when its container is recreated.
 
 Traefik floats on its minor (`traefik:v3.7`): every release pulls the
