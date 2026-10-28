@@ -34,7 +34,7 @@ Everything lives in `.devopsy/`:
   `static_env`, `api_access`, `forget_apply`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage), `acmedns/`, `dynamic/` (Traefik's file provider: the public
-  wildcard, the API's router, proxies, retries), `proxies/`
+  wildcard, the API's router, proxies, the tunnel's trust, retries), `proxies/`
   (`proxies.conf`, `forwarded-ips`), `traefik.env` (static settings)
   and `forget.pending`.
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library
@@ -46,7 +46,8 @@ Everything lives in `.devopsy/`:
 - **Projects already routed must keep working:** the `traefik` network
   name, the `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`
   resolver names,
-  the `web`/`websecure` entrypoints, and the `devopsy.role=proxy` and
+  the `web`/`websecure`/`tunnel` entrypoints, the `tunnel` network and
+  its address `http://traefik.tunnel:8081`, and the `devopsy.role=proxy` and
   `devopsy.export.BASE_DOMAIN` labels projects import from are a
   public interface. Why: other projects name them in their own compose
   files, released on their own schedule.
@@ -66,11 +67,12 @@ Everything lives in `.devopsy/`:
 - **Configure Traefik with `TRAEFIK_*` variables in `compose.yaml`,** not
   static config files. Anything a server may need to change is a
   variable with a default, and goes in `.env.example`.
-- **The websecure entrypoint's middleware list has one writer:**
+- **The entrypoints' middleware lists have one writer:**
   `static_env` (`lib/common.sh`, called by `deploy` and `proxies`)
-  composes `mnt/traefik.env` (the proxies middleware and plugin, and
-  the forwarded-headers trust for X-Forwarded-For and X-Real-Ip
-  proxies) and restarts Traefik only when it changed. Why one writer:
+  composes `mnt/traefik.env` (the proxies middleware and plugin, the
+  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies,
+  the tunnel's trust and the default entrypoints) and restarts Traefik
+  only when it changed. Why one writer:
   entrypoints are static configuration. Middleware files are written
   before the env names them and removed only once the running Traefik
   no longer does: an entrypoint naming a missing middleware breaks
@@ -343,6 +345,65 @@ Everything lives in `.devopsy/`:
   else on plain HTTP:** its free edge certificate covers one level
   below the zone only, so a proxied `*.prod1.example.com` fails the
   handshake at the edge while HTTP still answers.
+
+### Cloudflare Tunnel
+
+Decided 2026-10-28, with the connectors' template
+(devopsy-template-cloudflared).
+
+- **The connectors are a template of their own, with instances,** one
+  per Cloudflare account (`@vm1:own/prod`), never services here. Why: a
+  tunnel belongs to an account (a zone of another account cannot point
+  at it: error 1014), compose cannot make a service per token, and
+  devopsy already runs several installs of one project. Here only the
+  other end, always there.
+- **The tunnel end is static and always there:** the `tunnel`
+  entrypoint (`:8081`, plain HTTP, never published) and the `tunnel`
+  network (fixed name, only Traefik and the connectors on it). Why: a
+  tunnel added or removed later is a release of its own, with no
+  Traefik restart and nothing down; only `PROXY_TUNNEL_ONLY` is a later
+  static change.
+- **Never the shared `traefik` network for the connectors:** trust is by
+  the `tunnel` network's subnet, and a project on `traefik` reaching
+  `:8081` is not in it, so it cannot claim a visitor's IP or `https`.
+  The connectors address Traefik as `traefik.tunnel`, the
+  network-scoped name (Network and security).
+- **The trust is read from Docker by `static_env`:** the subnet from
+  `docker network inspect tunnel` (`tunnel_subnet`), written as the
+  tunnel entrypoint's forwarded-headers trust (so `X-Forwarded-Proto:
+  https` survives: without it Traefik sets `http` and Drupal builds
+  `http://` URLs or loops) and as `mnt/dynamic/tunnel.yaml`, the
+  proxies plugin with one entry (`CF-Connecting-IP` from that subnet),
+  a middleware of its own (`tunnel@file`) so `devopsy proxies` never
+  touches it. A first `up` makes the network, so the `static_env` after
+  it restarts Traefik once; a network made again with another subnet
+  is caught the same way.
+- **Default entrypoints are always explicit:** `PROXY_TUNNEL_ONLY=true`
+  makes `tunnel` the only `asDefault` entrypoint, otherwise `web` and
+  `websecure` are. Why: with none marked, Traefik attaches routers to
+  every entrypoint, so adding `tunnel` would have put every direct site
+  behind any tunnel on the server. A site on a mixed server names it
+  (`PROXY_ENTRYPOINTS=tunnel` in the site templates), without a
+  resolver: a router with one is a TLS router, which never matches the
+  tunnel's plain HTTP. `check_settings` refuses any other value of
+  `PROXY_TUNNEL_ONLY` (a typo would leave every site on the open ports).
+- **Tunnel only keeps 80 and 443 published, on loopback:** `setup` sets
+  `PROXY_HTTP_PORT=127.0.0.1:80` and `PROXY_HTTPS_PORT=127.0.0.1:443`,
+  the provider's firewall closes them too. Why not conditional `ports:`:
+  compose cannot leave an entry empty.
+- **No checks of the wildcard's resolver on a tunnel-only server:** a
+  certificate requested there is unused, not harmful (lean checks), and
+  `setup` sets `PROXY_WILDCARD_CERTRESOLVER=none`.
+- **`domains` treats a host whose routers are on `tunnel` only as
+  tunneled** (`method: tunnel` in `lib/facts`): no handshake with the
+  server's IP (no port), the request through Cloudflare with its error
+  code from the body (`error code: 1033`, what Cloudflare sends curl),
+  and the connectors from `docker network inspect tunnel`, by their
+  compose health (the connectors' healthcheck is `cloudflared tunnel
+  ready`).
+- **`setup` prints the Cloudflare side, with values, and calls no
+  API:** creating the tunnel, its route, the DNS record and the zone
+  settings stay the operator's, in the account that owns them.
 
 ### Holding requests and stopped containers
 

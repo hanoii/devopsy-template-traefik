@@ -8,6 +8,8 @@ project on it, with automatic Let's Encrypt certificates. It is run with
   in with `traefik.enable=true`.
 - Traefik never mounts the Docker socket. It reads a filtered, read-only API
   through [socket-proxy](https://github.com/wollomatic/socket-proxy).
+- Optionally, sites only through a Cloudflare Tunnel: no port open but
+  SSH (devopsy-template-cloudflared).
 - HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by default,
   with DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
@@ -34,8 +36,8 @@ The other templates (whoami, drupal11, registry) route through it and
 import its base domain, so a change here can break them: keep its
 interface (`devopsy.role=proxy`, the `BASE_DOMAIN` export, the
 `traefik` network, the `le-http01`, `le-dns01-selfhosted` and
-`le-dns01-cloudflare` resolvers, the `web` and `websecure` entrypoints), or change the sites with
-it.
+`le-dns01-cloudflare` resolvers, the `web`, `websecure` and `tunnel`
+entrypoints, the `tunnel` network), or change the sites with it.
 
 ## Setup
 
@@ -49,7 +51,8 @@ devopsy @vm1:prod setup   # vm1: the server's SSH destination
 ```
 
 It asks for the settings (email, wildcard URLs and their certificates,
-the resolver sites use by default, Cloudflare's proxy), writes them with `--vars`, releases, prints the DNS
+or a Cloudflare Tunnel, the resolver sites use by default, Cloudflare's
+proxy), writes them with `--vars`, releases, prints the DNS
 records to create (the wildcard's DNS only, never proxied), checks them
 with `domains`, and adds the alias below under a name you give. It
 defaults to production certificates; answer no for staging. Each step is
@@ -393,6 +396,160 @@ cloud network load balancers) need no plugin: Traefik supports it natively,
 for example `TRAEFIK_ENTRYPOINTS_WEBSECURE_PROXYPROTOCOL_TRUSTEDIPS` in a
 compose override.
 
+## Behind a Cloudflare Tunnel
+
+A site behind Cloudflare's proxy still answers anyone who reaches the
+server directly: its IP is no secret, and Certificate Transparency logs
+list every name it has a certificate for. Cloudflare's WAF then protects
+nothing against a scanner. Through a [Cloudflare
+Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)
+the server publishes no port but SSH: `cloudflared` connects out to
+Cloudflare, and visitors' requests come back through it.
+
+```
+visitor -> Cloudflare's edge (TLS, WAF, Access) -> tunnel -> cloudflared
+        -> http://traefik.tunnel:8081 (the tunnel entrypoint) -> the site
+```
+
+The connectors are a template of their own,
+[devopsy-template-cloudflared](https://github.com/hanoii/devopsy-template-cloudflared),
+released after this one. This template always has the other end:
+
+- the `tunnel` entrypoint (`:8081`, plain HTTP, never published) and the
+  `tunnel` network, which only Traefik and the connectors join;
+- trust of that network's subnet, read from Docker by every `deploy`: the
+  visitor's IP from `CF-Connecting-IP` (the proxies plugin, built in:
+  `devopsy proxies` lists it) and `X-Forwarded-Proto: https`, so
+  applications build `https://` URLs. A request to port 8081 from
+  anywhere else (another project on the `traefik` network) is not
+  trusted.
+
+So tunnels come and go as releases of their own, with no Traefik restart.
+The first release with the tunnel entrypoint recreates Traefik twice: once
+for the entrypoint, once for its trust, read from the network that first
+start made.
+
+### Setting one up
+
+`setup`'s fifth answer, "Through a Cloudflare Tunnel", sets everything and
+then prints the Cloudflare steps with the values filled in:
+
+- `PROXY_TUNNEL_ONLY=true`: routers that name no entrypoint attach to the
+  tunnel's only, never to `web` and `websecure`;
+- `PROXY_HTTP_PORT=127.0.0.1:80` and `PROXY_HTTPS_PORT=127.0.0.1:443`:
+  nothing answers on the server's public address;
+- `PROXY_WILDCARD_CERTRESOLVER=none`: no certificate on the server, TLS
+  ends at Cloudflare's edge;
+- `PROXY_BASE_DOMAIN`, ideally a zone's apex (`example.com`, URLs like
+  `whoami-prod.example.com`): Cloudflare's free edge certificate covers
+  one level below the zone only.
+
+In the Cloudflare account that holds the zone:
+
+1. Zero Trust > Networks > Tunnels: create a tunnel (cloudflared) and
+   copy its token.
+2. A published application route: `*.example.com` to
+   `http://traefik.tunnel:8081`, type HTTP. A site's own domain gets a
+   route of its own.
+3. DNS: `*.example.com` CNAME `<tunnel id>.cfargotunnel.com`, proxied.
+   The dashboard creates the record for a single name, not for a
+   wildcard.
+4. SSL/TLS: Always Use HTTPS (requests reach Traefik as plain HTTP, past
+   its redirect), encryption mode Full (strict).
+5. At your provider's firewall, inbound SSH only; outbound port 7844, UDP
+   (QUIC) or TCP.
+
+Then, from a checkout of devopsy-template-cloudflared:
+
+```sh
+devopsy @vm1:own/prod --vars set PROXY_TUNNEL_TOKEN
+devopsy @vm1:own/prod --release
+devopsy @vm1-traefik domains
+```
+
+### A tunnel per Cloudflare account
+
+A tunnel belongs to an account, not to a zone or a server: any zone of
+that account points a proxied CNAME at it, and a zone of another account
+cannot (Cloudflare's error 1014). A server serving one client whose
+account holds every zone needs one tunnel. Each further account is
+another instance of the tunnel template (`@vm1:acme/prod`), with that
+account's token, and every instance ends at the same entrypoint: a site's
+one router answers its names whatever tunnel they came through.
+
+The simplest shape is the client's own: their account, their zones, their
+server, your membership in their account revocable. On a shared server of
+your own, two ways to serve a client's domain:
+
+- **Cloudflare for SaaS:** the client's name is a custom hostname in your
+  zone, which the client points at with a CNAME and proves with a TXT
+  record. Some custom hostnames are included per zone, then a small fee
+  each (Cloudflare's pricing); an apex domain needs the client's DNS on Cloudflare, or `www`.
+  Your edge and your WAF rules; if you leave, the client re-points one
+  record.
+- **A tunnel instance from the client's account:** their token, their
+  edge and WAF, their DNS; you run only the connector.
+
+### Wildcard URLs one level deeper
+
+The free edge certificate covers `*.example.com`, not `*.vm1.example.com`.
+For a second server's wildcard URLs in the same zone:
+
+- Advanced Certificate Manager on the zone (a monthly fee per zone, not
+  per server): one certificate listing each server's wildcard;
+- a zone per server, its wildcard URLs at that zone's apex;
+- no wildcard URLs on that server (`PROXY_BASE_DOMAIN` empty): sites only
+  on their own domains, one level down and always covered.
+
+This is Cloudflare's proxy, not the tunnel: a proxied two-level wildcard
+fails at the edge without a tunnel too.
+
+### Tunneled and direct sites on one server
+
+Without `PROXY_TUNNEL_ONLY`, routers that name no entrypoint stay on `web`
+and `websecure`: a tunnel opens no site that does not ask. A site goes
+through the tunnel only by naming it, `PROXY_ENTRYPOINTS=tunnel` in the
+site templates (with `PROXY_CERTRESOLVER` unset: a router with a resolver
+is a TLS router, which never matches the tunnel's plain HTTP). Such a site
+answers nothing on ports 80 and 443, its Host header and SNI included.
+
+### What `domains` reports
+
+A host whose routers are on the tunnel entrypoint only is checked through
+Cloudflare: DNS (proxied), the request through the tunnel and its status,
+Cloudflare's error code when there is one (1033: no connector; 1014: the
+record is in another account), never a certificate here. A section lists
+the connectors on the `tunnel` network, each with its health: healthy once
+connected to Cloudflare. Tunneled hosts are left out of the `devopsy
+--probe` line: there is no port to probe.
+
+### What the edge covers
+
+What a tunnel and Cloudflare's Free plan give, and what stays yours. The
+host's half (firewall, SSH, upgrades, backups) is in
+[devopsy-server's README](https://github.com/hanoii/devopsy-server#things-to-know).
+
+Covered, on the Free plan:
+
+- No port to scan: the server's address answers SSH only, so requests
+  reach a site only through Cloudflare, its WAF and its rules.
+- The Free Managed Ruleset (Security > WAF), which Cloudflare updates for
+  widespread flaws, often before a patched image exists.
+- One rate limiting rule, Bot Fight Mode, Always Use HTTPS.
+- Cloudflare Access for up to 50 users: put children (`pr-*`, staging)
+  or an admin path behind a login, at the edge.
+- Tunnel health alerts (Notifications), by email or webhook.
+
+Not covered:
+
+- The application's own bugs, and its updates: a release brings them
+  (devopsy-cli's README, "Choosing tags").
+- The Cloudflare account itself: two-factor authentication, and who is a
+  member. The tunnel's token runs that tunnel only, and can be refreshed
+  in the dashboard.
+- Requests Cloudflare lets through: the WAF blocks known patterns, not
+  every exploit.
+
 ## Stopped sites
 
 Traefik drops a stopped container's router, so its hosts get Traefik's 404
@@ -456,7 +613,9 @@ for the name, and a request through what DNS returns, so Cloudflare's
 proxy and its origin errors (521, 522, 525, 526) are recognized. It ends
 each host with what to do next, like the CNAME to create or "certificate
 ready: point its DNS at ...", and prints the `devopsy --probe` line that
-checks the same hosts from your machine (devopsy-cli).
+checks the same hosts from your machine (devopsy-cli). Hosts through a
+Cloudflare Tunnel are checked through Cloudflare, with the tunnel's
+connectors (Behind a Cloudflare Tunnel).
 
 The server's public IP, for "this server" and the `--probe --ip` line, is
 `PROXY_PUBLIC_IP` when set, else what 1.1.1.1 sees (`/cdn-cgi/trace`, so
