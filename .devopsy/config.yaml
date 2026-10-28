@@ -9,5 +9,6 @@ defaults:
     prepare: check               # refuses bad settings before the switch
     run: deploy
   rollback: deploy
+  reload: deploy                 # what applies the settings: devopsy @<server>-traefik --reload
 environments:
   prod: {}

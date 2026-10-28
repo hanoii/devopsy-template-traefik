@@ -78,8 +78,9 @@ devopsy @vm1-traefik --release
 
 `.devopsy/.env.example` lists every setting. They live in the server's
 `traefik/prod/shared/.env` (under its release root); change one with
-`--vars set`, then `devopsy @vm1-traefik deploy` (or the next release)
-applies it. A release first runs `check`, which refuses settings
+`--vars set`, then `devopsy @vm1-traefik --reload` (or the next release)
+applies it, through `deploy` (`reload: deploy`); a setting that turns a
+profile on (`COMPOSE_PROFILES`) needs a release, which pulls its image. A release first runs `check`, which refuses settings
 Traefik would take without a word (a resolver it lacks or that nothing
 answers), before anything changes. `deploy` is what
 each release runs then: it prepares `mnt/`, writes the public wildcard
@@ -186,7 +187,8 @@ This is how hosting panels like Forge do DNS validation.
    with systemd-resolved on 127.0.0.53:53. `deploy` detects it and saves it
    as `PROXY_ACMEDNS_IP`; set it yourself behind NAT.
 
-2. Run `devopsy @vm1-traefik deploy`, then `devopsy @vm1-traefik acmedns`.
+2. Run `devopsy @vm1-traefik --release` (the profile's image comes with
+   a release), then `devopsy @vm1-traefik acmedns`.
    It prints two records to create once in `example.com`: an A record for
    `ns-acme-vm1.example.com` and an NS record delegating
    `acme-vm1.example.com` to it.

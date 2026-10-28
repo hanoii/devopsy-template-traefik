@@ -23,7 +23,7 @@ Everything lives in `.devopsy/`:
   `devopsy @<server>-traefik --vars`.
 - `commands/` (POSIX `sh`, each with a `## Description:` line):
   `check` (a release's prepare step: the settings), `deploy` (what
-  release and rollback run), `restart`, `acmedns`,
+  release, rollback and reload run), `restart`, `acmedns`,
   `letsencrypt`, `proxies`, `domains`, `forget`, and `setup`, the only
   one run locally (`## Run: local`, `## Needs: target`: `devopsy
   @<server>:prod setup`, or an alias, the address as typed in
