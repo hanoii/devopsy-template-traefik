@@ -243,3 +243,25 @@ func TestPlugins(t *testing.T) {
 		t.Errorf("deploy with a broken plugin hung:\n%s", out)
 	}
 }
+
+// PROXY_READ_TIMEOUT bounds reading a request on websecure: an upload
+// slower than it is cut, one within it goes through. A Traefik of its own
+// with 2 s, on the scripts host.
+func TestReadTimeout(t *testing.T) {
+	h, dir := project(t, "readtimeout", map[string]string{"PROXY_READ_TIMEOUT": "2s"})
+	h.sh(dir, nil, "devopsy deploy")
+	h.sh("/", nil, "docker run -d -q --name slow --network traefik -l traefik.enable=true -l 'traefik.http.routers.slow.rule=Host(`slow.example.com`)' traefik/whoami:v1.11 >/dev/null")
+	t.Cleanup(func() { _, _ = h.shErr("/", nil, "docker rm -f slow") })
+	h.sh("/", nil, `for i in $(seq 120); do curl -sf -o /dev/null http://127.0.0.1:8080/api/http/routers/websecure-slow@docker && exit; sleep 0.25; done; exit 1`)
+	upload := func(rate string) string {
+		out, _ := h.shErr("/", nil, `head -c 60000 /dev/zero | curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --limit-rate "$1" -T - \
+			--resolve slow.example.com:443:127.0.0.1 https://slow.example.com/`, rate)
+		return out
+	}
+	if code := upload("10k"); code == "200" {
+		t.Errorf("a 6 s upload went through a 2 s read timeout")
+	}
+	if code := upload("10M"); code != "200" {
+		t.Errorf("a quick upload: %s", code)
+	}
+}
