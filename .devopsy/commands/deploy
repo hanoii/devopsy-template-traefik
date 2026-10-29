@@ -13,6 +13,7 @@
 #   (`devopsy proxies refresh`). The tunnel network's subnet is only known
 #   once a first `up` made it: static_env after `up` restarts Traefik
 #   then, once.
+# - The hold (hold_middleware): the middleware sites name, its routers.
 # - The local plugins' checksum, which recreates Traefik when they change.
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
 # - Then, with Traefik running, middlewares turned off are removed, and who
@@ -95,6 +96,9 @@ if [ "${PROXY_PLUGINS_SUM:-}" != "$sum" ]; then
   env_set PROXY_PLUGINS_SUM "$sum"
   export PROXY_PLUGINS_SUM="$sum"
 fi
+
+# Holding visitors of the sites that ask through their app's stop.
+hold_middleware
 
 # The entrypoint's middlewares; `up` below restarts Traefik when the static
 # settings change.

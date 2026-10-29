@@ -101,6 +101,14 @@ services:
       # cannot spoof the headers Traefik sets.
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_ALIASHEADERSSTRATEGY=delete
 
+      # Holding visitors through an app's stop (hold_middleware in
+      # lib/common.sh): the errors middleware asks Traefik itself here, on
+      # the container's loopback, never published, and no site's router
+      # is on it (only asDefault entrypoints take those).
+      - TRAEFIK_ENTRYPOINTS_HOLD=true
+      - TRAEFIK_ENTRYPOINTS_HOLD_ADDRESS=127.0.0.1:8082
+      - TRAEFIK_ENTRYPOINTS_HOLD_HTTP_ALIASHEADERSSTRATEGY=delete
+
       # Visitors through a Cloudflare Tunnel (devopsy-template-cloudflared):
       # plain HTTP from its connectors on the tunnel network, at
       # http://traefik.tunnel:8081. Never published. TLS ends at Cloudflare's

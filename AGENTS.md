@@ -31,16 +31,17 @@ Everything lives in `.devopsy/`:
 - `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
   the retry router file, for `domains`. `lib/common.sh`: sourced by
   commands and lib's scripts (`in_traefik`, `jq`, `quiet`, `env_set`,
-  `static_env`, `api_access`, `forget_apply`).
+  `hold_middleware`, `static_env`, `api_access`, `forget_apply`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage), `acmedns/`, `dynamic/` (Traefik's file provider: the public
   wildcard, the API's router, `Forwarded`'s removal, proxies, the
-  tunnel's trust, retries), `proxies/`
+  tunnel's trust, the hold, retries), `proxies/`
   (`proxies.conf`, `forwarded-ips`), `traefik.env` (static settings)
   and `forget.pending`.
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library
   only). `proxies` maps a request from a trusted proxy's ranges to the
-  visitor's IP from that proxy's header.
+  visitor's IP from that proxy's header; `hold` holds visitors of the
+  sites naming `hold@file` through their app's stop.
 
 ## Rules
 
@@ -286,6 +287,18 @@ Everything lives in `.devopsy/`:
   (checked on v3.7.13); a response written through the wrapper only
   goes out as Go's buffer fills. `proxies` never wraps the writer.
   http-wasm plugins cannot call the next handler twice.
+- **Yaegi differs from Go in ways only `yaegi test` shows** (v0.16.1,
+  2026-10-28): a `for` statement's variable is per iteration, so an
+  assignment to it in the body never reaches the next one (`for page :=
+  1; ; { ... page = next }` read the first page forever); and a map
+  index on the left of a multiple assignment stores nothing
+  (`m[k], err = f()`). Write `page := 1; for {` and assign through a
+  plain variable. And goroutines running the same `select` at once
+  deadlock in it, never woken by its `time.After` (ten held requests'
+  `select { case <-ctx.Done(): case <-time.After(d): }`: "all
+  goroutines are asleep", 2026-10-29): a request's waits are
+  `time.Sleep` then `ctx.Err()`, and only the one reader goroutine
+  selects.
 - **A plugin that fails to load stops Traefik**
   (`TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`). Why: skipped, the
   entrypoint's middleware list still names `proxies`, and every router
@@ -447,19 +460,70 @@ Decided 2026-10-28, with the connectors' template
 
 ### Holding requests and stopped containers
 
-- **No holding in Traefik; it belongs in the project's request path**
-  (devopsy-template-drupal11's `alwaysup`, where a proxy can wait for
-  its upstream and stream). A `hold` plugin, which held requests while
-  a backend answered 502/503/504, was removed: measured on 3.7.13, a
-  middleware's retries never follow a configuration change. Its `next`
-  is the chain built for the configuration the request entered (at the
-  router or on the entrypoint alike, both below Traefik's switcher), so
-  a service that was empty or gone then stays so, and only the same
-  address coming back answers the held request. A sync or a deploy
-  drops the app's router, so held requests ended on the maintenance
-  page after the whole limit although the site was back in seconds;
-  and with the writer wrapped, streamed responses lost their flushes
-  (Yaegi, above).
+- **Holding is a plugin off the response path, for the sites that ask**
+  (`hold@file`, `hold_middleware`, decided 2026-10-28). Why: drupal11's
+  `alwaysup` answered only once Traefik dropped the app's router, and a
+  stopping app closes its port before that (FrankenPHP on SIGTERM;
+  Traefik reads containers on `die` and `health_status` events only), so
+  nearly every stop gave one 502; projects without such a router got the
+  404. The first `hold` plugin (removed 2026-10-13) failed on two
+  measured counts, which this one avoids by construction: it retried
+  its `next`, the chain built for the configuration the request entered,
+  so it never followed a recreate or a dropped router; and it wrapped
+  the writer, which loses flushes under Yaegi (above). This one never
+  calls `next` and never carries a site's response: each probe is a new
+  request through Traefik's own entrypoint (so through its current
+  routers), and the visitor gets a 307 to the same URL once a router
+  answers, which the browser follows into the site on the compiled
+  path. The 307 comes only on that evidence, never on a timeout, and
+  only once a probe of the URL answered down since an interval before
+  the hold (the router gone counts on a catch-all), so it cannot loop:
+  a 502 the probe does not meet (a POST that crashes the app, an app's
+  own 502 to one request, an `ipAllowList` refusing 127.0.0.1) gets the
+  page at once (review: it was a 307 back into the same 502, a POST
+  sent again until the browser's 20 redirects). Hence the first probe
+  at once, while a stop's port is still closed, and an up answer from
+  before the hold probed again. The evidence is the URL's, shared like
+  its probes: a visitor whose every round took another's answer saw no
+  down of its own.
+- **The 502 comes through the errors middleware, per router:** it is
+  compiled code on the response path (a match only fetches from the
+  hold service, Traefik itself on the loopback `hold` entrypoint, where
+  the `hold` router runs the plugin) and passes everything else through
+  unbuffered. It gives the client the original status or a fixed
+  rewrite, never the error service's, and copies its headers: so
+  `statusRewrites` 502 to 307 and the hold's `Location`. Per router, not
+  on the entrypoints (decided with the user: opt in, never out): on an
+  entrypoint the rewrite would turn every site's 502 into a 307, so a
+  site opting out could not get its 502 back. `X-Devopsy-Hold: no` gets
+  the hold's answer at once with `X-Devopsy-Hold: down` (`domains`).
+  Only 502: a site's own 503 is its answer. A 307 for every method,
+  never a 303 for a POST (decided with the user): a 502 does not tell
+  a POST the closed port refused, which never reached the app, from one
+  the app read and then lost (a crash, a stop past its grace period),
+  so the 307 sends both again, as a visitor's reload would; a 303 would
+  turn the common case, a form posted during a stop, into a GET of the
+  page, the form lost.
+- **The router gone: a catch-all with a memory from the API.** Traefik
+  builds every middleware again on each dynamic configuration change, so
+  the plugin's `New` is the event: a catch-all instance has
+  `/api/http/routers` read then, and 0.25, 1 and 3 s later (one reader;
+  a change starts them over), and remembers the literal `Host()`s of
+  routers naming `hold@file`, with their entrypoints (the errors path
+  probes through one of them: a tunneled site has only `tunnel`).
+  Measured on 3.7.16: the API shows the new configuration about when
+  `New` runs, sometimes a moment after (two reads 1 ms apart disagreed,
+  and a stop got 404s until the next read), so the memory is a
+  difference between reads (present before, absent now: gone), and a
+  request for a host the last read had waits while those reads are due
+  (up to 5 s: a host with only a path router pays it for its 404 right
+  after a change). Package-level state survives the rebuilds. A host
+  present is never held by the catch-all (a host with only a path
+  router keeps its 404 elsewhere); one gone is
+  held for 5 minutes, then the 404 again, so a removed environment does
+  not say "back in a moment" for long. Rejected: polling, and Docker
+  events (the provider's decisions redone from labels; the API is the
+  truth about routers).
 - **Neither `allowNonRunning` nor `ALLOWEMPTYSERVICES` is set:**
   `traefik.docker.allowNonRunning=true` keeps a stopped container's
   router with an empty service, and
@@ -480,11 +544,11 @@ Decided 2026-10-28, with the connectors' template
   way: only another router can answer, a project's own at priority 2
   or more.
 - **No server-wide maintenance page:** one (an nginx at priority 1 for
-  every host under the wildcard domain) was removed. With holding in
-  the project, it only answered for environments that were down or
-  removed, and only on wildcard URLs, never the custom domains visitors
-  use; a removed environment saying "back soon" forever is worse than a
-  404.
+  every host under the wildcard domain) was removed: it answered only
+  for environments that were down or removed, and only on wildcard
+  URLs, never the custom domains visitors use; a removed environment
+  saying "back soon" forever is worse than a 404. The hold's page shows
+  only for a host that asked and had a router within 5 minutes.
 
 ## Releases
 
@@ -516,6 +580,7 @@ Traefik's interpreter (Yaegi is stricter than Go), from `plugins-local`:
 ```sh
 go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1   # Traefik's version
 GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/proxies
+GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
 ```
 
 Run it locally on other ports, and route a `traefik/whoami` container

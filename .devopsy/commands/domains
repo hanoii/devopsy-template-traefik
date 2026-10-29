@@ -85,7 +85,7 @@ for name; do
     *" $name "*)
       # Headers, then the start of the body: Cloudflare answers curl with
       # "error code: <n>".
-      headers=$(curl -s -D - --max-time 10 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null | head -c 8192 || true)
+      headers=$(curl -s -D - --max-time 10 -H "X-Devopsy-Hold: no" --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null | head -c 8192 || true)
       cferror=$(printf "%s\n" "$headers" | sed -n "s/^error code: \([0-9]*\).*/\1/p" | head -n 1)
       ;;
     *)
@@ -94,10 +94,16 @@ for name; do
       expire=$(printf "%s\n" "$info" | sed -n "s/^\*  expire date: //p" | head -n 1)
       expire=$(date -u -D "%b %e %H:%M:%S %Y GMT" -d "$expire" +%F 2>/dev/null || printf "%s" "$expire")
       curl -sv -o /dev/null --max-time 10 --resolve "$name:443:$IP" "https://$name/" 2>&1 | grep -q "^\*  *SSL certificate verify ok" && valid=true
-      headers=$(curl -s -o /dev/null -D - --max-time 10 --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
+      headers=$(curl -s -o /dev/null -D - --max-time 10 -H "X-Devopsy-Hold: no" --doh-url https://1.1.1.1/dns-query "https://$name/" 2>/dev/null || true)
       ;;
   esac
   status=$(printf "%s\n" "$headers" | sed -n "1s/^HTTP[^ ]* \([0-9]*\).*/\1/p")
+  # A site that asks to be held, its app down: the hold answers at once
+  # (X-Devopsy-Hold: no), under the 307 its errors middleware makes of
+  # the 502, or a 503 with its router gone. Traefik answered, so it is no
+  # tunnel or CDN error.
+  held=false
+  printf "%s\n" "$headers" | grep -qi "^x-devopsy-hold: *down" && held=true
   cf=false
   printf "%s\n" "$headers" | grep -qi "^cf-ray:" && cf=true
   # No HTTPS answer: Cloudflare still answers plain HTTP when its edge has
@@ -105,7 +111,7 @@ for name; do
   if [ -z "$status" ]; then
     curl -s -o /dev/null -D - --max-time 10 --doh-url https://1.1.1.1/dns-query "http://$name/" 2>/dev/null | grep -qi "^cf-ray:" && cf=true
   fi
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf" "$cferror"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$name" "$a" "$challenge" "$issuer" "$expire" "$valid" "${status:-0}" "$cf" "$cferror" "$held"
 done
 '
 
@@ -124,6 +130,7 @@ report_filter='
       elif ($r.ips | length) == 0 then "does not resolve: in the tunnel'"'"'s Cloudflare account, a proxied CNAME to <tunnel id>.cfargotunnel.com (the name, or a wildcard covering it) and a published route sending it to http://traefik.tunnel:8081"
       elif ($r.cf | not) then "DNS does not go through Cloudflare: make its record a proxied CNAME (orange cloud) to <tunnel id>.cfargotunnel.com"
       elif $r.status == 0 then "Cloudflare answers HTTP but not HTTPS: its edge has no certificate for this name. Its free one only covers names one level below the zone (*.example.com), not deeper ones like this: a name one level down, or an edge certificate for it (Advanced Certificate Manager)"
+      elif $r.held then "the tunnel reaches Traefik, but the site'"'"'s app is down: Traefik holds its visitors until it answers"
       elif $r.status == 502 then "the tunnel answers, but its connector cannot reach Traefik (502): its published route must send this host to http://traefik.tunnel:8081"
       elif $r.status == 404 then "404 through the tunnel: unless the site itself answers 404 on /, the tunnel'"'"'s published routes do not send this host to http://traefik.tunnel:8081"
       elif $r.status >= 500 then "HTTP \($r.status) through the tunnel"
@@ -135,6 +142,7 @@ report_filter='
       elif $r.status == 525 then "Cloudflare'"'"'s TLS handshake with the server fails (525): does the server have a certificate for this name?"
       elif $r.status == 526 then "Cloudflare rejects the server'"'"'s certificate (526): get a valid one first, or set its SSL mode to Full"
       elif $r.status >= 520 and $r.status <= 530 then "Cloudflare reports an origin error (\($r.status))"
+      elif $r.held then "Cloudflare reaches Traefik, but the site'"'"'s app is down: Traefik holds its visitors until it answers"
       elif ($r.valid | not) then "served through Cloudflare (its SSL mode is not Full (strict)), but no certificate here yet: Traefik requests one once the site is routed, check again in a minute, else --retry; get one before switching to Full (strict)"
       else "live" end
     elif $r.valid then "certificate ready: point its DNS at \($ip) (A record) to switch"
@@ -151,7 +159,7 @@ report_filter='
    | {host: $h.host, name: $name, routed: $h.routed, resolver: $h.resolver, method: $h.method,
       want: (($h.record // {}).target // "" | rtrimstr(".")), have: cname($c.challenge),
       ips: ips($c.a), valid: $c.valid, issuer: $c.issuer, expire: $c.expire, status: $c.status,
-      tunnel: ($h.method == "tunnel"), tls: ($h.tls // false), cf: $c.cf, cferror: ($c.cferror // "")}
+      tunnel: ($h.method == "tunnel"), tls: ($h.tls // false), cf: $c.cf, cferror: ($c.cferror // ""), held: ($c.held // false)}
    | .on_server = (.ips | index($ip) != null)
    | .cdn = ((.on_server | not) and $c.cf and (.tunnel | not))
    | .next = next(.)
@@ -197,7 +205,7 @@ reports() {
   [ -n "$ip" ] || die "could not tell this server's public IP: set PROXY_PUBLIC_IP in .env"
   checks=$(printf '%s\n' "$out" | tail -n +2 | jq -R 'select(. != "") | split("\t") | {name: .[0], a: (.[1] | fromjson? // null),
     challenge: (.[2] | fromjson? // null), issuer: .[3], expire: .[4], valid: (.[5] == "true"),
-    status: (.[6] | tonumber? // 0), cf: (.[7] == "true"), cferror: (.[8] // "")}')
+    status: (.[6] | tonumber? // 0), cf: (.[7] == "true"), cferror: (.[8] // ""), held: (.[9] == "true")}')
   # A 1033 can mean another thing when a connector here is up.
   connected=false
   connectors | awk -F '\t' '$3 == "healthy" { ok = 1 } END { exit !ok }' && connected=true
