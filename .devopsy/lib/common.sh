@@ -198,6 +198,20 @@ static_env() {
   _env="# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.
 "
   _plugin=false
+  # A visitor's Forwarded (RFC 7239), which Traefik never removes, goes on
+  # every entrypoint that reaches apps, first: an app trusting Traefik
+  # would take its host and proto. web only redirects.
+  write_if_changed "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy': a visitor's Forwarded removed.
+http:
+  middlewares:
+    forwarded:
+      headers:
+        customRequestHeaders:
+          Forwarded: \"\"
+" || true
+  _websecure=forwarded@file
+  _tunnelmw=forwarded@file
+
   # Proxies: configured and their middleware written (`devopsy proxies`).
   _proxies=false
   if [ -s "$dir/mnt/dynamic/proxies.yaml" ] && [ -f "$dir/mnt/proxies/proxies.conf" ] &&
@@ -208,9 +222,10 @@ static_env() {
       _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=$(cat "$dir/mnt/proxies/forwarded-ips")
 "
     fi
-    _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=proxies@file
-"
+    _websecure="$_websecure,proxies@file"
   fi
+  _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=$_websecure
+"
 
   # The tunnel: once its network exists.
   _tunnel=false
@@ -231,9 +246,11 @@ http:
 $(printf '%s\n' "$_subnet" | tr ',' '\n' | sed 's/^/                - /')
 " || true
     _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=$_subnet
-TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel@file
 "
+    _tunnelmw="$_tunnelmw,tunnel@file"
   fi
+  _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=$_tunnelmw
+"
 
   if [ "$_plugin" = true ]; then
     _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies

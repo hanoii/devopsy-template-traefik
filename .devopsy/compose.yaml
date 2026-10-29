@@ -175,8 +175,9 @@ services:
       - CF_DNS_API_TOKEN=${PROXY_CLOUDFLARE_DNS_API_TOKEN-}
     # Settings that depend on what is enabled, written by deploy and
     # `devopsy proxies` (static_env in lib/common.sh): the entrypoints'
-    # middlewares (proxies, tunnel), their forwarded-headers trust, the
-    # proxies plugin and the default entrypoints.
+    # middlewares (a visitor's Forwarded removed, proxies, tunnel), their
+    # forwarded-headers trust, the proxies plugin and the default
+    # entrypoints.
     env_file:
       - path: ./mnt/traefik.env
         required: false

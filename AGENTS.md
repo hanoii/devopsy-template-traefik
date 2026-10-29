@@ -34,7 +34,8 @@ Everything lives in `.devopsy/`:
   `static_env`, `api_access`, `forget_apply`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
   storage), `acmedns/`, `dynamic/` (Traefik's file provider: the public
-  wildcard, the API's router, proxies, the tunnel's trust, retries), `proxies/`
+  wildcard, the API's router, `Forwarded`'s removal, proxies, the
+  tunnel's trust, retries), `proxies/`
   (`proxies.conf`, `forwarded-ips`), `traefik.env` (static settings)
   and `forget.pending`.
 - `plugins-local/`: local Traefik plugins (Yaegi: standard library
@@ -69,9 +70,10 @@ Everything lives in `.devopsy/`:
   variable with a default, and goes in `.env.example`.
 - **The entrypoints' middleware lists have one writer:**
   `static_env` (`lib/common.sh`, called by `deploy` and `proxies`)
-  composes `mnt/traefik.env` (the proxies middleware and plugin, the
-  forwarded-headers trust for X-Forwarded-For and X-Real-Ip proxies,
-  the tunnel's trust and the default entrypoints) and restarts Traefik
+  composes `mnt/traefik.env` (the `Forwarded` removal, the proxies
+  middleware and plugin, the forwarded-headers trust for
+  X-Forwarded-For and X-Real-Ip proxies, the tunnel's trust and the
+  default entrypoints) and restarts Traefik
   only when it changed. Why one writer:
   entrypoints are static configuration. Middleware files are written
   before the env names them and removed only once the running Traefik
@@ -301,14 +303,25 @@ Everything lives in `.devopsy/`:
   the request's Host, -Port by Traefik's own rule (the Host's port, else
   443 for https and wss, else 80), -Uri, -Method, -Prefix, the TLS
   client certificate's two and X-Real-Ip removed (X-Real-Ip set again
-  from the proxy's header), and `Forwarded` too, which Traefik never
-  removes on any entrypoint. Only X-Forwarded-For and -Proto are the
+  from the proxy's header). Only X-Forwarded-For and -Proto are the
   proxy's. Why: an entrypoint trusting the proxy (the tunnel's, a load
   balancer's `X-Forwarded-For`) keeps every X-Forwarded-* it passes on,
   and Cloudflare passes its visitor's own (it overwrites only the
   proto), so a visitor through the tunnel set the host Drupal builds
   links on (verified through a real tunnel). Cost: a load balancer's own
   X-Forwarded-Host and -Port are replaced too.
+- **A visitor's `Forwarded` goes on every entrypoint that reaches apps,
+  for every request** (`forwarded@file`, a headers middleware
+  `static_env` writes, first on `websecure` and `tunnel`; `web` only
+  redirects): Traefik never removes RFC 7239's header (checked on v3.7,
+  2026-10-28), trusted peer or not, and Traefik itself never sets it, so
+  whatever reaches an app was written by a visitor or a proxy. An app
+  trusting Traefik as its reverse proxy takes its host and proto
+  otherwise (Symfony and Drupal read it by default, and Symfony answers
+  a 500 when it disagrees with X-Forwarded-Host). Decided over removing
+  it in the plugin alone (requests from proxies only) and over leaving it
+  to each app. Cost: a proxy in front that speaks only `Forwarded` loses
+  it, which Traefik never read for the client IP anyway.
 
 ### Network and security
 
