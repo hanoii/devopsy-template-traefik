@@ -8,7 +8,10 @@
 // client. Any other request loses the proxies' own headers, so they cannot be
 // spoofed by reaching the server directly. Traefik already strips
 // X-Forwarded-For and X-Real-Ip from untrusted connections, so proxies using
-// those must also be in the entrypoint's forwardedHeaders.trustedIPs.
+// those must also be in the entrypoint's forwardedHeaders.trustedIPs; for a
+// request from a proxy, X-Forwarded-Host and -Port are set from the request
+// and X-Forwarded-Prefix and Forwarded removed, which a trusted proxy would
+// otherwise pass on from its visitor.
 package proxies
 
 import (
@@ -123,6 +126,19 @@ func (r *Proxies) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		p = r.proxyFor(peer)
 	}
 	if p != nil {
+		// An entrypoint trusting the proxy keeps whatever X-Forwarded-*
+		// it passes on, its visitor's own included (Cloudflare overwrites
+		// only the proto): host and port are the request's, as Traefik
+		// sets them for an untrusted peer, and Forwarded, which Traefik
+		// never touches, goes.
+		req.Header.Set("X-Forwarded-Host", req.Host)
+		if req.Header.Get("X-Forwarded-Proto") == "https" {
+			req.Header.Set("X-Forwarded-Port", "443")
+		} else {
+			req.Header.Set("X-Forwarded-Port", "80")
+		}
+		req.Header.Del("X-Forwarded-Prefix")
+		req.Header.Del("Forwarded")
 		if ip := r.visitor(p, req); ip != nil {
 			req.RemoteAddr = net.JoinHostPort(ip.String(), port)
 			req.Header.Set("X-Real-Ip", ip.String())

@@ -36,6 +36,21 @@ func TestProxies(t *testing.T) {
 		t.Fatalf("cloudflare: %s %v", got.RemoteAddr, got.Header)
 	}
 
+	// A proxy passes its visitor's own X-Forwarded-Host, -Port and -Prefix
+	// and Forwarded, which an entrypoint trusting it keeps: the host and
+	// port become the request's, the others go.
+	got = serve(t, h, "162.158.154.69:6", map[string]string{"Cf-Connecting-Ip": "181.106.103.254",
+		"X-Forwarded-Proto": "https", "X-Forwarded-Host": "evil.example", "X-Forwarded-Port": "8443",
+		"X-Forwarded-Prefix": "/x", "Forwarded": "host=evil.example"})
+	if got.Header.Get("X-Forwarded-Host") != "example.com" || got.Header.Get("X-Forwarded-Port") != "443" ||
+		got.Header.Get("X-Forwarded-Prefix") != "" || got.Header.Get("Forwarded") != "" {
+		t.Fatalf("spoofed forwarded headers: %v", got.Header)
+	}
+	got = serve(t, h, "162.158.154.69:7", map[string]string{"X-Forwarded-Proto": "http", "X-Forwarded-Port": "8443"})
+	if got.Header.Get("X-Forwarded-Port") != "80" {
+		t.Fatalf("http port: %v", got.Header)
+	}
+
 	// Fastly.
 	got = serve(t, h, "151.101.1.1:2", map[string]string{"Fastly-Client-Ip": "203.0.113.5"})
 	if got.RemoteAddr != "203.0.113.5:2" {
