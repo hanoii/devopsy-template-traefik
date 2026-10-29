@@ -488,7 +488,13 @@ Decided 2026-10-28, with the connectors' template
   entrypoint the rewrite would turn every site's 502 into a 307, so a
   site opting out could not get its 502 back. `X-Devopsy-Hold: no` gets
   the hold's answer at once with `X-Devopsy-Hold: down` (`domains`).
-  Only 502: a site's own 503 is its answer.
+  Only 502: a site's own 503 is its answer. A 307 for every method,
+  never a 303 for a POST (decided with the user): a 502 does not tell
+  a POST the closed port refused, which never reached the app, from one
+  the app read and then lost (a crash, a stop past its grace period),
+  so the 307 sends both again, as a visitor's reload would; a 303 would
+  turn the common case, a form posted during a stop, into a GET of the
+  page, the form lost.
 - **The router gone: a catch-all with a memory from the API.** Traefik
   builds every middleware again on each dynamic configuration change, so
   the plugin's `New` is the event: a catch-all instance has
