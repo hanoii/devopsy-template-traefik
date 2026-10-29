@@ -23,34 +23,34 @@ var closing = []string{"busybox:1.37", "sh", "-c",
 // Router gone: a stopped container has none; the catch-all holds its
 // host until it is back.
 func TestHoldRouterGone(t *testing.T) {
-	traefik(t)
-	site(t, "gone", "gone.example.com", hold, "")
-	heldThrough(t, "https://gone.example.com/", during(t, "https://gone.example.com/", "docker stop gone && sleep 6 && docker start gone"))
+	h := traefik(t)
+	h.site("gone", "gone.example.com", hold, "")
+	heldThrough(t, "https://gone.example.com/", h.during("https://gone.example.com/", "docker stop gone && sleep 6 && docker start gone"))
 }
 
 // Stops right after starts: every request held, never a 404 (a stop
 // while the reader slept, Traefik's API a moment behind).
 func TestHoldQuickRounds(t *testing.T) {
-	traefik(t)
-	site(t, "rounds", "rounds.example.com", hold, "")
-	heldThrough(t, "https://rounds.example.com/", during(t, "https://rounds.example.com/",
+	h := traefik(t)
+	h.site("rounds", "rounds.example.com", hold, "")
+	heldThrough(t, "https://rounds.example.com/", h.during("https://rounds.example.com/",
 		"for i in 1 2 3 4 5 6; do docker stop rounds; sleep 0.$i; docker start rounds; sleep $((i % 3)); done; sleep 2"))
 }
 
 // The 502 at the stop: the router still there, its port closed.
 func TestHoldClosedPort(t *testing.T) {
-	traefik(t)
-	site(t, "closing", "closing.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
-	heldThrough(t, "https://closing.example.com/", during(t, "https://closing.example.com/", "docker stop closing && sleep 3 && docker start closing"))
+	h := traefik(t)
+	h.site("closing", "closing.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
+	heldThrough(t, "https://closing.example.com/", h.during("https://closing.example.com/", "docker stop closing && sleep 3 && docker start closing"))
 }
 
 // A HostRegexp router is remembered by no read: its 502 while the app
 // closes its port is held all the same, probed through every entrypoint
 // (once the container is gone its host gets the usual 404: README).
 func TestHoldHostRegexp(t *testing.T) {
-	traefik(t)
-	site(t, "regexp", "HostRegexp(`^regexp[.]example[.]com$`)", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
-	out := shOn(t, server, "/", nil, `docker kill -s TERM regexp >/dev/null && sleep 0.5
+	h := traefik(t)
+	h.site("regexp", "HostRegexp(`^regexp[.]example[.]com$`)", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
+	out := h.sh("/", nil, `docker kill -s TERM regexp >/dev/null && sleep 0.5
 		curl -sk -o /dev/null --max-time 60 --resolve regexp.example.com:443:127.0.0.1 -w '%{http_code} %{time_total} %{redirect_url}' https://regexp.example.com/ >/tmp/regexp &
 		docker wait regexp >/dev/null && docker start regexp >/dev/null && wait && cat /tmp/regexp`)
 	if a := parseAnswer(out); a.Code != 307 || a.Location != "https://regexp.example.com/" || a.Time < 2 {
@@ -59,19 +59,20 @@ func TestHoldHostRegexp(t *testing.T) {
 }
 
 // What is not held answers at once: a host never routed, a site without
-// hold@file (its 404 and its 502 as before), a 502 the probe does not
-// meet (a POST its app answers 502), a visitor asking not to be held.
+// hold@file (its 404 and its 502 as before), a visitor asking not to be
+// held; and a 502 the probe does not meet (a POST its app answers 502)
+// is sent on once, then gets the page.
 func TestHoldNot(t *testing.T) {
-	traefik(t)
-	site(t, "plain", "plain.example.com", nil, "")
-	site(t, "plaindead", "plaindead.example.com", []string{"services.<name>.loadbalancer.server.port=81"}, "")
-	site(t, "dead", "dead.example.com", append([]string{"services.<name>.loadbalancer.server.port=81"}, hold...), "")
-	site(t, "postfail", "postfail.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), "caddy:2-alpine", "sh", "-c",
+	h := traefik(t)
+	h.site("plain", "plain.example.com", nil, "")
+	h.site("plaindead", "plaindead.example.com", []string{"services.<name>.loadbalancer.server.port=81"}, "")
+	h.site("dead", "dead.example.com", append([]string{"services.<name>.loadbalancer.server.port=81"}, hold...), "")
+	h.site("postfail", "postfail.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), "caddy:2-alpine", "sh", "-c",
 		`printf '%s\n' ':80 {' '@post method POST' 'respond @post 502' 'respond 200' '}' >/tmp/Caddyfile && exec caddy run --config /tmp/Caddyfile`)
-	site(t, "stopped", "stopped.example.com", hold, "")
-	shOn(t, server, "/", nil, "docker stop plain stopped >/dev/null")
-	unrouted(t, "plain@docker")
-	unrouted(t, "stopped@docker")
+	h.site("stopped", "stopped.example.com", hold, "")
+	h.sh("/", nil, "docker stop plain stopped >/dev/null")
+	h.unrouted("plain@docker")
+	h.unrouted("stopped@docker")
 
 	for _, c := range []struct {
 		name  string
@@ -84,20 +85,24 @@ func TestHoldNot(t *testing.T) {
 		// Within the reads due after a change of routers (settleWait).
 		{"without hold@file, its router gone", "https://plain.example.com/", nil, 404, 6},
 		{"without hold@file, its port closed", "https://plaindead.example.com/", nil, 502, 1},
-		{"a POST its app answers 502", "https://postfail.example.com/form", []string{"-d", "a=1"}, 307, 1},
 		{"not held, its port closed", "https://dead.example.com/", []string{"-H", "X-Devopsy-Hold: no"}, 307, 1},
 		{"not held, its router gone", "https://stopped.example.com/", []string{"-H", "X-Devopsy-Hold: no"}, 503, 6},
 	} {
-		a := request(t, c.url, c.extra...)
+		a := h.request(c.url, c.extra...)
 		if a.Code != c.code || a.Time > c.max || a.Location != "" {
 			t.Errorf("%s: %+v, want %d within %gs and no Location", c.name, a, c.code, c.max)
 		}
 	}
-	if a := request(t, "https://postfail.example.com/form"); a.Code != 200 {
+	if a := h.request("https://postfail.example.com/form"); a.Code != 200 {
 		t.Errorf("postfail's GET: %+v", a)
 	}
+	// As a browser follows it: the POST once again, then the page.
+	if out := h.sh("/", nil, `curl -sk -L -d a=1 -o /tmp/postfail --resolve postfail.example.com:443:127.0.0.1 \
+		-w '%{http_code} %{num_redirects} %{time_total} [%{redirect_url}]' https://postfail.example.com/form && grep -q 'Back in a moment' /tmp/postfail && echo ' page'`); !strings.HasPrefix(out, "307 1 0.") || !strings.HasSuffix(strings.TrimSpace(out), "[] page") {
+		t.Errorf("a POST its app answers 502, followed: %s", out)
+	}
 	// The page, and the hold's mark domains reads.
-	out := shOn(t, server, "/", nil, `curl -sk -D - --resolve dead.example.com:443:127.0.0.1 -H 'X-Devopsy-Hold: no' https://dead.example.com/`)
+	out := h.sh("/", nil, `curl -sk -D - --resolve dead.example.com:443:127.0.0.1 -H 'X-Devopsy-Hold: no' https://dead.example.com/`)
 	if !strings.Contains(strings.ToLower(out), "x-devopsy-hold: down") || !strings.Contains(out, "Back in a moment") {
 		t.Errorf("the page:\n%s", out)
 	}

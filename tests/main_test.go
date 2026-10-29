@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,18 +25,26 @@ const image = "devopsy-traefik-tests:1"
 const label = "devopsy-traefik-tests"
 
 // The run's containers and network: names end with its process id, so
-// two runs never meet. Two hosts, each its own Docker: the template's
-// networks have fixed names (traefik, tunnel), so the script tests, which
-// make and remove them, never share a Docker with the Traefik the
-// scenarios deploy.
+// two runs never meet. Hosts, each its own Docker, taken by one test at a
+// time: the template's networks have fixed names (traefik, tunnel) and
+// its ports are the host's. The script tests, which make and remove the
+// networks, run on scripts hosts, where nothing stays deployed; the
+// scenarios on server hosts, each with a Traefik of its own (traefik()),
+// TESTS_LANES of them (3), so scenarios run that many at once.
 var (
 	network string
 	mirror  string
-	// scripts runs the script tests: nothing deploys Traefik there.
-	scripts string
-	// server runs the scenarios' Traefik (traefik()) and their sites.
-	server string
+	scripts = make(chan string, 1)
+	servers chan string
 )
+
+// lanes is TESTS_LANES, else 3: the server hosts.
+func lanes() int {
+	if n, err := strconv.Atoi(os.Getenv("TESTS_LANES")); err == nil && n > 0 {
+		return n
+	}
+	return 3
+}
 
 // src is the template as each host has it, pristine: projects copy it.
 const src = "/src"
@@ -69,7 +78,11 @@ func setUp() error {
 	}
 	id := fmt.Sprint(os.Getpid())
 	network, mirror = label+"-"+id, label+"-mirror-"+id
-	scripts, server = label+"-scripts-"+id, label+"-server-"+id
+	hosts := []string{label + "-scripts-" + id}
+	servers = make(chan string, lanes())
+	for i := 1; i <= lanes(); i++ {
+		hosts = append(hosts, fmt.Sprintf("%s-server-%s-%d", label, id, i))
+	}
 	run := label + "=" + id
 	if out, err := docker("network", "create", "--label", run, network); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
@@ -82,8 +95,8 @@ func setUp() error {
 		return fmt.Errorf("starting the registry mirror: %v\n%s", err, out)
 	}
 	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i, h := range []string{scripts, server} {
+	errs := make([]error, len(hosts))
+	for i, h := range hosts {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -91,11 +104,21 @@ func setUp() error {
 		}()
 	}
 	wg.Wait()
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	if err := installDevopsy(hosts); err != nil {
+		return err
+	}
+	scripts <- hosts[0]
+	for _, h := range hosts[1:] {
+		servers <- h
+	}
+	return nil
 }
 
-// startHost starts host h, waits for its dockerd, installs devopsy and
-// copies the template from root.
+// startHost starts host h, waits for its dockerd and copies the template
+// from root.
 func startHost(h, run, root string) error {
 	if out, err := docker("run", "-d", "--privileged", "--name", h, "--hostname", "host", "--label", run,
 		"--network", network, "-v", "/var/lib/docker", image); err != nil {
@@ -110,29 +133,38 @@ func startHost(h, run, root string) error {
 			return fmt.Errorf("%s's dockerd did not start:\n%s", h, out)
 		}
 	}
-	if err := installDevopsy(h); err != nil {
-		return err
-	}
 	return copyTemplate(h, root)
 }
 
-// installDevopsy puts DEVOPSY_BIN on host h, else the latest release.
-func installDevopsy(h string) error {
-	if bin := os.Getenv("DEVOPSY_BIN"); bin != "" {
-		if out, err := docker("cp", bin, h+":/usr/local/bin/devopsy"); err != nil {
-			return fmt.Errorf("copying %s: %v\n%s", bin, err, out)
+// installDevopsy puts DEVOPSY_BIN on every host, else the latest
+// release, installed on the first and copied to the others.
+func installDevopsy(hosts []string) error {
+	bin := os.Getenv("DEVOPSY_BIN")
+	if bin == "" {
+		if out, err := docker("exec", hosts[0], "sh", "-c",
+			"curl -fsSL https://raw.githubusercontent.com/hanoii/devopsy-cli/main/install.sh | DEVOPSY_INSTALL_DIR=/usr/local/bin sh"); err != nil {
+			return fmt.Errorf("installing devopsy: %v\n%s", err, out)
 		}
-	} else if out, err := docker("exec", h, "sh", "-c",
-		"curl -fsSL https://raw.githubusercontent.com/hanoii/devopsy-cli/main/install.sh | DEVOPSY_INSTALL_DIR=/usr/local/bin sh"); err != nil {
-		return fmt.Errorf("installing devopsy: %v\n%s", err, out)
+		tmp, err := os.MkdirTemp("", label)
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		bin = filepath.Join(tmp, "devopsy")
+		if out, err := docker("cp", hosts[0]+":/usr/local/bin/devopsy", bin); err != nil {
+			return fmt.Errorf("copying devopsy: %v\n%s", err, out)
+		}
 	}
-	out, err := docker("exec", h, "devopsy", "--version")
+	for _, h := range hosts {
+		if out, err := docker("cp", bin, h+":/usr/local/bin/devopsy"); err != nil {
+			return fmt.Errorf("copying %s to %s: %v\n%s", bin, h, err, out)
+		}
+	}
+	out, err := docker("exec", hosts[0], "devopsy", "--version")
 	if err != nil {
-		return fmt.Errorf("devopsy on %s: %v\n%s", h, err, out)
+		return fmt.Errorf("devopsy on %s: %v\n%s", hosts[0], err, out)
 	}
-	if h == server {
-		fmt.Fprintf(os.Stderr, "tests: %s", out)
-	}
+	fmt.Fprintf(os.Stderr, "tests: %d server hosts, %s", len(hosts)-1, out)
 	return nil
 }
 
@@ -170,31 +202,36 @@ var settings = map[string]string{
 	"PROXY_PUBLIC_IP":     "203.0.113.10",
 }
 
-// The hosts run at once, each one test at a time: tests on one host share
-// its Docker (the fixed networks, the ports). A test takes its host's lock
-// first (project, traefik), parallel to the other host's.
-var scriptsMu, serverMu sync.Mutex
-
-// one runs the rest of t alone on its host, beside the other host's.
-func one(t *testing.T, mu *sync.Mutex) {
-	t.Helper()
-	t.Parallel()
-	mu.Lock()
-	t.Cleanup(mu.Unlock)
+// host is the host a test holds, and the test.
+type host struct {
+	t    *testing.T
+	name string
 }
 
-// project makes a copy of the template on the scripts host (newProject),
-// taken down when the test ends: what it started, its networks. The
-// test's first call: it takes the host (one).
-func project(t *testing.T, name string, env map[string]string) string {
+// take gives t a free host of pool for the rest of the test, which runs
+// parallel to the other hosts' tests.
+func take(t *testing.T, pool chan string) host {
 	t.Helper()
-	one(t, &scriptsMu)
-	dir, err := newProject(scripts, name, env)
+	t.Parallel()
+	h := <-pool
+	// Registered first, so it runs last: what the test's other cleanups
+	// remove is gone before the next test gets the host.
+	t.Cleanup(func() { pool <- h })
+	return host{t, h}
+}
+
+// project takes a scripts host and makes a copy of the template there
+// (newProject), taken down when the test ends: what it started, its
+// networks. The test's first call.
+func project(t *testing.T, name string, env map[string]string) (host, string) {
+	t.Helper()
+	h := take(t, scripts)
+	dir, err := newProject(h.name, name, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = shErrOn(scripts, dir, nil, "devopsy down -v --remove-orphans") })
-	return dir
+	t.Cleanup(func() { _, _ = h.shErr(dir, nil, "devopsy down -v --remove-orphans") })
+	return h, dir
 }
 
 // newProject makes a copy of the template in the deploy user's home on
@@ -236,30 +273,24 @@ script=$1
 shift
 eval "$script"`
 
-// sh runs script on the scripts host (shOn).
-func sh(t *testing.T, dir string, env map[string]string, script string, args ...string) string {
-	t.Helper()
-	return shOn(t, scripts, dir, env, script, args...)
-}
-
-// shErr is sh returning the error instead.
-func shErr(dir string, env map[string]string, script string, args ...string) (string, error) {
-	return shErrOn(scripts, dir, env, script, args...)
-}
-
-// shOn runs script as the deploy user in dir on host h, with env added
-// (the caller's environment, which wins over .env), and fails the test
-// when it fails. It returns stdout and stderr together.
-func shOn(t *testing.T, h, dir string, env map[string]string, script string, args ...string) string {
-	t.Helper()
-	out, err := shErrOn(h, dir, env, script, args...)
+// sh runs script as the deploy user in dir on h, with env added (the
+// caller's environment, which wins over .env), and fails the test when it
+// fails. It returns stdout and stderr together.
+func (h host) sh(dir string, env map[string]string, script string, args ...string) string {
+	h.t.Helper()
+	out, err := shErrOn(h.name, dir, env, script, args...)
 	if err != nil {
-		t.Fatalf("%s: %v\n%s", script, err, out)
+		h.t.Fatalf("%s: %v\n%s", script, err, out)
 	}
 	return out
 }
 
-// shErrOn is shOn returning the error instead.
+// shErr is sh returning the error instead.
+func (h host) shErr(dir string, env map[string]string, script string, args ...string) (string, error) {
+	return shErrOn(h.name, dir, env, script, args...)
+}
+
+// shErrOn runs script as the deploy user in dir on host h.
 func shErrOn(h, dir string, env map[string]string, script string, args ...string) (string, error) {
 	cmd := []string{"exec", "-u", "devopsy", "-w", dir}
 	var keys []string

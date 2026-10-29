@@ -11,7 +11,7 @@ import (
 // check refuses what Traefik would take without a word, the release's
 // prepare step: each refusal, and what passes.
 func TestCheckSettings(t *testing.T) {
-	dir := project(t, "check", nil)
+	h, dir := project(t, "check", nil)
 	for _, c := range []struct {
 		env  map[string]string
 		want string // empty: passes
@@ -34,7 +34,7 @@ func TestCheckSettings(t *testing.T) {
 		{map[string]string{"PROXY_BASE_DOMAIN": "vm1..example.com"}, "PROXY_BASE_DOMAIN is not a domain name"},
 		{map[string]string{"PROXY_BASE_DOMAIN": "VM1.example.com"}, "PROXY_BASE_DOMAIN is not a domain name"},
 	} {
-		out, err := shErr(dir, c.env, "devopsy check")
+		out, err := h.shErr(dir, c.env, "devopsy check")
 		switch {
 		case c.want == "" && err != nil:
 			t.Errorf("%v: refused: %s", c.env, out)
@@ -49,18 +49,18 @@ func TestCheckSettings(t *testing.T) {
 // env_set writes through .env, a link to shared/.env on a server, and
 // replaces a key's line in place.
 func TestEnvSet(t *testing.T) {
-	dir := project(t, "envset", nil)
-	sh(t, dir, nil, `mv .devopsy/.env shared.env && ln -s ../shared.env .devopsy/.env`)
-	sh(t, dir, nil, `devopsy t 'env_set PROXY_DOCKER_GID 990; env_set PROXY_DOCKER_GID 991; env_set PROXY_ACMEDNS_IP 192.0.2.1'`)
-	if out := sh(t, dir, nil, `test -L .devopsy/.env && cat shared.env`); out != "PROXY_LE_ACME_EMAIL=admin@example.com\nPROXY_PUBLIC_IP=203.0.113.10\nPROXY_DOCKER_GID=991\nPROXY_ACMEDNS_IP=192.0.2.1\n" {
+	h, dir := project(t, "envset", nil)
+	h.sh(dir, nil, `mv .devopsy/.env shared.env && ln -s ../shared.env .devopsy/.env`)
+	h.sh(dir, nil, `devopsy t 'env_set PROXY_DOCKER_GID 990; env_set PROXY_DOCKER_GID 991; env_set PROXY_ACMEDNS_IP 192.0.2.1'`)
+	if out := h.sh(dir, nil, `test -L .devopsy/.env && cat shared.env`); out != "PROXY_LE_ACME_EMAIL=admin@example.com\nPROXY_PUBLIC_IP=203.0.113.10\nPROXY_DOCKER_GID=991\nPROXY_ACMEDNS_IP=192.0.2.1\n" {
 		t.Fatalf("shared.env:\n%s", out)
 	}
 }
 
 // write_if_changed says whether it wrote.
 func TestWriteIfChanged(t *testing.T) {
-	dir := project(t, "write", nil)
-	out := sh(t, dir, nil, `devopsy t 'f=$dir/mnt/x; mkdir -p "$dir/mnt"
+	h, dir := project(t, "write", nil)
+	out := h.sh(dir, nil, `devopsy t 'f=$dir/mnt/x; mkdir -p "$dir/mnt"
 		write_if_changed "$f" a && echo wrote; write_if_changed "$f" a || echo same; write_if_changed "$f" b && echo wrote; cat "$f"'`)
 	if out != "wrote\nsame\nwrote\nb" {
 		t.Fatalf("got %q", out)
@@ -71,8 +71,8 @@ func TestWriteIfChanged(t *testing.T) {
 // entrypoints' middlewares and trust, the plugins, the default
 // entrypoints. Without its restart (--no-restart), so nothing starts.
 func TestStaticEnv(t *testing.T) {
-	dir := project(t, "staticenv", nil)
-	t.Cleanup(func() { _, _ = shErr(dir, nil, "docker network rm tunnel") })
+	h, dir := project(t, "staticenv", nil)
+	t.Cleanup(func() { _, _ = h.shErr(dir, nil, "docker network rm tunnel") })
 	const head = "# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.\n"
 	const hold = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold\n"
 	const proxies = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies\n"
@@ -109,18 +109,18 @@ func TestStaticEnv(t *testing.T) {
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.98.0.0/24\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file,tunnel@file\n" + proxies + hold + both},
 	} {
-		sh(t, dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
+		h.sh(dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
 		if c.setup != "" {
-			sh(t, dir, nil, c.setup)
+			h.sh(dir, nil, c.setup)
 		}
-		sh(t, dir, c.env, `devopsy t 'static_env --no-restart'`)
-		if got := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env"); got != c.want {
+		h.sh(dir, c.env, `devopsy t 'static_env --no-restart'`)
+		if got := h.sh(dir, nil, "cat .devopsy/mnt/traefik.env"); got != c.want {
 			t.Errorf("%s: traefik.env:\n%s\nwant:\n%s", c.name, got, c.want)
 		}
-		if got := sh(t, dir, nil, "cat .devopsy/mnt/dynamic/forwarded.yaml"); !strings.Contains(got, "Forwarded: \"\"") {
+		if got := h.sh(dir, nil, "cat .devopsy/mnt/dynamic/forwarded.yaml"); !strings.Contains(got, "Forwarded: \"\"") {
 			t.Errorf("%s: forwarded.yaml:\n%s", c.name, got)
 		}
-		tunnel, _ := shErr(dir, nil, "cat .devopsy/mnt/dynamic/tunnel.yaml")
+		tunnel, _ := h.shErr(dir, nil, "cat .devopsy/mnt/dynamic/tunnel.yaml")
 		if want := strings.HasPrefix(c.name, "tunnel") && c.name != "tunnel only"; want != strings.Contains(tunnel, "CF-Connecting-IP") {
 			t.Errorf("%s: tunnel.yaml:\n%s", c.name, tunnel)
 		}
@@ -129,12 +129,12 @@ func TestStaticEnv(t *testing.T) {
 	// Docker failing (not a missing network) fails it, and the trust it had
 	// stays: never a tunnel entrypoint trusting nothing, its visitors' IPs
 	// lost.
-	before := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env")
-	out, err := shErr(dir, nil, `devopsy t 'export DOCKER_HOST=unix:///nowhere.sock; static_env --no-restart'`)
+	before := h.sh(dir, nil, "cat .devopsy/mnt/traefik.env")
+	out, err := h.shErr(dir, nil, `devopsy t 'export DOCKER_HOST=unix:///nowhere.sock; static_env --no-restart'`)
 	if err == nil || !strings.Contains(out, "could not read the tunnel network") {
 		t.Errorf("Docker failing: %v: %s", err, out)
 	}
-	if after := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env"); after != before {
+	if after := h.sh(dir, nil, "cat .devopsy/mnt/traefik.env"); after != before {
 		t.Errorf("Docker failing changed traefik.env:\n%s", after)
 	}
 }
@@ -143,7 +143,7 @@ func TestStaticEnv(t *testing.T) {
 // and the acme-dns registrations, keeps the rest, the files' mode and a
 // copy of each file it changed.
 func TestForget(t *testing.T) {
-	dir := project(t, "forget", nil)
+	h, dir := project(t, "forget", nil)
 	cert := func(main string, sans ...string) string {
 		d := fmt.Sprintf(`{"main":%q}`, main)
 		if len(sans) > 0 {
@@ -157,20 +157,20 @@ func TestForget(t *testing.T) {
 		"acme-dns-accounts.json":        `{"old.example.com":{"subdomain":"0a1b-2c3d","fulldomain":"0a1b-2c3d.acme.example.com"},"keep.example.com":{"subdomain":"4e5f","fulldomain":"4e5f.acme.example.com"}}`,
 	}
 	for f, content := range stores {
-		sh(t, dir, nil, `devopsy t 'in_traefik "umask 077; cat >/letsencrypt/$1" "$1"' "$1" <<EOF
+		h.sh(dir, nil, `devopsy t 'in_traefik "umask 077; cat >/letsencrypt/$1" "$1"' "$1" <<EOF
 $2
 EOF`, f, content)
 	}
 
-	if out := sh(t, dir, nil, "devopsy forget"); !strings.Contains(out, "  old.example.com, www.old.example.com  certificate, le-http01") ||
+	if out := h.sh(dir, nil, "devopsy forget"); !strings.Contains(out, "  old.example.com, www.old.example.com  certificate, le-http01") ||
 		!strings.Contains(out, "  *.old.example.com  certificate, le-dns01-selfhosted") || !strings.Contains(out, "  old.example.com  acme-dns registration") {
 		t.Fatalf("forget lists:\n%s", out)
 	}
-	if out, err := shErr(dir, nil, "devopsy forget 'bad_name.example.com'"); err == nil || !strings.Contains(out, "not a domain name") {
+	if out, err := h.shErr(dir, nil, "devopsy forget 'bad_name.example.com'"); err == nil || !strings.Contains(out, "not a domain name") {
 		t.Errorf("a bad name: %v %s", err, out)
 	}
-	sh(t, dir, nil, "devopsy forget '*.old.example.com'")
-	out := sh(t, dir, nil, "devopsy t forget_apply")
+	h.sh(dir, nil, "devopsy forget '*.old.example.com'")
+	out := h.sh(dir, nil, "devopsy t forget_apply")
 	for _, want := range []string{
 		"forgot the certificate for old.example.com, www.old.example.com (le-http01)",
 		"forgot the certificate for *.old.example.com (le-dns01-selfhosted)",
@@ -180,7 +180,7 @@ EOF`, f, content)
 			t.Errorf("want %q in:\n%s", want, out)
 		}
 	}
-	after := sh(t, dir, nil, `devopsy t 'in_traefik "cd /letsencrypt && stat -c \"%a %n\" acme-* | sort && cat acme-le-http01.json acme-le-dns01-selfhosted.json acme-dns-accounts.json && ls | grep -c forget-"'`)
+	after := h.sh(dir, nil, `devopsy t 'in_traefik "cd /letsencrypt && stat -c \"%a %n\" acme-* | sort && cat acme-le-http01.json acme-le-dns01-selfhosted.json acme-dns-accounts.json && ls | grep -c forget-"'`)
 	for _, want := range []string{"600 acme-dns-accounts.json\n", "600 acme-le-http01.json\n", "600 acme-le-dns01-selfhosted.json\n", `"keep.example.com"`, `"4e5f"`, "\n3\n"} {
 		if !strings.Contains(after, want) {
 			t.Errorf("want %q in the stores:\n%s", want, after)
@@ -189,7 +189,7 @@ EOF`, f, content)
 	if strings.Contains(after, "old.example.com") || strings.Contains(after, "0a1b") {
 		t.Errorf("old.example.com still stored:\n%s", after)
 	}
-	if _, err := shErr(dir, nil, "test -e .devopsy/mnt/forget.pending"); err == nil {
+	if _, err := h.shErr(dir, nil, "test -e .devopsy/mnt/forget.pending"); err == nil {
 		t.Error("the queue stayed")
 	}
 }

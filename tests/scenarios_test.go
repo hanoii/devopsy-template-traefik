@@ -12,44 +12,51 @@ import (
 	"time"
 )
 
-// proxy is the Traefik the scenarios share on the server host, deployed
-// once per run as a server's is: `devopsy deploy` in its project, compose project traefik,
-// its ports the host's 80, 443 and 127.0.0.1:8080.
+// proxy is the Traefik of each server host, deployed by the first test
+// that takes the host as a server's is: `devopsy deploy` in its project,
+// compose project traefik, its ports the host's 80, 443 and
+// 127.0.0.1:8080.
 const proxy = "/home/devopsy/traefik"
 
 var (
-	proxyOnce sync.Once
-	proxyErr  error
+	deployedMu sync.Mutex
+	deployed   = map[string]error{}
 )
 
-// traefik deploys the shared Traefik the first time a test asks: a
-// scenario's first call, which takes the server host (one).
-func traefik(t *testing.T) {
+// traefik takes a server host, its Traefik deployed: a scenario's first
+// call.
+func traefik(t *testing.T) host {
 	t.Helper()
-	one(t, &serverMu)
-	proxyOnce.Do(func() {
-		if _, proxyErr = newProject(server, "traefik", nil); proxyErr != nil {
-			return
+	h := take(t, servers)
+	deployedMu.Lock()
+	err, ok := deployed[h.name]
+	deployedMu.Unlock()
+	if !ok {
+		if _, err = newProject(h.name, "traefik", nil); err == nil {
+			if out, derr := h.shErr(proxy, nil, "devopsy deploy"); derr != nil {
+				err = fmt.Errorf("devopsy deploy on %s: %v\n%s", h.name, derr, out)
+			}
 		}
-		if out, err := shErrOn(server, proxy, nil, "devopsy deploy"); err != nil {
-			proxyErr = fmt.Errorf("devopsy deploy: %v\n%s", err, out)
-		}
-	})
-	if proxyErr != nil {
-		t.Fatal(proxyErr)
+		deployedMu.Lock()
+		deployed[h.name] = err
+		deployedMu.Unlock()
 	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
 
-// site runs a container routed through the shared Traefik for host (a
+// site runs a container routed through h's Traefik for hostname (a
 // Host() rule, or the rule itself when it has a parenthesis), on the
 // traefik network, with labels added under traefik.http. (<name> its
 // name); removed when the test ends. image runs args, or traefik/whoami
 // without.
-func site(t *testing.T, name, host string, labels []string, image string, args ...string) {
-	t.Helper()
-	rule := fmt.Sprintf("Host(`%s`)", host)
-	if strings.Contains(host, "(") {
-		rule = host
+func (h host) site(name, hostname string, labels []string, image string, args ...string) {
+	h.t.Helper()
+	rule := fmt.Sprintf("Host(`%s`)", hostname)
+	if strings.Contains(hostname, "(") {
+		rule = hostname
 	}
 	cmd := []string{"docker", "run", "-d", "--name", name, "--network", "traefik", "-l", "traefik.enable=true",
 		"-l", fmt.Sprintf("traefik.http.routers.%s.rule=%s", name, rule)}
@@ -60,20 +67,20 @@ func site(t *testing.T, name, host string, labels []string, image string, args .
 		image = "traefik/whoami:v1.11"
 	}
 	cmd = append(append(cmd, image), args...)
-	shOn(t, server, "/", nil, `"$@" >/dev/null`, cmd...)
-	t.Cleanup(func() { _, _ = shErrOn(server, "/", nil, `docker rm -f "$1" >/dev/null`, name) })
-	routed(t, name+"@docker")
+	h.sh("/", nil, `"$@" >/dev/null`, cmd...)
+	h.t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f "$1" >/dev/null`, name) })
+	h.routed(name + "@docker")
 }
 
 // routed waits for router to be in Traefik's API (it reads the
 // containers a moment after they start).
-func routed(t *testing.T, router string) {
-	t.Helper()
+func (h host) routed(router string) {
+	h.t.Helper()
 	for end := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
 		var routers []struct{ Name, Status string }
 		// The API may not answer yet: deploy opens it to the host once
 		// Traefik runs (api_access).
-		out, err := shErrOn(server, "/", nil, `curl -sf "http://127.0.0.1:8080/api/http/routers?per_page=1000"`)
+		out, err := h.shErr("/", nil, `curl -sf "http://127.0.0.1:8080/api/http/routers?per_page=1000"`)
 		if err == nil && json.Unmarshal([]byte(out), &routers) == nil {
 			for _, r := range routers {
 				if r.Name == router {
@@ -82,29 +89,29 @@ func routed(t *testing.T, router string) {
 			}
 		}
 		if time.Now().After(end) {
-			t.Fatalf("no router %s in Traefik's API", router)
+			h.t.Fatalf("no router %s in Traefik's API", router)
 		}
 	}
 }
 
 // unrouted waits for router to leave Traefik's API (a container stopped).
-func unrouted(t *testing.T, router string) {
-	t.Helper()
+func (h host) unrouted(router string) {
+	h.t.Helper()
 	for end := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
-		out, err := shErrOn(server, "/", nil, `curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/http/routers/$1"`, router)
+		out, err := h.shErr("/", nil, `curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/http/routers/$1"`, router)
 		if err == nil && out == "404" {
 			return
 		}
 		if time.Now().After(end) {
-			t.Fatalf("router %s still in Traefik's API", router)
+			h.t.Fatalf("router %s still in Traefik's API", router)
 		}
 	}
 }
 
 // api is Traefik's API at path, from the host.
-func api(t *testing.T, path string) string {
-	t.Helper()
-	return shOn(t, server, "/", nil, `curl -sf "http://127.0.0.1:8080$1"`, path)
+func (h host) api(path string) string {
+	h.t.Helper()
+	return h.sh("/", nil, `curl -sf "http://127.0.0.1:8080$1"`, path)
 }
 
 // request is one visitor's request to url on the host's ports, host
@@ -116,10 +123,10 @@ type answer struct {
 	Location string
 }
 
-func request(t *testing.T, url string, extra ...string) answer {
-	t.Helper()
+func (h host) request(url string, extra ...string) answer {
+	h.t.Helper()
 	host := regexp.MustCompile(`^https?://([^/:]+)`).FindStringSubmatch(url)[1]
-	out := shOn(t, server, "/", nil, `url=$1 host=$2; shift 2
+	out := h.sh("/", nil, `url=$1 host=$2; shift 2
 		curl -sk -o /dev/null --max-time 120 --resolve "$host:443:127.0.0.1" --resolve "$host:80:127.0.0.1" \
 			-w '%{http_code} %{time_total} %{redirect_url}' "$@" "$url"`, append([]string{url, host}, extra...)...)
 	return parseAnswer(out)
@@ -134,10 +141,10 @@ func parseAnswer(line string) answer {
 // during makes a visitor's request to url every 0.2 s, from a second
 // before action (a shell script on the server host) until a second after
 // it, and returns their answers.
-func during(t *testing.T, url, action string) []answer {
-	t.Helper()
+func (h host) during(url, action string) []answer {
+	h.t.Helper()
 	host := regexp.MustCompile(`^https?://([^/:]+)`).FindStringSubmatch(url)[1]
-	out := shOn(t, server, "/", nil, `url=$1 host=$2 action=$3
+	out := h.sh("/", nil, `url=$1 host=$2 action=$3
 		out=$(mktemp) stop=$(mktemp -u)
 		(while [ ! -e "$stop" ]; do
 			curl -sk -o /dev/null --max-time 120 --resolve "$host:443:127.0.0.1" 				-w '%{http_code} %{time_total} %{redirect_url}
@@ -181,10 +188,10 @@ func heldThrough(t *testing.T, url string, answers []answer) {
 // no error in its log but ACME's (no certificate can be issued here),
 // http redirected, a site routed.
 func TestStart(t *testing.T) {
-	traefik(t)
-	site(t, "start", "start.example.com", nil, "")
+	h := traefik(t)
+	h.site("start", "start.example.com", nil, "")
 
-	ps := shOn(t, server, proxy, nil, `docker ps --filter label=com.docker.compose.project=traefik --format '{{.Names}} {{.Status}}'`)
+	ps := h.sh(proxy, nil, `docker ps --filter label=com.docker.compose.project=traefik --format '{{.Names}} {{.Status}}'`)
 	for _, line := range strings.Split(strings.TrimSpace(ps), "\n") {
 		if !strings.Contains(line, "(healthy)") {
 			t.Errorf("not healthy: %s", line)
@@ -192,7 +199,7 @@ func TestStart(t *testing.T) {
 	}
 	for _, kind := range []string{"routers", "middlewares", "services"} {
 		var items []struct{ Name, Status string }
-		if err := json.Unmarshal([]byte(api(t, "/api/http/"+kind+"?per_page=1000")), &items); err != nil {
+		if err := json.Unmarshal([]byte(h.api("/api/http/"+kind+"?per_page=1000")), &items); err != nil {
 			t.Fatal(err)
 		}
 		names := map[string]bool{}
@@ -213,16 +220,16 @@ func TestStart(t *testing.T) {
 			}
 		}
 	}
-	logs := shOn(t, server, proxy, nil, `docker logs traefik-traefik-1 2>&1`)
+	logs := h.sh(proxy, nil, `docker logs traefik-traefik-1 2>&1`)
 	for _, line := range strings.Split(logs, "\n") {
 		if (strings.Contains(line, " ERR ") || strings.Contains(line, "level=error")) && !strings.Contains(strings.ToLower(line), "acme") {
 			t.Errorf("Traefik's log: %s", line)
 		}
 	}
-	if a := request(t, "http://start.example.com/x"); a.Code != 301 && a.Code != 308 || a.Location != "https://start.example.com/x" {
+	if a := h.request("http://start.example.com/x"); a.Code != 301 && a.Code != 308 || a.Location != "https://start.example.com/x" {
 		t.Errorf("http: %+v", a)
 	}
-	if a := request(t, "https://start.example.com/"); a.Code != 200 {
+	if a := h.request("https://start.example.com/"); a.Code != 200 {
 		t.Errorf("https: %+v", a)
 	}
 }
@@ -231,14 +238,14 @@ func TestStart(t *testing.T) {
 // routed, its resolver and how its certificate is issued; one JSON
 // document whatever a project's rule says.
 func TestFacts(t *testing.T) {
-	traefik(t)
-	site(t, "facts-http", "facts-http.example.com", nil, "")
-	site(t, "facts-tunnel", "facts-tunnel.example.com", []string{"routers.<name>.entrypoints=tunnel"}, "")
+	h := traefik(t)
+	h.site("facts-http", "facts-http.example.com", nil, "")
+	h.site("facts-tunnel", "facts-tunnel.example.com", []string{"routers.<name>.entrypoints=tunnel"}, "")
 	// A stray quote in a rule once broke the document for the whole server.
-	site(t, "facts-quote", `facts-"quote.example.com`, nil, "")
-	shOn(t, server, proxy, nil, `touch .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
+	h.site("facts-quote", `facts-"quote.example.com`, nil, "")
+	h.sh(proxy, nil, `touch .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
 	t.Cleanup(func() {
-		_, _ = shErrOn(server, proxy, nil, `rm -f .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
+		_, _ = h.shErr(proxy, nil, `rm -f .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
 	})
 
 	var facts struct {
@@ -249,7 +256,7 @@ func TestFacts(t *testing.T) {
 			Entrypoints            []string
 		}
 	}
-	out := shOn(t, server, proxy, nil, `devopsy t '"$dir/lib/facts" --all' 2>/dev/null`)
+	out := h.sh(proxy, nil, `devopsy t '"$dir/lib/facts" --all' 2>/dev/null`)
 	if err := json.Unmarshal([]byte(out), &facts); err != nil {
 		t.Fatalf("facts --all: %v\n%s", err, out)
 	}
@@ -277,7 +284,7 @@ func TestFacts(t *testing.T) {
 	}
 
 	// Named hosts, one not routed.
-	out = shOn(t, server, proxy, nil, `devopsy t '"$dir/lib/facts" FACTS-HTTP.example.com nowhere.example.com' 2>/dev/null`)
+	out = h.sh(proxy, nil, `devopsy t '"$dir/lib/facts" FACTS-HTTP.example.com nowhere.example.com' 2>/dev/null`)
 	if err := json.Unmarshal([]byte(out), &facts); err != nil || len(facts.Hosts) != 2 ||
 		facts.Hosts[0].Host != "facts-http.example.com" || !facts.Hosts[0].Routed || facts.Hosts[1].Routed {
 		t.Errorf("facts of two hosts: %v\n%s", err, out)

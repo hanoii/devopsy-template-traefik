@@ -29,7 +29,7 @@ func check(name string, a string, more map[string]any) map[string]any {
 // domains' next step for every case it tells apart, from facts and checks
 // as lib/facts and the check script write them.
 func TestDomainsReport(t *testing.T) {
-	dir := project(t, "domains", nil)
+	h, dir := project(t, "domains", nil)
 	routed := func(method string, more map[string]any) map[string]any {
 		f := map[string]any{"routed": true, "method": method, "resolver": "le-http01"}
 		if method == "tunnel" {
@@ -114,7 +114,7 @@ func TestDomainsReport(t *testing.T) {
 			b, _ := json.Marshal(c)
 			lines = append(lines, string(b))
 		}
-		out := sh(t, dir, nil, fmt.Sprintf(`devopsy t 'printf "%%s\n%%s\n" "$1" "$2" | jq -s --arg ip %s --argjson connected %t "$(cat "$dir/lib/domains/report.jq")"' "$1" "$2"`,
+		out := h.sh(dir, nil, fmt.Sprintf(`devopsy t 'printf "%%s\n%%s\n" "$1" "$2" | jq -s --arg ip %s --argjson connected %t "$(cat "$dir/lib/domains/report.jq")"' "$1" "$2"`,
 			publicIP, connected), string(facts), strings.Join(lines, "\n"))
 		var reports []struct{ Host, Next string }
 		if err := json.Unmarshal([]byte(out), &reports); err != nil {
@@ -137,10 +137,10 @@ func TestDomainsReport(t *testing.T) {
 
 // domains' text: a block per host, the next step only when not live.
 func TestDomainsText(t *testing.T) {
-	dir := project(t, "domainstext", nil)
+	h, dir := project(t, "domainstext", nil)
 	reports := `[{"host":"app.example.com","live":true,"tunnel":true,"ips":["198.51.100.7"],"on_server":false,"cf":true,"cdn":false,"status":200,"method":"tunnel","valid":false,"have":"","want":"","issuer":"","next":"live"},
 		{"host":"shop.example.com","live":false,"tunnel":false,"resolver":"le-dns01-selfhosted","ips":[],"on_server":false,"cf":false,"cdn":false,"status":0,"method":"dns-cname","valid":false,"have":"","want":"x1.acme.example.com","issuer":"","next":"create it"}]`
-	got := sh(t, dir, nil, `devopsy t 'printf "%s\n" "$1" | jq -r "$(cat "$dir/lib/domains/text.jq")"' "$1"`, reports)
+	got := h.sh(dir, nil, `devopsy t 'printf "%s\n" "$1" | jq -r "$(cat "$dir/lib/domains/text.jq")"' "$1"`, reports)
 	want := `app.example.com  [live]
   route        Cloudflare tunnel
   dns          198.51.100.7 (Cloudflare proxy, HTTP 200 through the tunnel)
