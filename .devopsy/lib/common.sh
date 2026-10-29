@@ -162,10 +162,16 @@ $_list
 
 # The tunnel network's IPv4 subnets, comma separated: what its connectors'
 # requests come from. Empty until the network exists (a first `up`
-# creates it).
+# creates it); any other failure of Docker's fails, or Traefik would lose
+# the tunnel's trust over a daemon restarting.
 tunnel_subnet() {
-  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}},{{end}}' tunnel 2>/dev/null |
-    tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
+  if ! _out=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}},{{end}}' tunnel 2>&1); then
+    case $_out in
+      *"not found"*) return 0 ;;
+      *) die "could not read the tunnel network: $_out" ;;
+    esac
+  fi
+  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
 }
 
 # Traefik's static settings that depend on what is enabled, in
@@ -208,7 +214,7 @@ static_env() {
 
   # The tunnel: once its network exists.
   _tunnel=false
-  _subnet=$(tunnel_subnet)
+  _subnet=$(tunnel_subnet) || exit 1
   if [ -n "$_subnet" ]; then
     _tunnel=true
     _plugin=true

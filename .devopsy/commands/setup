@@ -251,7 +251,8 @@ esac
 
 # Tunnel only: Traefik's ports bound to the server's loopback, so nothing
 # answers on its public address even before the provider's firewall.
-# Otherwise back to every address.
+# Leaving it, back to every address; a loopback bind otherwise is the
+# operator's own.
 # loopback <name> <default port>: the setting for the choice.
 loopback() {
   v=$(current "$1")
@@ -261,7 +262,7 @@ loopback() {
       *:*) ;;
       *) setting "$1" "127.0.0.1:$v" ;;
     esac
-  else
+  elif [ "$(current PROXY_TUNNEL_ONLY)" = true ]; then
     case $v in
       "127.0.0.1:$2") unsetting "$1" ;;
       127.0.0.1:*) setting "$1" "${v#127.0.0.1:}" ;;

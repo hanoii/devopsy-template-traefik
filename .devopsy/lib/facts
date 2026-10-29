@@ -60,7 +60,8 @@ def base($h): $h | ltrimstr("*.");
       | {host: $h, routed: ($rs | length > 0)}
         + (if ($rs | length) > 0 then
              {resolver: (first($rs[] | .tls.certResolver // empty | select(. != "")) // $default),
-              entrypoints: ([$rs[] | (.entryPoints // [])[]] | unique)}
+              entrypoints: ([$rs[] | (.entryPoints // [])[]] | unique),
+              tls: all($rs[]; .tls != null)}
            else {} end)
         + ((first($wildcards[] | select(.[1:] as $s | ($h | endswith($s)) and ($h | rtrimstr($s) | contains(".") | not)))
             | {wildcard: .}) // {})

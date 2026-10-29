@@ -117,7 +117,7 @@ valid_name() {
 
 case "${1:-}" in
   '')
-    subnet=$(tunnel_subnet)
+    subnet=$(tunnel_subnet) || exit 1
     if [ -z "$(proxies)" ] && [ -z "$subnet" ]; then
       echo "No trusted proxies: real client IPs are off."
       exit 0
