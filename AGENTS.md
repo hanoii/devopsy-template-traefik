@@ -633,14 +633,15 @@ DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
 CI (`ci.yml`, in this repository only) runs shellcheck, the plugins
 under Go and Yaegi, and the tests on every push.
 
+- A release: every host's deploy user reaches itself over SSH, so a test
+  releases the template as to a server (`devopsy
+  @devopsy@localhost:prod --release`, `TestRelease`): the upload, the
+  activation, `shared/`, `--vars`, `--reload`, the role and imports.
+
 By hand still: what needs a real ACME, DNS, Cloudflare or a public IP
 (certificates, acme-dns registrations, a real tunnel, `domains` against
-real DNS), and a release onto a server (`check` before the switch,
-`mnt`'s owners, the proxy role, imports): on an OrbStack machine, as
-devopsy-cli's AGENTS.md describes at the end of its Checks, with Traefik
-on 18080 and 18443. For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
-`PROXY_ACMEDNS_DOMAIN` and `PROXY_ACMEDNS_PORT=15353`, then query it
-with `dig @127.0.0.1 -p 15353 <domain> SOA`.
+real DNS): on an OrbStack machine, as devopsy-cli's AGENTS.md describes
+at the end of its Checks, with Traefik on 18080 and 18443.
 
 ## Commits
 
