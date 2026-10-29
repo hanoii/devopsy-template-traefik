@@ -354,7 +354,7 @@ Decided 2026-10-28, with the connectors' template
 - **The connectors are a template of their own, with instances,** one
   per Cloudflare account (`@vm1:own/prod`), never services here. Why: a
   tunnel belongs to an account (a zone of another account cannot point
-  at it: error 1014), compose cannot make a service per token, and
+  at it: error 1033, as when no connector is up), compose cannot make a service per token, and
   devopsy already runs several installs of one project. Here only the
   other end, always there.
 - **The tunnel end is static and always there:** the `tunnel`
@@ -400,7 +400,10 @@ Decided 2026-10-28, with the connectors' template
   code from the body (`error code: 1033`, what Cloudflare sends curl),
   and the connectors from `docker network inspect tunnel`, by their
   compose health (the connectors' healthcheck is `cloudflared tunnel
-  ready`).
+  ready`). A 1033 is both "no connector" and "a record in another
+  account than the tunnel's" (verified: no 1014 for a tunnel), so the
+  next step tells them apart by whether this server's connectors are
+  healthy.
 - **`setup` prints the Cloudflare side, with values, and calls no
   API:** creating the tunnel, its route, the DNS record and the zone
   settings stay the operator's, in the account that owns them.

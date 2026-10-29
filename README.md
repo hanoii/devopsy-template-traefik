@@ -473,7 +473,7 @@ Then check with `devopsy @vm1-traefik domains`.
 
 A tunnel belongs to an account, not to a zone or a server: any zone of
 that account points a proxied CNAME at it, and a zone of another account
-cannot (Cloudflare's error 1014). A server serving one client whose
+cannot (Cloudflare's error 1033, as when no connector is up). A server serving one client whose
 account holds every zone needs one tunnel. Each further account is
 another instance of the tunnel template (`@vm1:acme/prod`), with that
 account's token, and every instance ends at the same entrypoint: a site's
@@ -519,8 +519,9 @@ answers nothing on ports 80 and 443, its Host header and SNI included.
 
 A host whose routers are on the tunnel entrypoint only is checked through
 Cloudflare: DNS (proxied), the request through the tunnel and its status,
-Cloudflare's error code when there is one (1033: no connector; 1014: the
-record is in another account), never a certificate here. A section lists
+Cloudflare's error code when there is one (1033: no connector of the
+record's tunnel, or, with this server's connectors up, a record naming
+another tunnel or one of another account), never a certificate here. A section lists
 the connectors on the `tunnel` network, each with its health: healthy once
 connected to Cloudflare. Tunneled hosts are left out of the `devopsy
 --probe` line: there is no port to probe.
