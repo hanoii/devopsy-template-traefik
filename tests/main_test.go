@@ -142,6 +142,13 @@ func startHost(h, run, root string) error {
 			return fmt.Errorf("%s's dockerd did not start:\n%s", h, out)
 		}
 	}
+	// The deploy user reaches itself over SSH, as an operator reaches a
+	// server: devopsy @devopsy@localhost:<environment> (release()).
+	if out, err := docker("exec", "-u", "devopsy", h, "sh", "-c", `ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519 &&
+		cat ~/.ssh/id_ed25519.pub >>~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys &&
+		printf 'Host localhost\n  StrictHostKeyChecking accept-new\n' >~/.ssh/config && chmod 600 ~/.ssh/config`); err != nil {
+		return fmt.Errorf("SSH on %s: %v\n%s", h, err, out)
+	}
 	return copyTemplate(h, root)
 }
 
