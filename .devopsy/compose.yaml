@@ -28,6 +28,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 2
+      # Every second while it starts, so `up --wait` (deploy, restart)
+      # goes on once it is healthy, not a whole interval later.
+      start_period: 30s
+      start_interval: 1s
     read_only: true
     cap_drop:
       - ALL
@@ -194,6 +198,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
+      start_interval: 1s
     # Hardening checklist, for every service here and the ones you add:
     # - a fixed non-root UID, from its first process: 10001, which every
     #   devopsy project's containers use, never the deploy user's (1000,
@@ -280,6 +286,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
+      start_interval: 1s
     user: "10001:10001"
     read_only: true
     tmpfs:
