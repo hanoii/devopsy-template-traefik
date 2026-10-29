@@ -396,20 +396,25 @@ and create these records, once:"
 esac
 if [ "$choice" = 5 ]; then
   route=${domain:+"*.$domain"}
+  if [ -n "$route" ]; then
+    routes=", and later the domains of sites"
+  else
+    routes=": the domains of sites"
+  fi
   say "Cloudflare, in the account holding ${domain:-the zones of your sites}:
 
   1. Networking > Tunnels: create a tunnel (cloudflared), named after
      this server, and copy its token (the value after --token in the
      command shown). The dashboard waits for a connector: release
      devopsy-template-cloudflared now, from its checkout, as an instance
-     per Cloudflare account (own: any name for this one):
+     named after the Cloudflare account (own: yours; a client's name for
+     theirs):
 
      ${green}devopsy @${server:-<server>}:own/prod --vars set PROXY_TUNNEL_TOKEN$reset
      ${green}devopsy @${server:-<server>}:own/prod --release$reset
 
   2. Its published application routes:${route:+ $green$route$reset to}
-     ${green}http://traefik.tunnel:8081$reset (type HTTP)${route:+, and later the domains
-     of sites}${route:-: the domains of sites}.
+     ${green}http://traefik.tunnel:8081$reset (type HTTP)$routes.
   3. DNS: ${route:-each name} CNAME $green<tunnel id>.cfargotunnel.com$reset, proxied
      (orange cloud). The dashboard creates it with the route, only when
      the name has no record: remove one from before (an A record to this
