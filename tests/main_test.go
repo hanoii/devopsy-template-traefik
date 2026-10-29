@@ -28,17 +28,19 @@ const label = "devopsy-traefik-tests"
 // two runs never meet. Hosts, each its own Docker, taken by one test at a
 // time: the template's networks have fixed names (traefik, tunnel) and
 // its ports are the host's. The script tests, which make and remove the
-// networks, run on scripts hosts, where nothing stays deployed; the
-// scenarios on server hosts, each with a Traefik of its own (traefik()),
-// TESTS_LANES of them (3), so scenarios run that many at once.
+// networks or deploy a Traefik of their own, run on scripts hosts, where
+// nothing stays deployed; the scenarios on server hosts, each with a
+// Traefik of its own (traefik()). TESTS_LANES of each (2 scripts hosts, 3
+// server hosts by default) run at once.
 var (
 	network string
 	mirror  string
-	scripts = make(chan string, 1)
+	scripts chan string
 	servers chan string
 )
 
-// lanes is TESTS_LANES, else 3: the server hosts.
+// lanes is TESTS_LANES, else 3: the server hosts, and the scripts hosts
+// but one.
 func lanes() int {
 	if n, err := strconv.Atoi(os.Getenv("TESTS_LANES")); err == nil && n > 0 {
 		return n
@@ -78,11 +80,15 @@ func setUp() error {
 	}
 	id := fmt.Sprint(os.Getpid())
 	network, mirror = label+"-"+id, label+"-mirror-"+id
-	hosts := []string{label + "-scripts-" + id}
-	servers = make(chan string, lanes())
+	var hosts, scriptHosts []string
+	for i := 1; i <= max(lanes()-1, 1); i++ {
+		scriptHosts = append(scriptHosts, fmt.Sprintf("%s-scripts-%s-%d", label, id, i))
+	}
 	for i := 1; i <= lanes(); i++ {
 		hosts = append(hosts, fmt.Sprintf("%s-server-%s-%d", label, id, i))
 	}
+	hosts = append(scriptHosts, hosts...)
+	scripts, servers = make(chan string, len(scriptHosts)), make(chan string, lanes())
 	run := label + "=" + id
 	if out, err := docker("network", "create", "--label", run, network); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
@@ -110,9 +116,12 @@ func setUp() error {
 	if err := installDevopsy(hosts); err != nil {
 		return err
 	}
-	scripts <- hosts[0]
-	for _, h := range hosts[1:] {
-		servers <- h
+	for _, h := range hosts {
+		if strings.Contains(h, "-scripts-") {
+			scripts <- h
+		} else {
+			servers <- h
+		}
 	}
 	return nil
 }
@@ -164,7 +173,7 @@ func installDevopsy(hosts []string) error {
 	if err != nil {
 		return fmt.Errorf("devopsy on %s: %v\n%s", hosts[0], err, out)
 	}
-	fmt.Fprintf(os.Stderr, "tests: %d server hosts, %s", len(hosts)-1, out)
+	fmt.Fprintf(os.Stderr, "tests: %d hosts, %s", len(hosts), out)
 	return nil
 }
 
