@@ -121,9 +121,10 @@ func (r *Proxies) visitor(p *proxy, req *http.Request) net.IP {
 // untrusted are the headers Traefik removes from an untrusted peer, but
 // for those a proxy's request keeps (X-Forwarded-For and -Proto) or the
 // middleware sets (-Host, -Port, -Server and X-Real-Ip, set again below
-// when the proxy's header gives the visitor), plus Forwarded.
+// when the proxy's header gives the visitor). Forwarded is the
+// entrypoints' own middleware's, for every request.
 var untrusted = []string{"X-Forwarded-Uri", "X-Forwarded-Method", "X-Forwarded-Prefix",
-	"X-Forwarded-Tls-Client-Cert", "X-Forwarded-Tls-Client-Cert-Info", "X-Real-Ip", "Forwarded"}
+	"X-Forwarded-Tls-Client-Cert", "X-Forwarded-Tls-Client-Cert-Info", "X-Real-Ip"}
 
 // forwardedPort is Traefik's own rule: the Host's port, else 443 for
 // https and wss, else 80.
@@ -149,8 +150,8 @@ func (r *Proxies) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// An entrypoint trusting the proxy keeps whatever X-Forwarded-*
 		// it passes on, its visitor's own included (Cloudflare overwrites
 		// only the proto): host and port are the request's, as Traefik
-		// sets them for an untrusted peer, the rest it removes from one
-		// goes, and so does Forwarded, which Traefik never touches.
+		// sets them for an untrusted peer, and the rest it removes from one
+		// goes.
 		req.Header.Set("X-Forwarded-Host", req.Host)
 		req.Header.Set("X-Forwarded-Port", forwardedPort(req))
 		for _, h := range untrusted {

@@ -13,7 +13,10 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by default,
   with DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
-  dropped, so PHP backends cannot be fooled by them.
+  dropped, so PHP backends cannot be fooled by them, and so is a visitor's
+  `Forwarded` (RFC 7239), which Traefik itself passes on: an app that
+  trusts Traefik as its reverse proxy never takes a visitor's host or
+  scheme from it.
 - Traefik and acme-dns run as UID 10001, like every devopsy project's
   containers, never as the deploy user, with no capabilities, a read-only
   root filesystem and `no-new-privileges`. devopsy gives them their `mnt`
@@ -373,9 +376,9 @@ that is not a trusted proxy) becomes the client IP: Traefik sends it as
 `X-Forwarded-For` and `X-Real-Ip`, so applications keep trusting only
 Traefik. The other forwarded headers are as Traefik makes them for a
 direct visitor, whatever the proxy or its visitor sent:
-`X-Forwarded-Host` and `-Port` from the request's `Host`, the rest and
-`Forwarded` removed; only `X-Forwarded-For` and `-Proto` come from the
-proxy. Any other request loses the proxies' headers, so they cannot be
+`X-Forwarded-Host` and `-Port` from the request's `Host`, the rest
+removed (and `Forwarded`, as from anyone); only `X-Forwarded-For` and
+`-Proto` come from the proxy. Any other request loses the proxies' headers, so they cannot be
 spoofed by reaching the server directly. Proxied and direct sites work on the
 same server: each request is judged by who connected.
 

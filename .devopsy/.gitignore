@@ -2,3 +2,7 @@
 /.env
 /compose.override.y*ml
 /config.local.yaml
+# Go's module cache and binaries, should a plugin check run with
+# GOPATH set here: never committed.
+/plugins-local/pkg/
+/plugins-local/bin/
