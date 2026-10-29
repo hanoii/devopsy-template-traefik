@@ -479,16 +479,21 @@ Decided 2026-10-28, with the connectors' template
   routers), and the visitor gets a 307 to the same URL once a router
   answers, which the browser follows into the site on the compiled
   path. The 307 comes only on that evidence, never on a timeout, and
-  only once a probe of the URL answered down since an interval before
-  the hold (the router gone counts on a catch-all), so it cannot loop:
-  a 502 the probe does not meet (a POST that crashes the app, an app's
-  own 502 to one request, an `ipAllowList` refusing 127.0.0.1) gets the
-  page at once (review: it was a 307 back into the same 502, a POST
-  sent again until the browser's 20 redirects). Hence the first probe
-  at once, while a stop's port is still closed, and an up answer from
-  before the hold probed again. The evidence is the URL's, shared like
-  its probes: a visitor whose every round took another's answer saw no
-  down of its own.
+  once a probe of the URL answered down since an interval before the
+  hold (the router gone counts on a catch-all), so it cannot loop. A
+  502 the probe does not meet is a container restarted within a moment
+  (its stale router's 502, the site up again by the first probe) or one
+  the app gives that request itself (a POST that crashes it, an
+  `ipAllowList` refusing 127.0.0.1): the errors middleware passes
+  nothing of the response, so the hold cannot tell them apart, and
+  redirects once per visitor (`X-Real-Ip`) and URL within ten intervals
+  (`unseenOnce`), then gives the page. Review: a 307 back into the same
+  502 sent a POST again until the browser's 20 redirects; the page at
+  once instead failed the quick restart, which the tests' quick rounds
+  found. Hence the first probe at once, while a stop's port is still
+  closed, and an up answer from before the hold probed again. The
+  evidence is the URL's, shared like its probes: a visitor whose every
+  round took another's answer saw no down of its own.
 - **The 502 comes through the errors middleware, per router:** it is
   compiled code on the response path (a match only fetches from the
   hold service, Traefik itself on the loopback `hold` entrypoint, where
