@@ -397,9 +397,15 @@ if [ "$choice" = 5 ]; then
   route=${domain:+"*.$domain"}
   say "Cloudflare, in the account holding ${domain:-the zones of your sites}:
 
-  1. Zero Trust > Networks > Tunnels: create a tunnel (cloudflared), named
-     after this server, and copy its token (the value after --token in the
-     command shown).
+  1. Networking > Tunnels: create a tunnel (cloudflared), named after
+     this server, and copy its token (the value after --token in the
+     command shown). The dashboard waits for a connector: release
+     devopsy-template-cloudflared now, from its checkout, as an instance
+     per Cloudflare account (own: any name for this one):
+
+     ${green}devopsy @${server:-<server>}:own/prod --vars set PROXY_TUNNEL_TOKEN$reset
+     ${green}devopsy @${server:-<server>}:own/prod --release$reset
+
   2. Its published application routes:${route:+ $green$route$reset to}
      ${green}http://traefik.tunnel:8081$reset (type HTTP)${route:+, and later the domains
      of sites}${route:-: the domains of sites}.
@@ -411,13 +417,7 @@ if [ "$choice" = 5 ]; then
   5. A firewall at your provider letting in SSH only, and out port 7844
      (UDP and TCP).
 
-Then release devopsy-template-cloudflared, from its checkout, as an
-instance per Cloudflare account (own: any name for this one):
-
-  ${green}devopsy @${server:-<server>}:own/prod --vars set PROXY_TUNNEL_TOKEN$reset
-  ${green}devopsy @${server:-<server>}:own/prod --release$reset
-
-and check with ${green}devopsy $t domains$reset: hosts through the tunnel and its
+Then check with ${green}devopsy $t domains$reset: hosts through the tunnel and its
 connectors."
 fi
 if [ "$dns01" = le-dns01-selfhosted ]; then

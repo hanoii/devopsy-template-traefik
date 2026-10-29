@@ -446,8 +446,15 @@ then prints the Cloudflare steps with the values filled in:
 
 In the Cloudflare account that holds the zone:
 
-1. Zero Trust > Networks > Tunnels: create a tunnel (cloudflared) and
-   copy its token.
+1. Networking > Tunnels: create a tunnel (cloudflared) and copy its
+   token. The dashboard waits for a connector before going on: release
+   devopsy-template-cloudflared then, from its checkout:
+
+   ```sh
+   devopsy @vm1:own/prod --vars set PROXY_TUNNEL_TOKEN
+   devopsy @vm1:own/prod --release
+   ```
+
 2. A published application route: `*.example.com` to
    `http://traefik.tunnel:8081`, type HTTP. A site's own domain gets a
    route of its own.
@@ -459,13 +466,7 @@ In the Cloudflare account that holds the zone:
 5. At your provider's firewall, inbound SSH only; outbound port 7844, UDP
    (QUIC) or TCP.
 
-Then, from a checkout of devopsy-template-cloudflared:
-
-```sh
-devopsy @vm1:own/prod --vars set PROXY_TUNNEL_TOKEN
-devopsy @vm1:own/prod --release
-devopsy @vm1-traefik domains
-```
+Then check with `devopsy @vm1-traefik domains`.
 
 ### A tunnel per Cloudflare account
 
