@@ -129,6 +129,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.myapp.rule=Host(`example.com`)
+      # Visitors wait through the app's stops (Stopped sites, below).
+      - traefik.http.routers.myapp.middlewares=hold@file
       # Only needed when the container exposes several ports.
       - traefik.http.services.myapp.loadbalancer.server.port=80
     networks: [default, traefik]
@@ -574,22 +576,48 @@ push, fails with 413), and an answer within 100 seconds (else 524).
 
 ## Stopped sites
 
-Traefik drops a stopped container's router, so its hosts get Traefik's 404
-at once: only another router can answer them, and that router belongs to
-the project, which knows its own domains and whether its app is coming back.
+A project that names `hold@file` among its router's middlewares is held
+through its app's stops:
 
-A small service with a router on the app's rule at `priority=2`. A
-router's priority defaults to its rule's length, so the app's router wins
-while the app runs; when the app is stopped, recreated or unhealthy,
-Traefik drops its router and the other one answers.
-devopsy-template-drupal11's `alwaysup` is the worked example: a Caddy that
-tries the app every second for up to a minute and streams its answer, so
-visitors who arrive during a deploy or a sync get the real page, late, and
-a maintenance page only when the app does not come back in time, or at
-once in its maintenance mode. Give such a router the app's certificate
-resolver label too, no `devopsy.data` label and no `depends_on` on the app
-(it would stop with it): a sync or an import never stops it.
-Nothing of it needs this Traefik beyond routing.
+```yaml
+      - traefik.http.routers.myapp.middlewares=hold@file
+```
+
+Its visitors wait instead of getting an error, and are sent on to the
+same URL (a 307) once the site answers: the real page, late. Two gaps
+are covered:
+
+- **The 502 at the stop.** A stopping app closes its port and finishes
+  what is in flight, and Traefik keeps its router until Docker reports
+  the container gone or unhealthy: a request meanwhile meets the closed
+  port. `hold@file` is Traefik's errors middleware: on that 502 it asks
+  the hold, which tries the URL through Traefik every second until a
+  router answers it with anything but a 502.
+- **The router gone.** While the container is stopped, recreating or
+  unhealthy, Traefik has no router for its hosts. A catch-all router at
+  the lowest priority holds a request for a host whose router named
+  `hold@file` within the last 5 minutes (read from Traefik's API); any
+  other host gets the usual 404 at once.
+
+After 90 seconds the visitor gets a "back in a moment" page instead:
+503 when the router is gone, under a 307 without a `Location` on the
+502 path (the errors middleware keeps one status; browsers show the
+page). The hold never carries a site's response, so streamed responses
+keep their flushes. Only what follows a redirect is held: browsers do
+(a POST is sent again with its body: a request refused by a closed port
+never reached the app), WebSockets do not. Only a 502 is held, never a
+site's own 503 (a maintenance mode). Literal `Host()` rules only:
+a `HostRegexp` router is not held when gone. A site's `ipAllowList` must
+let the server's own `127.0.0.1` in, or every probe is refused and the
+browser gives up after its redirects. A project that does not name it
+gets Traefik's 502 and 404 as before.
+
+A project can still answer its own stops with a router on the app's rule
+at `priority=2`, which beats the catch-all: devopsy-template-drupal11's
+`alwaysup` is a Caddy that waits for the app and shows its own
+maintenance page. Give such a router the app's certificate resolver
+label too, no `devopsy.data` label and no `depends_on` on the app (it
+would stop with it): a sync or an import never stops it.
 
 ## Dashboard
 
