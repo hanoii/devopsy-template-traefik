@@ -65,3 +65,75 @@ func TestWriteIfChanged(t *testing.T) {
 		t.Fatalf("got %q", out)
 	}
 }
+
+// static_env writes Traefik's static settings from what is enabled: the
+// entrypoints' middlewares and trust, the plugins, the default
+// entrypoints. Without its restart (--no-restart), so nothing starts.
+func TestStaticEnv(t *testing.T) {
+	dir := project(t, "staticenv", nil)
+	t.Cleanup(func() { _, _ = shErr(dir, nil, "docker network rm tunnel") })
+	const head = "# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.\n"
+	const hold = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold\n"
+	const proxies = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies\n"
+	const both = "TRAEFIK_ENTRYPOINTS_WEB_ASDEFAULT=true\nTRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true\n"
+	for _, c := range []struct {
+		name  string
+		setup string
+		env   map[string]string
+		want  string
+	}{
+		{"nothing", "", nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold + both},
+		{"tunnel only", "", map[string]string{"PROXY_TUNNEL_ONLY": "true"}, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true\n"},
+		{"proxies", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
+			echo 'cloudflare' >.devopsy/mnt/proxies/proxies.conf && echo '198.51.100.0/24' >.devopsy/mnt/proxies/forwarded-ips`, nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=198.51.100.0/24\n" +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file,proxies@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + proxies + hold + both},
+		{"proxies commented out", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
+			printf '# cloudflare\n\n' >.devopsy/mnt/proxies/proxies.conf`, nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold + both},
+		{"tunnel", "docker network create --subnet 10.99.0.0/24 tunnel >/dev/null", nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.99.0.0/24\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file,tunnel@file\n" + proxies + hold + both},
+		// Made again on another subnet: the trust follows it.
+		{"tunnel again", "docker network rm tunnel >/dev/null && docker network create --subnet 10.98.0.0/24 tunnel >/dev/null", nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.98.0.0/24\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file,tunnel@file\n" + proxies + hold + both},
+	} {
+		sh(t, dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
+		if c.setup != "" {
+			sh(t, dir, nil, c.setup)
+		}
+		sh(t, dir, c.env, `devopsy t 'static_env --no-restart'`)
+		if got := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env"); got != c.want {
+			t.Errorf("%s: traefik.env:\n%s\nwant:\n%s", c.name, got, c.want)
+		}
+		if got := sh(t, dir, nil, "cat .devopsy/mnt/dynamic/forwarded.yaml"); !strings.Contains(got, "Forwarded: \"\"") {
+			t.Errorf("%s: forwarded.yaml:\n%s", c.name, got)
+		}
+		tunnel, _ := shErr(dir, nil, "cat .devopsy/mnt/dynamic/tunnel.yaml")
+		if want := strings.HasPrefix(c.name, "tunnel") && c.name != "tunnel only"; want != strings.Contains(tunnel, "CF-Connecting-IP") {
+			t.Errorf("%s: tunnel.yaml:\n%s", c.name, tunnel)
+		}
+	}
+
+	// Docker failing (not a missing network) fails it, and the trust it had
+	// stays: never a tunnel entrypoint trusting nothing, its visitors' IPs
+	// lost.
+	before := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env")
+	out, err := shErr(dir, nil, `devopsy t 'export DOCKER_HOST=unix:///nowhere.sock; static_env --no-restart'`)
+	if err == nil || !strings.Contains(out, "could not read the tunnel network") {
+		t.Errorf("Docker failing: %v: %s", err, out)
+	}
+	if after := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env"); after != before {
+		t.Errorf("Docker failing changed traefik.env:\n%s", after)
+	}
+}
