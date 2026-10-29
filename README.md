@@ -473,11 +473,16 @@ Then check with `devopsy @vm1-traefik domains`.
 
 A tunnel belongs to an account, not to a zone or a server: any zone of
 that account points a proxied CNAME at it, and a zone of another account
-cannot (Cloudflare's error 1033, as when no connector is up). A server serving one client whose
-account holds every zone needs one tunnel. Each further account is
-another instance of the tunnel template (`@vm1:acme/prod`), with that
-account's token, and every instance ends at the same entrypoint: a site's
-one router answers its names whatever tunnel they came through.
+cannot (Cloudflare's error 1033, as when no connector is up). A server
+serving one client whose account holds every zone needs one tunnel. Each
+further account is another instance of the tunnel template
+(`@vm1:acme/prod`), with that account's token, and every instance ends
+at the same entrypoint: a site's one router answers its names whatever
+tunnel they came through.
+
+A route creates its DNS record only when the name has none: moving a
+name to another tunnel, remove its record first, then add the route (or
+point the record at `<new tunnel id>.cfargotunnel.com`).
 
 The simplest shape is the client's own: their account, their zones, their
 server, your membership in their account revocable. On a shared server of
