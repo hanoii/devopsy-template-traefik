@@ -238,7 +238,7 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 		target = u
 	} else {
-		if !held(hostname(req.Host), time.Now(), h.memory) {
+		if !heldNow(req.Context(), hostname(req.Host), h.memory) {
 			http.NotFound(rw, req)
 			return
 		}
@@ -303,11 +303,14 @@ var (
 	present map[string][]string // nil until the first read
 	gone    = map[string]time.Time{}
 	// The reader's: started once, kicked by every New, reading what the
-	// last New gave.
+	// last New gave; settling while reads after a change are due, reads
+	// counting those done.
 	reader                  bool
 	kick                    = make(chan struct{}, 1)
 	readAPI, readMiddleware string
 	readMemory              time.Duration
+	settling                bool
+	reads                   int
 )
 
 // Literal hosts only: a HostRegexp names none.
@@ -329,6 +332,7 @@ func remember(hosts map[string][]string, now time.Time, memory time.Duration) {
 		}
 	}
 	present = hosts
+	reads++
 }
 
 // held: host lost its router within memory, and has none again yet.
@@ -339,6 +343,41 @@ func held(host string, now time.Time, memory time.Duration) bool {
 	return ok && now.Sub(at) <= memory
 }
 
+// heldNow is held, waiting while the routers settle after a change for a
+// host the last read had: Traefik's API shows a change about when Traefik
+// calls New, sometimes a moment after, so a request for a host whose router
+// just went may come before the read that tells (measured on 3.7.16).
+// Bounded by settleWait and the visitor's wait.
+func heldNow(ctx context.Context, host string, memory time.Duration) bool {
+	end := time.Now().Add(settleWait)
+	for {
+		mu.Lock()
+		_, routed := present[host]
+		wait := settling && routed
+		n := reads
+		mu.Unlock()
+		if held(host, time.Now(), memory) {
+			return true
+		}
+		if !wait || !time.Now().Before(end) {
+			return false
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(50 * time.Millisecond):
+			}
+			mu.Lock()
+			moved := reads != n || !settling
+			mu.Unlock()
+			if moved || !time.Now().Before(end) {
+				break
+			}
+		}
+	}
+}
+
 // entryPoints: those of host's routers, nil when it has none.
 func entryPoints(host string) []string {
 	mu.Lock()
@@ -346,18 +385,20 @@ func entryPoints(host string) []string {
 	return present[host]
 }
 
-// readDelay is when the routers are read again after a change: Traefik's API
-// has shown the new routers in New so far, and the second read keeps that
-// from mattering.
-var readDelay = 2 * time.Second
+// readDelays: the reads after a change, after the one at once, each after
+// the one before; settleWait bounds a request's wait for them.
+var (
+	readDelays = []time.Duration{250 * time.Millisecond, 750 * time.Millisecond, 2 * time.Second}
+	settleWait = 5 * time.Second
+)
 
-// refresh has the routers read at once, and again readDelay after the last
-// change. One reader: several instances are built on every change, and a
-// change while it waits for its second read is read at once too (a stop
-// right after a start is marked gone as soon as Traefik drops the router).
+// refresh has the routers read at once and again after readDelays. One
+// reader: several instances are built on every change, and a change while
+// the reads of another are due starts them over.
 func refresh(api, middleware string, memory time.Duration) {
 	mu.Lock()
 	readAPI, readMiddleware, readMemory = api, middleware, memory
+	settling = true
 	start := !reader
 	reader = true
 	mu.Unlock()
@@ -372,21 +413,31 @@ func refresh(api, middleware string, memory time.Duration) {
 
 func read() {
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{}}
-	again := time.NewTimer(readDelay)
-	again.Stop()
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	next := len(readDelays)
 	for {
 		select {
 		case <-kick:
-			again.Stop()
-			again.Reset(readDelay)
-		case <-again.C:
+			next = 0
+		case <-timer.C:
 		}
+		timer.Stop()
 		mu.Lock()
 		api, middleware, memory := readAPI, readMiddleware, readMemory
 		mu.Unlock()
 		if hosts, err := routerHosts(client, api, middleware); err == nil {
 			remember(hosts, time.Now(), memory)
 		}
+		mu.Lock()
+		if next < len(readDelays) {
+			timer.Reset(readDelays[next])
+			next++
+			settling = true
+		} else {
+			settling = len(kick) > 0
+		}
+		mu.Unlock()
 	}
 }
 

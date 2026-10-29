@@ -310,8 +310,8 @@ func TestNewChecks(t *testing.T) {
 func TestRefreshReadsEveryChange(t *testing.T) {
 	reset()
 	defer reset()
-	defer func(d time.Duration) { readDelay = d }(readDelay)
-	readDelay = 5 * time.Second
+	defer func(d []time.Duration) { readDelays = d }(readDelays)
+	readDelays = []time.Duration{5 * time.Second}
 	var mu sync.Mutex
 	routers := "[{\"rule\":\"Host(`a.example.com`)\",\"entryPoints\":[\"websecure\"],\"middlewares\":[\"hold@file\"]}]"
 	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
@@ -337,4 +337,77 @@ func TestRefreshReadsEveryChange(t *testing.T) {
 	mu.Unlock()
 	refresh(api.URL, "hold@file", time.Minute)
 	within("held", func() bool { return held("a.example.com", time.Now(), time.Minute) })
+}
+
+// A request for a host the last read had, while the routers settle after a
+// change: Traefik's API may show the change a moment after New, so the reads
+// to come tell whether it is held or Traefik's 404.
+func TestCatchAllSettling(t *testing.T) {
+	reset()
+	defer reset()
+	defer func(d []time.Duration) { readDelays = d }(readDelays)
+	readDelays = []time.Duration{200 * time.Millisecond, 200 * time.Millisecond}
+	ep := &entrypoint{}
+	ep.set(true, http.StatusOK)
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	var apiMu sync.Mutex
+	routed := "[{\"rule\":\"Host(`app.example.com`)\",\"entryPoints\":[\"websecure\"],\"middlewares\":[\"hold@file\"]}]"
+	routers := routed
+	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		apiMu.Lock()
+		defer apiMu.Unlock()
+		rw.Header().Set("X-Next-Page", "1")
+		_, _ = rw.Write([]byte(routers))
+	}))
+	defer api.Close()
+	build := func() http.Handler {
+		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL,
+			Probes: map[string]string{"websecure": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	settled := func() {
+		t.Helper()
+		for end := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			mu.Lock()
+			done := !settling && present != nil
+			mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(end) {
+				t.Fatal("never settled")
+			}
+		}
+	}
+	build()
+	settled()
+
+	for name, after := range map[string]string{"router gone": "[]", "path router": routed} {
+		// The change: New runs, the API shows it 100 ms later.
+		h := build()
+		time.AfterFunc(100*time.Millisecond, func() {
+			apiMu.Lock()
+			routers = after
+			apiMu.Unlock()
+		})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "https://app.example.com/x", nil))
+		want := http.StatusTemporaryRedirect
+		if after == routed {
+			want = http.StatusNotFound
+		}
+		if rec.Code != want {
+			t.Fatalf("%s: got %d", name, rec.Code)
+		}
+		settled()
+		apiMu.Lock()
+		routers = routed
+		apiMu.Unlock()
+		build()
+		settled()
+	}
 }
