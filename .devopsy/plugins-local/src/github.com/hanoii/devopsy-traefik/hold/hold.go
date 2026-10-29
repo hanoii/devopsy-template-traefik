@@ -275,12 +275,14 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		h.giveUp(rw)
 		return
 	}
-	// A 307 only once the site was seen down (h.up): through the errors
-	// middleware, a 502 its probe does not repeat (a POST that crashes the
-	// app, an app's own 502) gets the page at once, never a redirect back
-	// into the same 502, its POST sent again each time. A stop's closed
-	// port is still closed at the first probe, made at once. The router
-	// gone is that evidence on a catch-all.
+	// A 307 once the site was seen down (h.up): a stop's closed port is
+	// still closed at the first probe, made at once; the router gone is
+	// that evidence on a catch-all. Through the errors middleware a 502 the
+	// probe does not meet is either a container restarted within a moment
+	// (the stale router's 502, the site up again) or one the app gives that
+	// request itself (a POST that crashes it), which the hold cannot tell
+	// apart: one 307 per visitor and URL (unseenOnce), then the page, never
+	// a loop the browser follows, a POST sent again each time.
 	seenDown := h.entryPoint != ""
 	since := time.Now()
 	deadline := since.Add(h.maxWait)
@@ -300,7 +302,7 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 		switch h.up(req.Context(), ps, deadline, since, target, req.Header) {
 		case answerUnseen:
-			if !seenDown {
+			if !seenDown && !h.unseenOnce(target, req.Header) {
 				h.giveUp(rw)
 				return
 			}
@@ -316,6 +318,27 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+}
+
+// unseenOnce: whether visitor (its X-Real-Ip, which Traefik sets) had no
+// 307 to target without the site seen down within ten intervals, and
+// records this one.
+func (h *Hold) unseenOnce(target *url.URL, visitor http.Header) bool {
+	key := target.String() + " " + visitor.Get("X-Real-Ip")
+	now := time.Now()
+	window := 10 * h.interval
+	mu.Lock()
+	defer mu.Unlock()
+	for k, at := range unseen {
+		if now.Sub(at) >= window {
+			delete(unseen, k)
+		}
+	}
+	if _, ok := unseen[key]; ok {
+		return false
+	}
+	unseen[key] = now
+	return true
 }
 
 // What a probe said: nothing yet (another visitor's in flight or cut),
@@ -423,6 +446,9 @@ var (
 	gone    = map[string]goneHost{}
 	// The last probe of each URL held on, shared by its held requests.
 	probed = map[string]probeState{}
+	// When each visitor and URL last had a 307 without the site seen
+	// down (unseenOnce).
+	unseen = map[string]time.Time{}
 	// The reader's: started once, kicked by every New, reading what the
 	// last New gave; settling while reads after a change are due, reads
 	// counting those done.
