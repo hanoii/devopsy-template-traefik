@@ -613,8 +613,8 @@ DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
   host's. Scripts hosts, where script tests make and remove the
   networks or deploy a Traefik of their own (taken down after), and
   server hosts, each with a Traefik that the first scenario taking it
-  deploys and the next ones share (`traefik()`): `TESTS_LANES` (3) of
-  those and one fewer of these run at once. A test that changes its
+  deploys and the next ones share (`traefik()`): `TESTS_LANES` (3)
+  server hosts and one fewer scripts hosts, all at once. A test that changes its
   Traefik's settings or log (a resolver it lacks, a setting of its own)
   deploys one on a scripts host instead. Docker
   Hub through a mirror kept in a volume (`devopsy-traefik-tests-mirror`);
@@ -629,14 +629,13 @@ DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
   leaves its host's Traefik as it found it (`proxies add` removes its
   proxy). Wait for what Traefik does (`h.routed`, `h.unrouted`), never
   sleep for it.
-
-CI (`ci.yml`, in this repository only) runs shellcheck, the plugins
-under Go and Yaegi, and the tests on every push.
-
 - A release: every host's deploy user reaches itself over SSH, so a test
   releases the template as to a server (`devopsy
   @devopsy@localhost:prod --release`, `TestRelease`): the upload, the
   activation, `shared/`, `--vars`, `--reload`, the role and imports.
+
+CI (`ci.yml`, in this repository only) runs shellcheck, the plugins
+under Go and Yaegi, and the tests on every push.
 
 By hand still: what needs a real ACME, DNS, Cloudflare or a public IP
 (certificates, acme-dns registrations, a real tunnel, `domains` against
