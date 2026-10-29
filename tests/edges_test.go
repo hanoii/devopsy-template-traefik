@@ -189,3 +189,37 @@ func TestFactsBehindAProxy(t *testing.T) {
 		t.Fatalf("facts behind a dead proxy:\n%s", out)
 	}
 }
+
+// A Traefik with acme-dns and a base domain, of its own on the scripts
+// host: the wildcard's router answers its one reserved name, nothing
+// else; acme-dns answers its zone; every ACME store is 0600, and Traefik
+// skips one that is not; deploy stops acme-dns once its profile is off.
+func TestAcmeDNSAndWildcard(t *testing.T) {
+	h, dir := project(t, "acmedns", map[string]string{"COMPOSE_PROFILES": "acmedns", "PROXY_ACMEDNS_DOMAIN": "acme.example.com",
+		"PROXY_ACMEDNS_PORT": "15353", "PROXY_BASE_DOMAIN": "vm1.example.com"})
+	if out := h.sh(dir, nil, "devopsy deploy"); !strings.Contains(out, "public wildcard *.vm1.example.com through le-dns01-selfhosted") {
+		t.Errorf("deploy:\n%s", out)
+	}
+	h.sh("/", nil, `for i in $(seq 120); do curl -sf -o /dev/null http://127.0.0.1:8080/api/http/routers/devopsy-public-wildcard@file && exit; sleep 0.25; done; exit 1`)
+	for host, want := range map[string]string{"devopsy-wildcard.vm1.example.com": "418", "app.vm1.example.com": "404"} {
+		if code := h.sh("/", nil, `curl -sk -o /dev/null -w '%{http_code}' --resolve "$1:443:127.0.0.1" "https://$1/"`, host); code != want {
+			t.Errorf("%s: %s, want %s", host, code, want)
+		}
+	}
+	ip := strings.TrimSpace(h.sh(dir, nil, "sed -n 's/^PROXY_ACMEDNS_IP=//p' .devopsy/.env"))
+	if soa := h.sh("/", nil, `dig +short -p 15353 "@$1" acme.example.com SOA`, ip); !strings.Contains(soa, "ns-acme.example.com.") {
+		t.Errorf("acme-dns at %s: %q", ip, soa)
+	}
+	if modes := h.sh(dir, nil, `stat -c '%a %n' .devopsy/mnt/letsencrypt/acme-*.json .devopsy/mnt/acmedns/acme-dns.db`); strings.Count(modes, "600 ") != 4 {
+		t.Errorf("the stores' modes:\n%s", modes)
+	}
+	// One too open: Traefik says so and skips that resolver, healthy.
+	h.sh(dir, nil, `devopsy t 'in_traefik "chmod 644 /letsencrypt/acme-le-http01.json"' && id=$(devopsy ps -q traefik) && docker restart "$id" >/dev/null &&
+		for i in $(seq 120); do docker logs "$id" 2>&1 | grep -q 'too open' && exit; sleep 0.25; done; exit 1`)
+	h.sh(dir, nil, `devopsy t 'in_traefik "chmod 600 /letsencrypt/acme-le-http01.json"'`)
+
+	h.sh(dir, nil, "sed -i '/^COMPOSE_PROFILES=/d' .devopsy/.env && devopsy deploy")
+	if ps := h.sh(dir, nil, "devopsy ps --format '{{.Service}}'"); strings.Contains(ps, "acmedns") {
+		t.Errorf("acme-dns still running:\n%s", ps)
+	}
+}
