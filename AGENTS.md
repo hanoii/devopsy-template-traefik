@@ -599,30 +599,33 @@ its commands found by their `## Description:` line, `run --rm --no-deps
 would pass there).
 
 ```sh
-go test -tags e2e -count=1 -v ./tests                      # about 3 minutes
+go test -tags e2e -count=1 -v ./tests                      # about a minute
 go test -tags e2e -count=1 -v -run '^TestHoldNot$' ./tests # one test
 DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
 ```
 
-- Two privileged Debian containers (`tests/Dockerfile`), each its own
-  dockerd and the deploy user, devopsy installed in them (the latest
-  release, else `DEVOPSY_BIN`, a linux build), the checkout's
-  `.devopsy/` copied in (`git ls-files`, so never `.env` or `mnt`).
-  Two because the networks have fixed names (`traefik`, `tunnel`): the
-  scripts host, where script tests make and remove them and nothing
-  stays deployed, and the server host, where the scenarios share one
-  Traefik (`traefik()`, deployed once). They run at once, one test at a
-  time on each (`one`). Docker Hub through a mirror kept in a volume
-  (`devopsy-traefik-tests-mirror`); `TESTS_KEEP=1` leaves the
-  containers.
-- A script test: `project(t, name, env)` (a copy with its own compose
-  project and `.env`, taken down after), then `sh(t, dir, env, "devopsy
-  ...")`; `devopsy t '<shell>'` runs `lib/common.sh`'s functions through
-  devopsy (a command each copy gets, never the template's). A scenario:
-  `traefik(t)`, `site(t, ...)` (a container routed through it), then
-  `request`, `during` (a request every 0.2 s around an action),
-  `from` (curl on a network), `api`. Wait for what Traefik does (`routed`,
-  `unrouted`), never sleep for it.
+- Privileged Debian containers (`tests/Dockerfile`) as hosts, each its
+  own dockerd and the deploy user, devopsy installed in them (the latest
+  release, installed once and copied, else `DEVOPSY_BIN`, a linux
+  build), the checkout's `.devopsy/` copied in (`git ls-files`, so never
+  `.env` or `mnt`). A test takes a host for itself (`take`): the
+  networks have fixed names (`traefik`, `tunnel`) and the ports are the
+  host's. One scripts host, where script tests make and remove the
+  networks and nothing stays deployed, and `TESTS_LANES` (3) server
+  hosts, each with a Traefik of its own that the first scenario taking
+  it deploys (`traefik()`), so scenarios run that many at once. Docker
+  Hub through a mirror kept in a volume (`devopsy-traefik-tests-mirror`);
+  `TESTS_KEEP=1` leaves the containers.
+- A script test: `h, dir := project(t, name, env)` (a copy with its own
+  compose project and `.env`, taken down after), then `h.sh(dir, env,
+  "devopsy ...")`; `devopsy t '<shell>'` runs `lib/common.sh`'s
+  functions through devopsy (a command each copy gets, never the
+  template's). A scenario: `h := traefik(t)`, `h.site(...)` (a container
+  routed through it), then `h.request`, `h.during` (a request every 0.2
+  s around an action), `h.from` (curl on a network), `h.api`. A scenario
+  leaves its host's Traefik as it found it (`proxies add` removes its
+  proxy). Wait for what Traefik does (`h.routed`, `h.unrouted`), never
+  sleep for it.
 
 CI (`ci.yml`, in this repository only) runs shellcheck, the plugins
 under Go and Yaegi, and the tests on every push.
