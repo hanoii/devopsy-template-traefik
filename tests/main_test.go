@@ -171,12 +171,14 @@ func project(t *testing.T, name string, env map[string]string) string {
 // fnCommand is the test's own command in every project's copy, never the
 // template's: lib/common.sh sourced, then its argument, so a test calls
 // the library through devopsy as the template's commands do (devopsy t
-// '<shell>').
+// '<shell>' [<arg>...], the args its $1...).
 const fnCommand = `#!/bin/sh
-## Description: test only: runs its argument with lib/common.sh sourced
+## Description: test only: runs its first argument with lib/common.sh sourced
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
-eval "$1"`
+script=$1
+shift
+eval "$script"`
 
 // sh runs script as the deploy user in dir on the host, with env added
 // (the caller's environment, which wins over .env), and fails the test
