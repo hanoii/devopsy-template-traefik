@@ -314,15 +314,3 @@ func TestRetry(t *testing.T) {
 		t.Error("--done left the file")
 	}
 }
-
-// lib/facts reads Traefik's API from inside its container, where the
-// Docker client's proxy settings reach too and busybox's wget ignores
-// no_proxy: a dead proxy there changes nothing (wget -Y off).
-func TestFactsBehindAProxy(t *testing.T) {
-	h := traefik(t)
-	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":""}}}' >/tmp/proxied/config.json`)
-	out := h.sh(proxy, map[string]string{"DOCKER_CONFIG": "/tmp/proxied"}, `devopsy t '"$dir/lib/facts" --all' 2>&1`)
-	if !strings.Contains(out, `"hosts"`) {
-		t.Fatalf("facts behind a dead proxy:\n%s", out)
-	}
-}

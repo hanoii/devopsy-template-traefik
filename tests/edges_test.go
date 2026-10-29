@@ -147,3 +147,24 @@ func TestTunnelOnly(t *testing.T) {
 		t.Errorf("through the tunnel:\n%s", echo)
 	}
 }
+
+// lib/facts reads Traefik's API from inside its container, which gets the
+// Docker client's proxy settings when it is created; busybox's wget
+// ignores no_proxy, so a proxy there must change nothing (wget -Y off).
+// A Traefik of its own, created behind a dead proxy, on the scripts host.
+func TestFactsBehindAProxy(t *testing.T) {
+	h, dir := project(t, "proxied", nil)
+	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":""}}}' >/tmp/proxied/config.json`)
+	proxied := map[string]string{"DOCKER_CONFIG": "/tmp/proxied"}
+	// Deployed first without it: the proxy reaches builds too (devopsy's
+	// util image).
+	h.sh(dir, nil, "devopsy deploy")
+	h.sh(dir, proxied, "devopsy up -d --wait --force-recreate traefik")
+	if env := h.sh(dir, nil, "devopsy exec -T traefik env"); !strings.Contains(env, "HTTP_PROXY=http://127.0.0.1:9") {
+		t.Fatalf("Traefik not behind the proxy:\n%s", env)
+	}
+	h.sh("/", nil, `for i in $(seq 120); do curl -sf -o /dev/null http://127.0.0.1:8080/api/http/routers/devopsy-api@file && exit; sleep 0.25; done; exit 1`)
+	if out := h.sh(dir, proxied, `devopsy t '"$dir/lib/facts" --all' 2>&1`); !strings.Contains(out, `"hosts"`) {
+		t.Fatalf("facts behind a dead proxy:\n%s", out)
+	}
+}
