@@ -170,10 +170,25 @@ var settings = map[string]string{
 	"PROXY_PUBLIC_IP":     "203.0.113.10",
 }
 
+// The hosts run at once, each one test at a time: tests on one host share
+// its Docker (the fixed networks, the ports). A test takes its host's lock
+// first (project, traefik), parallel to the other host's.
+var scriptsMu, serverMu sync.Mutex
+
+// one runs the rest of t alone on its host, beside the other host's.
+func one(t *testing.T, mu *sync.Mutex) {
+	t.Helper()
+	t.Parallel()
+	mu.Lock()
+	t.Cleanup(mu.Unlock)
+}
+
 // project makes a copy of the template on the scripts host (newProject),
-// taken down when the test ends: what it started, its networks.
+// taken down when the test ends: what it started, its networks. The
+// test's first call: it takes the host (one).
 func project(t *testing.T, name string, env map[string]string) string {
 	t.Helper()
+	one(t, &scriptsMu)
 	dir, err := newProject(scripts, name, env)
 	if err != nil {
 		t.Fatal(err)

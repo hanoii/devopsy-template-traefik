@@ -126,3 +126,24 @@ func TestReach(t *testing.T) {
 		}
 	}
 }
+
+// PROXY_TUNNEL_ONLY: a router naming no entrypoint is on the tunnel's
+// only, never on web or websecure. A Traefik of its own on the scripts
+// host, taken down after.
+func TestTunnelOnly(t *testing.T) {
+	dir := project(t, "tunnelonly", map[string]string{"PROXY_TUNNEL_ONLY": "true"})
+	sh(t, dir, nil, "devopsy deploy")
+	sh(t, "/", nil, "docker run -d --name only --network traefik -l traefik.enable=true -l 'traefik.http.routers.only.rule=Host(`only.example.com`)' traefik/whoami:v1.11 >/dev/null")
+	t.Cleanup(func() { _, _ = shErr("/", nil, "docker rm -f only") })
+	out := sh(t, "/", nil, `for i in $(seq 120); do curl -sf http://127.0.0.1:8080/api/http/routers/only@docker && exit; sleep 0.25; done; exit 1`)
+	var r struct{ EntryPoints []string }
+	if err := json.Unmarshal([]byte(out), &r); err != nil || strings.Join(r.EntryPoints, ",") != "tunnel" {
+		t.Errorf("only's router: %v %s", err, out)
+	}
+	if code := sh(t, "/", nil, `curl -sk -o /dev/null -w '%{http_code}' --resolve only.example.com:443:127.0.0.1 https://only.example.com/`); code != "404" {
+		t.Errorf("on websecure: %s", code)
+	}
+	if echo := sh(t, "/", nil, `docker run --rm --network tunnel curlimages/curl:8.15.0 -s -H 'Host: only.example.com' http://traefik.tunnel:8081/`); !strings.Contains(echo, "Host: only.example.com") {
+		t.Errorf("through the tunnel:\n%s", echo)
+	}
+}

@@ -22,9 +22,11 @@ var (
 	proxyErr  error
 )
 
-// traefik deploys the shared Traefik the first time a test asks.
+// traefik deploys the shared Traefik the first time a test asks: a
+// scenario's first call, which takes the server host (one).
 func traefik(t *testing.T) {
 	t.Helper()
+	one(t, &serverMu)
 	proxyOnce.Do(func() {
 		if _, proxyErr = newProject(server, "traefik", nil); proxyErr != nil {
 			return
