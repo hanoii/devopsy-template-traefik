@@ -53,7 +53,8 @@ devopsy @vm1:prod setup   # vm1: the server's SSH destination
 It asks for the settings (email, wildcard URLs and their certificates,
 or a Cloudflare Tunnel, the resolver sites use by default, Cloudflare's
 proxy), writes them with `--vars`, releases, prints the DNS
-records to create (the wildcard's DNS only, never proxied), checks them
+records to create (the wildcard's DNS only, never proxied; for a tunnel,
+the Cloudflare steps and its proxied record), checks them
 with `domains`, and adds the alias below under a name you give. It
 defaults to production certificates; answer no for staging. Each step is
 a devopsy command, printed before it runs; run it again to change a
@@ -557,6 +558,10 @@ Not covered:
   in the dashboard.
 - Requests Cloudflare lets through: the WAF blocks known patterns, not
   every exploit.
+
+Limits of the Free and Pro plans, through a tunnel as through the proxy:
+a request body of 100 MB at most (a larger upload, or a registry's layer
+push, fails with 413), and an answer within 100 seconds (else 524).
 
 ## Stopped sites
 
