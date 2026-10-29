@@ -317,8 +317,8 @@ Everything lives in `.devopsy/`:
   2026-10-28), trusted peer or not, and Traefik itself never sets it, so
   whatever reaches an app was written by a visitor or a proxy. An app
   trusting Traefik as its reverse proxy takes its host and proto
-  otherwise (Symfony and Drupal read it by default, and Symfony answers
-  a 500 when it disagrees with X-Forwarded-Host). Decided over removing
+  otherwise (Drupal reads it by default, and answered a 500 when it
+  disagreed with X-Forwarded-Host; Symfony when configured to). Decided over removing
   it in the plugin alone (requests from proxies only) and over leaving it
   to each app. Cost: a proxy in front that speaks only `Forwarded` loses
   it, which Traefik never read for the client IP anyway.

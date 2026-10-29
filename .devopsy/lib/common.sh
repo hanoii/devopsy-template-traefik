@@ -176,8 +176,8 @@ tunnel_subnet() {
 
 # Traefik's static settings that depend on what is enabled, in
 # mnt/traefik.env (compose.yaml's env_file): the entrypoints' middlewares
-# (`devopsy proxies` on websecure, the tunnel's on tunnel), the proxies'
-# plugin, the forwarded-headers trust, and the default entrypoints. One
+# (a visitor's Forwarded removed on websecure and tunnel, then `devopsy
+# proxies` on websecure and the tunnel's on tunnel), the proxies' plugin, the forwarded-headers trust, and the default entrypoints. One
 # writer, called by deploy and proxies.
 #
 # The tunnel entrypoint trusts its network's subnet, read from Docker: its
@@ -201,7 +201,7 @@ static_env() {
   # A visitor's Forwarded (RFC 7239), which Traefik never removes, goes on
   # every entrypoint that reaches apps, first: an app trusting Traefik
   # would take its host and proto. web only redirects.
-  write_if_changed "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy': a visitor's Forwarded removed.
+  write_if_changed "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': a visitor's Forwarded removed.
 http:
   middlewares:
     forwarded:
@@ -233,7 +233,7 @@ http:
   if [ -n "$_subnet" ]; then
     _tunnel=true
     _plugin=true
-    write_if_changed "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' from the tunnel network's subnet.
+    write_if_changed "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies' from the tunnel network's subnet.
 http:
   middlewares:
     tunnel:

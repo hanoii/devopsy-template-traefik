@@ -15,8 +15,8 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
   dropped, so PHP backends cannot be fooled by them, and so is a visitor's
   `Forwarded` (RFC 7239), which Traefik itself passes on: an app that
-  trusts Traefik as its reverse proxy only gets forwarded headers Traefik
-  made.
+  trusts Traefik as its reverse proxy never takes a visitor's host or
+  scheme from it.
 - Traefik and acme-dns run as UID 10001, like every devopsy project's
   containers, never as the deploy user, with no capabilities, a read-only
   root filesystem and `no-new-privileges`. devopsy gives them their `mnt`
