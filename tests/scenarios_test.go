@@ -314,3 +314,47 @@ func TestRetry(t *testing.T) {
 		t.Error("--done left the file")
 	}
 }
+
+// Which resolver a router gets: none named, the entrypoint's
+// (PROXY_CERTRESOLVER's); an empty one (compose's ${VAR:+...} unset) or
+// tls=true alone, none; each of the three by name, defined from their
+// dashed names in Traefik's environment. (An unknown one Traefik only
+// logs: check refuses it.)
+func TestResolvers(t *testing.T) {
+	h := traefik(t)
+	cases := map[string]struct {
+		label    string
+		resolver string
+	}{
+		"res-default":    {"", "le-http01"},
+		"res-empty":      {"routers.<name>.tls.certresolver=", ""},
+		"res-tls":        {"routers.<name>.tls=true", ""},
+		"res-http":       {"routers.<name>.tls.certresolver=le-http01", "le-http01"},
+		"res-selfhosted": {"routers.<name>.tls.certresolver=le-dns01-selfhosted", "le-dns01-selfhosted"},
+		"res-cloudflare": {"routers.<name>.tls.certresolver=le-dns01-cloudflare", "le-dns01-cloudflare"},
+	}
+	for name, c := range cases {
+		var labels []string
+		if c.label != "" {
+			labels = []string{c.label}
+		}
+		h.site(name, name+".example.com", labels, "")
+	}
+	for name, c := range cases {
+		var r struct {
+			Status string
+			TLS    *struct{ CertResolver string }
+		}
+		out := h.api("/api/http/routers/websecure-" + name + "@docker")
+		if err := json.Unmarshal([]byte(out), &r); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		got := ""
+		if r.TLS != nil {
+			got = r.TLS.CertResolver
+		}
+		if r.Status != "enabled" || got != c.resolver {
+			t.Errorf("%s: %s, resolver %q, want %q:\n%s", name, r.Status, got, c.resolver, out)
+		}
+	}
+}
