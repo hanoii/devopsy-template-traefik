@@ -1,0 +1,12 @@
+displayName: devopsy hold
+type: middleware
+import: github.com/hanoii/devopsy-traefik/hold
+summary: >-
+  Holds a visitor's request while a site's app stops and starts again, and
+  answers with a redirect to the same URL once a real router answers it: on a
+  502 from a closed port (through Traefik's errors middleware) and for a host
+  whose router went away moments ago (through a catch-all router). Only for
+  sites whose router names the errors middleware leading here.
+testData:
+  probes:
+    websecure: https://127.0.0.1:443

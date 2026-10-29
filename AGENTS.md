@@ -286,6 +286,13 @@ Everything lives in `.devopsy/`:
   (checked on v3.7.13); a response written through the wrapper only
   goes out as Go's buffer fills. `proxies` never wraps the writer.
   http-wasm plugins cannot call the next handler twice.
+- **Yaegi differs from Go in ways only `yaegi test` shows** (v0.16.1,
+  2026-10-28): a `for` statement's variable is per iteration, so an
+  assignment to it in the body never reaches the next one (`for page :=
+  1; ; { ... page = next }` read the first page forever); and a map
+  index on the left of a multiple assignment stores nothing
+  (`m[k], err = f()`). Write `page := 1; for {` and assign through a
+  plain variable.
 - **A plugin that fails to load stops Traefik**
   (`TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`). Why: skipped, the
   entrypoint's middleware list still names `proxies`, and every router
@@ -516,6 +523,7 @@ Traefik's interpreter (Yaegi is stricter than Go), from `plugins-local`:
 ```sh
 go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1   # Traefik's version
 GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/proxies
+GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
 ```
 
 Run it locally on other ports, and route a `traefik/whoami` container
