@@ -310,10 +310,9 @@ Everything lives in `.devopsy/`:
   proto), so a visitor through the tunnel set the host Drupal builds
   links on (verified through a real tunnel). Cost: a load balancer's own
   X-Forwarded-Host and -Port are replaced too.
-- **A visitor's `Forwarded` goes on every entrypoint that reaches apps,
-  for every request** (`forwarded@file`, a headers middleware
-  `static_env` writes, first on `websecure` and `tunnel`; `web` only
-  redirects): Traefik never removes RFC 7239's header (checked on v3.7,
+- **A visitor's `Forwarded` is removed on every entrypoint that reaches
+  apps, for every request** (`forwarded@file`, a headers middleware
+  `static_env` writes, first on `websecure` and `tunnel`): Traefik never removes RFC 7239's header (checked on v3.7,
   2026-10-28), trusted peer or not, and Traefik itself never sets it, so
   whatever reaches an app was written by a visitor or a proxy. An app
   trusting Traefik as its reverse proxy takes its host and proto
@@ -321,7 +320,13 @@ Everything lives in `.devopsy/`:
   disagreed with X-Forwarded-Host; Symfony when configured to). Decided over removing
   it in the plugin alone (requests from proxies only) and over leaving it
   to each app. Cost: a proxy in front that speaks only `Forwarded` loses
-  it, which Traefik never read for the client IP anyway.
+  it, which Traefik never read for the client IP anyway. Not on `web`,
+  which only redirects (a project would need a router above the
+  redirect's priority to reach an app there): its internal routers, the
+  redirect and ACME's, are built before the file provider loads, so with
+  `forwarded@file` every start logged both failing, and for that second
+  they did (seen on a test machine, 2026-10-28). `proxies@file` and
+  `tunnel@file` have no internal routers on their entrypoints.
 
 ### Network and security
 
