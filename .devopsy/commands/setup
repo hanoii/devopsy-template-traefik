@@ -194,6 +194,7 @@ case $domain in
   *.sslip.io) choice=3 ;;
   *) case $resolver in le-dns01-selfhosted | le-dns01-cloudflare) choice=2 ;; *) choice=1 ;; esac ;;
 esac
+[ "$(current PROXY_TUNNEL_ONLY)" != true ] || choice=5
 
 say "Wildcard URLs: every environment gets <project>-<environment>.<domain>, with
 HTTPS, without DNS records of its own.
@@ -203,10 +204,13 @@ HTTPS, without DNS records of its own.
      Cloudflare): new URLs get HTTPS at once, and sites can get theirs before
      their DNS moves here.
   3. sslip.io, for tests: no DNS at all, the IP is in every URL.
-  4. None: sites only answer on their own domains."
+  4. None: sites only answer on their own domains.
+  5. Through a Cloudflare Tunnel: no port open but SSH, every site through
+     Cloudflare's edge (its TLS, WAF and Access). Wildcard URLs and sites'
+     own domains alike, in the tunnel's Cloudflare account."
 while :; do
   choice=$(ask "Choice" "$choice")
-  case $choice in 1 | 2 | 3 | 4) break ;; esac
+  case $choice in 1 | 2 | 3 | 4 | 5) break ;; esac
 done
 
 dns01=
@@ -228,7 +232,50 @@ case $choice in
     unsetting PROXY_BASE_DOMAIN
     unsetting PROXY_WILDCARD_CERTRESOLVER
     ;;
+  5)
+    case $domain in *.sslip.io) domain= ;; esac
+    say "The base domain, in a zone of the tunnel's Cloudflare account. At the
+zone's apex (example.com, URLs like whoami-prod.example.com), Cloudflare's
+free edge certificate covers every URL; one level deeper
+(vm1.example.com) needs Advanced Certificate Manager. Empty: no wildcard
+URLs, sites only on their own domains."
+    domain=$(ask "Domain" "$domain")
+    if [ -n "$domain" ]; then
+      setting PROXY_BASE_DOMAIN "$domain"
+    else
+      unsetting PROXY_BASE_DOMAIN
+    fi
+    setting PROXY_WILDCARD_CERTRESOLVER none
+    ;;
 esac
+
+# Tunnel only: Traefik's ports bound to the server's loopback, so nothing
+# answers on its public address even before the provider's firewall.
+# Leaving it, back to every address; a loopback bind otherwise is the
+# operator's own.
+# loopback <name> <default port>: the setting for the choice.
+loopback() {
+  v=$(current "$1")
+  if [ "$choice" = 5 ]; then
+    case $v in
+      '') setting "$1" "127.0.0.1:$2" ;;
+      *:*) ;;
+      *) setting "$1" "127.0.0.1:$v" ;;
+    esac
+  elif [ "$(current PROXY_TUNNEL_ONLY)" = true ]; then
+    case $v in
+      "127.0.0.1:$2") unsetting "$1" ;;
+      127.0.0.1:*) setting "$1" "${v#127.0.0.1:}" ;;
+    esac
+  fi
+}
+loopback PROXY_HTTP_PORT 80
+loopback PROXY_HTTPS_PORT 443
+if [ "$choice" = 5 ]; then
+  setting PROXY_TUNNEL_ONLY true
+else
+  unsetting PROXY_TUNNEL_ONLY
+fi
 
 case $choice in
   1) setting PROXY_WILDCARD_CERTRESOLVER none ;;
@@ -300,11 +347,14 @@ else
   unsetting PROXY_CERTRESOLVER
 fi
 
+# Through a tunnel, visitors' IPs come from the connectors, built in.
 cloudflare_proxy=
-say "Sites behind Cloudflare's proxy (orange cloud) need its ranges trusted, so
+if [ "$choice" != 5 ]; then
+  say "Sites behind Cloudflare's proxy (orange cloud) need its ranges trusted, so
 applications see visitors' IPs. Harmless when no site uses it."
-if confirm "Trust Cloudflare's proxy?" y; then
-  cloudflare_proxy=1
+  if confirm "Trust Cloudflare's proxy?" y; then
+    cloudflare_proxy=1
+  fi
 fi
 
 # shellcheck disable=SC2086
@@ -344,6 +394,36 @@ and create these records, once:"
     ask "Press Enter once they exist" >/dev/null
     ;;
 esac
+if [ "$choice" = 5 ]; then
+  route=${domain:+"*.$domain"}
+  say "Cloudflare, in the account holding ${domain:-the zones of your sites}:
+
+  1. Networking > Tunnels: create a tunnel (cloudflared), named after
+     this server, and copy its token (the value after --token in the
+     command shown). The dashboard waits for a connector: release
+     devopsy-template-cloudflared now, from its checkout, as an instance
+     per Cloudflare account (own: any name for this one):
+
+     ${green}devopsy @${server:-<server>}:own/prod --vars set PROXY_TUNNEL_TOKEN$reset
+     ${green}devopsy @${server:-<server>}:own/prod --release$reset
+
+  2. Its published application routes:${route:+ $green$route$reset to}
+     ${green}http://traefik.tunnel:8081$reset (type HTTP)${route:+, and later the domains
+     of sites}${route:-: the domains of sites}.
+  3. DNS: ${route:-each name} CNAME $green<tunnel id>.cfargotunnel.com$reset, proxied
+     (orange cloud). The dashboard creates it with the route, only when
+     the name has no record: remove one from before (an A record to this
+     server) first.
+  4. SSL/TLS: Always Use HTTPS on (requests reach Traefik as plain HTTP,
+     past its redirect). The encryption mode does not apply to the
+     tunnel; Full (strict) for the zone's records that reach a server
+     directly.
+  5. A firewall at your provider letting in SSH only, and out port 7844
+     (UDP and TCP).
+
+Then check with ${green}devopsy $t domains$reset: hosts through the tunnel and its
+connectors."
+fi
 if [ "$dns01" = le-dns01-selfhosted ]; then
   # Traefik registers the wildcard with acme-dns on its first try, usually
   # before the listing above: its CNAME was there unless it was not yet.
@@ -357,7 +437,7 @@ waits for its CNAME, the one marked the public wildcard:"
       ;;
   esac
   run "$t" domains --retry
-elif [ -n "$domain" ]; then
+elif [ -n "$domain" ] && [ "$choice" != 5 ]; then
   run "$t" domains
 fi
 

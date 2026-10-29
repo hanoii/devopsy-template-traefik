@@ -59,6 +59,10 @@ services:
       # with user. Traefik creates its ACME files with mode 600, which it
       # insists on (see AGENTS.md).
       - devopsy.mnt.owner=10001:10001
+      # Traefik loads its local plugins when it starts, and a release that
+      # changes only them would not restart it: deploy keeps their checksum
+      # here, so it recreates it.
+      - devopsy.plugins=${PROXY_PLUGINS_SUM:-}
     depends_on:
       dockerproxy:
         condition: service_healthy
@@ -96,6 +100,18 @@ services:
       # similar backends (X_Forwarded_For vs X-Forwarded-For), so clients
       # cannot spoof the headers Traefik sets.
       - TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_ALIASHEADERSSTRATEGY=delete
+
+      # Visitors through a Cloudflare Tunnel (devopsy-template-cloudflared):
+      # plain HTTP from its connectors on the tunnel network, at
+      # http://traefik.tunnel:8081. Never published. TLS ends at Cloudflare's
+      # edge, so routers here get no certificate. Its trust (forwarded
+      # headers and the visitor's IP from CF-Connecting-IP, from the tunnel
+      # network's subnet only) and which entrypoints routers take by default
+      # (PROXY_TUNNEL_ONLY) are in mnt/traefik.env (static_env).
+      - TRAEFIK_ENTRYPOINTS_TUNNEL=true
+      - TRAEFIK_ENTRYPOINTS_TUNNEL_ADDRESS=:8081
+      - TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_ALIASHEADERSSTRATEGY=delete
+      - TRAEFIK_ENTRYPOINTS_TUNNEL_TRANSPORT_RESPONDINGTIMEOUTS_READTIMEOUT=${PROXY_READ_TIMEOUT-60s}
 
       # Containers opt in with traefik.enable=true and must join this network.
       - TRAEFIK_PROVIDERS_DOCKER=true
@@ -158,8 +174,9 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LE-DNS01-CLOUDFLARE_ACME_DNSCHALLENGE_PROPAGATION_DISABLECHECKS=${PROXY_DNS_SKIP_CHECKS:-false}
       - CF_DNS_API_TOKEN=${PROXY_CLOUDFLARE_DNS_API_TOKEN-}
     # Settings that depend on what is enabled, written by deploy and
-    # `devopsy proxies` (static_env in lib/common.sh): the websecure
-    # entrypoint's middlewares (proxies) and the proxies plugin.
+    # `devopsy proxies` (static_env in lib/common.sh): the entrypoints'
+    # middlewares (proxies, tunnel), their forwarded-headers trust, the
+    # proxies plugin and the default entrypoints.
     env_file:
       - path: ./mnt/traefik.env
         required: false
@@ -199,6 +216,7 @@ services:
       - default
       - dockerproxy
       - acmedns
+      - tunnel
 
   # Optional acme-dns server for the le-dns01-selfhosted resolver: DNS-01 for any domain
   # after a one-time CNAME, without DNS provider tokens. Runs only with
@@ -321,3 +339,9 @@ networks:
     internal: true
   # Traefik and acme-dns only, so projects cannot reach the acme-dns API.
   acmedns: {}
+  # Traefik and Cloudflare Tunnel connectors only (devopsy-template-cloudflared
+  # joins it as external): requests from its subnet are the tunnel's.
+  # Never the shared traefik network, where any project could claim to be
+  # the tunnel.
+  tunnel:
+    name: tunnel

@@ -6,8 +6,10 @@
 #
 # Prints one JSON document: the server's IP, pending retries, and per host
 # whether it is routed, its resolver, how its certificate is issued
-# (`method`: http, dns-cname with the record to create, dns-api) and the
-# wildcard covering it, as JSON.
+# (`method`: http, dns-cname with the record to create, dns-api, or tunnel
+# for a host whose routers are only on the tunnel entrypoint: TLS at
+# Cloudflare's edge, no certificate here) and the wildcard covering it, as
+# JSON.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
@@ -57,12 +59,15 @@ def base($h): $h | ltrimstr("*.");
       [$routers[] | select(hosts_of(.rule) | index($h))] as $rs
       | {host: $h, routed: ($rs | length > 0)}
         + (if ($rs | length) > 0 then
-             {resolver: (first($rs[] | .tls.certResolver // empty | select(. != "")) // $default)}
+             {resolver: (first($rs[] | .tls.certResolver // empty | select(. != "")) // $default),
+              entrypoints: ([$rs[] | (.entryPoints // [])[]] | unique),
+              tls: all($rs[]; .tls != null)}
            else {} end)
         + ((first($wildcards[] | select(.[1:] as $s | ($h | endswith($s)) and ($h | rtrimstr($s) | contains(".") | not)))
             | {wildcard: .}) // {})
     end
-    | if .resolver == "le-http01" then .method = "http"
+    | if .entrypoints == ["tunnel"] then .method = "tunnel" | del(.resolver)
+      elif .resolver == "le-http01" then .method = "http"
       elif .resolver == "le-dns01-selfhosted" then
         .method = "dns-cname"
         | (base($h)) as $b

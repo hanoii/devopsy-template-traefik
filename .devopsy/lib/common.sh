@@ -41,6 +41,11 @@ check_settings() {
     auto | le-dns01-selfhosted | le-dns01-cloudflare | none) ;;
     *) die "PROXY_WILDCARD_CERTRESOLVER must be auto, le-dns01-selfhosted, le-dns01-cloudflare or none: $PROXY_WILDCARD_CERTRESOLVER" ;;
   esac
+  # Anything but true would leave every site on the server's open ports.
+  case ${PROXY_TUNNEL_ONLY:-} in
+    '' | true | false) ;;
+    *) die "PROXY_TUNNEL_ONLY must be true, false or unset: $PROXY_TUNNEL_ONLY" ;;
+  esac
   case ",${COMPOSE_PROFILES:-}," in
     *,acmedns,*)
       [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env" ;;
@@ -155,10 +160,31 @@ $_list
   fi
 }
 
+# The tunnel network's IPv4 subnets, comma separated: what its connectors'
+# requests come from. Empty until the network exists (a first `up`
+# creates it); any other failure of Docker's fails, or Traefik would lose
+# the tunnel's trust over a daemon restarting.
+tunnel_subnet() {
+  if ! _out=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}},{{end}}' tunnel 2>&1); then
+    case $_out in
+      *"not found"*) return 0 ;;
+      *) die "could not read the tunnel network: $_out" ;;
+    esac
+  fi
+  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
+}
+
 # Traefik's static settings that depend on what is enabled, in
-# mnt/traefik.env (compose.yaml's env_file): the websecure entrypoint's
-# middlewares (`devopsy proxies`), and the proxies' plugin and
-# forwarded-headers trust. One writer, called by deploy and proxies.
+# mnt/traefik.env (compose.yaml's env_file): the entrypoints' middlewares
+# (`devopsy proxies` on websecure, the tunnel's on tunnel), the proxies'
+# plugin, the forwarded-headers trust, and the default entrypoints. One
+# writer, called by deploy and proxies.
+#
+# The tunnel entrypoint trusts its network's subnet, read from Docker: its
+# visitor's IP from CF-Connecting-IP (the `tunnel` middleware, the proxies
+# plugin with that one entry, mnt/dynamic/tunnel.yaml) and its
+# X-Forwarded-Proto, so applications build https URLs. Nothing else is on
+# that network but Traefik and the connectors.
 #
 # An entrypoint naming a missing middleware breaks every router: a
 # middleware's file is written before the env names it, and removed only
@@ -169,24 +195,60 @@ static_env() {
   _restart=true
   [ "${1:-}" != --no-restart ] || _restart=false
 
-  _middlewares=
   _env="# Written by 'devopsy deploy' and 'devopsy proxies': Traefik's static settings.
 "
+  _plugin=false
   # Proxies: configured and their middleware written (`devopsy proxies`).
   _proxies=false
   if [ -s "$dir/mnt/dynamic/proxies.yaml" ] && [ -f "$dir/mnt/proxies/proxies.conf" ] &&
     grep -qv '^[[:space:]]*\(#\|$\)' "$dir/mnt/proxies/proxies.conf"; then
     _proxies=true
-    _middlewares=proxies@file
-    _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
-"
+    _plugin=true
     if [ -s "$dir/mnt/proxies/forwarded-ips" ]; then
       _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=$(cat "$dir/mnt/proxies/forwarded-ips")
 "
     fi
+    _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=proxies@file
+"
   fi
-  if [ -n "$_middlewares" ]; then
-    _env="${_env}TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=$_middlewares
+
+  # The tunnel: once its network exists.
+  _tunnel=false
+  _subnet=$(tunnel_subnet) || exit 1
+  if [ -n "$_subnet" ]; then
+    _tunnel=true
+    _plugin=true
+    write_if_changed "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' from the tunnel network's subnet.
+http:
+  middlewares:
+    tunnel:
+      plugin:
+        proxies:
+          proxies:
+            - name: tunnel
+              header: CF-Connecting-IP
+              trustedIPs:
+$(printf '%s\n' "$_subnet" | tr ',' '\n' | sed 's/^/                - /')
+" || true
+    _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=$_subnet
+TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel@file
+"
+  fi
+
+  if [ "$_plugin" = true ]; then
+    _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
+"
+  fi
+
+  # Routers naming no entrypoint: only the tunnel's on a server whose sites
+  # are all tunneled, else web and websecure, so a tunnel opens no site
+  # that does not name it (PROXY_ENTRYPOINTS in the site templates).
+  if [ "${PROXY_TUNNEL_ONLY:-}" = true ]; then
+    _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true
+"
+  else
+    _env="${_env}TRAEFIK_ENTRYPOINTS_WEB_ASDEFAULT=true
+TRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true
 "
   fi
 
@@ -196,13 +258,18 @@ static_env() {
   fi
 
   # Middlewares turned off: their files go once Traefik stops naming them.
-  if [ "$_proxies" = false ]; then
+  if [ "$_proxies" = false ] || [ "$_tunnel" = false ]; then
     _running=
     if _id=$(devopsy ps -q traefik 2>/dev/null) && [ -n "$_id" ]; then
       _running=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$_id" |
-        sed -n 's/^TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=//p')
+        sed -n 's/^TRAEFIK_ENTRYPOINTS_[A-Z]*_HTTP_MIDDLEWARES=//p' | paste -sd, -)
     fi
-    case ",$_running," in *,proxies@file,*) ;; *) rm -f "$dir/mnt/dynamic/proxies.yaml" ;; esac
+    if [ "$_proxies" = false ]; then
+      case ",$_running," in *,proxies@file,*) ;; *) rm -f "$dir/mnt/dynamic/proxies.yaml" ;; esac
+    fi
+    if [ "$_tunnel" = false ]; then
+      case ",$_running," in *,tunnel@file,*) ;; *) rm -f "$dir/mnt/dynamic/tunnel.yaml" ;; esac
+    fi
   fi
 }
 

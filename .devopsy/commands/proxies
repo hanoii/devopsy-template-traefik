@@ -11,11 +11,17 @@
 #   devopsy proxies remove <name>
 #   devopsy proxies refresh                   fetch URL ranges again
 #
-# Requests from a proxy's ranges get the visitor from its header; any other
-# request loses those headers. Proxies using X-Forwarded-For or X-Real-Ip are
+# Requests from a proxy's ranges get the visitor from its header, and the
+# other forwarded headers as Traefik makes them for a direct visitor (the
+# proxy's X-Forwarded-For and -Proto aside); any other request loses those
+# headers. Proxies using X-Forwarded-For or X-Real-Ip are
 # also trusted for Traefik's forwarded headers. Adding the first proxy,
 # removing the last one, or changing those trusted ranges restarts Traefik;
 # anything else does not.
+#
+# The tunnel network's connectors (a Cloudflare Tunnel) are trusted on the
+# tunnel entrypoint, built in: listed here, never added or removed (its
+# middleware is static_env's, from the network's subnet).
 #
 # State lives in mnt/ (shared/mnt on a server), so releases keep it:
 # mnt/proxies/proxies.conf, the proxies; mnt/proxies/forwarded-ips, the
@@ -108,15 +114,18 @@ EOT
 
 valid_name() {
   case $1 in '' | *[!A-Za-z0-9_-]*) die "name must use letters, digits, '-' and '_': $1" ;; esac
+  [ "$1" != tunnel ] || die "tunnel is built in: the tunnel network's connectors"
 }
 
 case "${1:-}" in
   '')
-    if [ -z "$(proxies)" ]; then
+    subnet=$(tunnel_subnet) || exit 1
+    if [ -z "$(proxies)" ] && [ -z "$subnet" ]; then
       echo "No trusted proxies: real client IPs are off."
       exit 0
     fi
     proxies | while read -r name header sources; do printf '%s\t%s\t%s\n' "$name" "$header" "$sources"; done
+    [ -z "$subnet" ] || printf 'tunnel\tCF-Connecting-IP\t%s (built in: the tunnel network, on its entrypoint)\n' "$subnet"
     ;;
   add)
     shift

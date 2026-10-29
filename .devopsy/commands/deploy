@@ -8,8 +8,12 @@
 # - Values detected once and kept in .env, so a plain `devopsy up` works
 #   later: the Docker socket's group, and acme-dns's public IP.
 # - The public wildcard certificate (PROXY_BASE_DOMAIN), or none.
-# - Static settings: the entrypoint's middlewares (static_env), and trusted
-#   proxies' ranges, fetched again (`devopsy proxies refresh`).
+# - Static settings: the entrypoints' middlewares and trust, the default
+#   entrypoints (static_env), and trusted proxies' ranges, fetched again
+#   (`devopsy proxies refresh`). The tunnel network's subnet is only known
+#   once a first `up` made it: static_env after `up` restarts Traefik
+#   then, once.
+# - The local plugins' checksum, which recreates Traefik when they change.
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
 # - Then, with Traefik running, middlewares turned off are removed, and who
 #   may reach its API is updated (api_access).
@@ -82,6 +86,16 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
+# The local plugins' checksum, in Traefik's label: Traefik loads them when
+# it starts, and a release changing only them would leave it running, so
+# changed plugins recreate it. Kept in .env for a plain `devopsy up`.
+sum=$(cd "$dir/plugins-local" && find . -type f | LC_ALL=C sort |
+  while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum | cut -d' ' -f1)
+if [ "${PROXY_PLUGINS_SUM:-}" != "$sum" ]; then
+  env_set PROXY_PLUGINS_SUM "$sum"
+  export PROXY_PLUGINS_SUM="$sum"
+fi
+
 # The entrypoint's middlewares; `up` below restarts Traefik when the static
 # settings change.
 static_env --no-restart
@@ -95,5 +109,7 @@ fi
 forget_apply
 
 devopsy up -d --wait --remove-orphans "$@"
+# Middlewares turned off go; a tunnel network made by this `up` gets its
+# trust (a restart).
 static_env
 api_access

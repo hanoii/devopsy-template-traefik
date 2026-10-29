@@ -14,6 +14,10 @@ func serve(t *testing.T, h http.Handler, remote string, headers map[string]strin
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = remote
 	for k, v := range headers {
+		if k == "Host" {
+			req.Host = v
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	h.ServeHTTP(httptest.NewRecorder(), req)
@@ -34,6 +38,41 @@ func TestProxies(t *testing.T) {
 	got := serve(t, h, "162.158.154.69:1", map[string]string{"Cf-Connecting-Ip": "181.106.103.254", "Fastly-Client-IP": "9.9.9.9"})
 	if got.RemoteAddr != "181.106.103.254:1" || got.Header.Get("X-Real-Ip") != "181.106.103.254" {
 		t.Fatalf("cloudflare: %s %v", got.RemoteAddr, got.Header)
+	}
+
+	// A proxy passes its visitor's own X-Forwarded-Host, -Port and -Prefix
+	// and Forwarded, which an entrypoint trusting it keeps: the host and
+	// port become the request's, the others go.
+	got = serve(t, h, "162.158.154.69:6", map[string]string{"Cf-Connecting-Ip": "181.106.103.254",
+		"X-Forwarded-Proto": "https", "X-Forwarded-Host": "evil.example", "X-Forwarded-Port": "8443",
+		"X-Forwarded-Prefix": "/x", "Forwarded": "host=evil.example"})
+	if got.Header.Get("X-Forwarded-Host") != "example.com" || got.Header.Get("X-Forwarded-Port") != "443" ||
+		got.Header.Get("X-Forwarded-Prefix") != "" || got.Header.Get("Forwarded") != "" {
+		t.Fatalf("spoofed forwarded headers: %v", got.Header)
+	}
+	got = serve(t, h, "162.158.154.69:7", map[string]string{"X-Forwarded-Proto": "http", "X-Forwarded-Port": "8443"})
+	if got.Header.Get("X-Forwarded-Port") != "80" {
+		t.Fatalf("http port: %v", got.Header)
+	}
+	// As Traefik sets them: a websocket over TLS is wss, and a Host with a
+	// port gives that port.
+	got = serve(t, h, "162.158.154.69:8", map[string]string{"X-Forwarded-Proto": "wss"})
+	if got.Header.Get("X-Forwarded-Port") != "443" {
+		t.Fatalf("wss port: %v", got.Header)
+	}
+	got = serve(t, h, "162.158.154.69:9", map[string]string{"Host": "example.com:8443", "X-Forwarded-Proto": "https"})
+	if got.Header.Get("X-Forwarded-Port") != "8443" || got.Header.Get("X-Forwarded-Host") != "example.com:8443" {
+		t.Fatalf("host's port: %v", got.Header)
+	}
+	// The rest Traefik removes from an untrusted peer goes, X-Real-Ip
+	// included when the proxy's header gives no visitor.
+	got = serve(t, h, "162.158.154.69:10", map[string]string{"Cf-Connecting-Ip": "nope", "X-Real-Ip": "1.2.3.4",
+		"X-Forwarded-Uri": "/admin", "X-Forwarded-Method": "POST", "X-Forwarded-Tls-Client-Cert": "x",
+		"X-Forwarded-Tls-Client-Cert-Info": "x"})
+	for _, k := range []string{"X-Real-Ip", "X-Forwarded-Uri", "X-Forwarded-Method", "X-Forwarded-Tls-Client-Cert", "X-Forwarded-Tls-Client-Cert-Info"} {
+		if got.Header.Get(k) != "" {
+			t.Fatalf("%s kept: %v", k, got.Header)
+		}
 	}
 
 	// Fastly.
