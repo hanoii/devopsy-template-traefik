@@ -290,6 +290,20 @@ Everything lives in `.devopsy/`:
   is dropped while the container looks healthy; stopped, it restarts in
   a loop, `up --wait` fails and the release rolls back. Checked on
   v3.7.13 with a broken plugin.
+- **Changed plugins need a new container** (`devopsy.plugins`, their
+  checksum, which deploy keeps in `PROXY_PLUGINS_SUM`): Docker resolves
+  the `./plugins-local` mount through `current` when it creates the
+  container, and a restart keeps that release's directory, so a release
+  changing only a plugin left the old one running (seen on a test
+  machine, 2026-10-28), until pruning took its directory.
+- **The proxies plugin sets X-Forwarded-Host and -Port from the request
+  and removes X-Forwarded-Prefix and Forwarded** for a request from a
+  proxy: an entrypoint trusting the proxy (the tunnel's, a load
+  balancer's `X-Forwarded-For`) keeps every X-Forwarded-* it passes on,
+  and Cloudflare passes its visitor's own (it overwrites only the
+  proto), so a visitor through the tunnel set the host Drupal builds
+  links on (verified through a real tunnel). Traefik never removes
+  `Forwarded`, on any entrypoint.
 
 ### Network and security
 

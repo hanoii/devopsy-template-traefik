@@ -13,6 +13,7 @@
 #   (`devopsy proxies refresh`). The tunnel network's subnet is only known
 #   once a first `up` made it: static_env after `up` restarts Traefik
 #   then, once.
+# - The local plugins' checksum, which recreates Traefik when they change.
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
 # - Then, with Traefik running, middlewares turned off are removed, and who
 #   may reach its API is updated (api_access).
@@ -83,6 +84,16 @@ http:
           - main: '*.$domain'
 "; then
   echo "deploy: public wildcard *.$domain through $resolver"
+fi
+
+# The local plugins' checksum, in Traefik's label: Docker resolves the
+# mount through current when it creates the container, so only a new
+# container loads changed plugins. Kept in .env for a plain `devopsy up`.
+sum=$(cd "$dir/plugins-local" && find . -type f | LC_ALL=C sort |
+  while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum | cut -d' ' -f1)
+if [ "${PROXY_PLUGINS_SUM:-}" != "$sum" ]; then
+  env_set PROXY_PLUGINS_SUM "$sum"
+  export PROXY_PLUGINS_SUM="$sum"
 fi
 
 # The entrypoint's middlewares; `up` below restarts Traefik when the static
