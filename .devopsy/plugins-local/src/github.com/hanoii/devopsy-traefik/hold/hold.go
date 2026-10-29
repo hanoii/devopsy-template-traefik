@@ -275,20 +275,37 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		h.giveUp(rw)
 		return
 	}
-	deadline := time.Now().Add(h.maxWait)
-	for {
-		wait := h.interval
-		if left := time.Until(deadline); left < wait {
-			wait = left
+	// A 307 only once the site was seen down (h.up): through the errors
+	// middleware, a 502 its probe does not repeat (a POST that crashes the
+	// app, an app's own 502) gets the page at once, never a redirect back
+	// into the same 502, its POST sent again each time. A stop's closed
+	// port is still closed at the first probe, made at once. The router
+	// gone is that evidence on a catch-all.
+	seenDown := h.entryPoint != ""
+	since := time.Now()
+	deadline := since.Add(h.maxWait)
+	for first := true; ; first = false {
+		if !first {
+			wait := h.interval
+			if left := time.Until(deadline); left < wait {
+				wait = left
+			}
+			// Never a select here: under Yaegi v0.16.1 goroutines
+			// running the same select at once deadlock in it, never
+			// woken by their timer.
+			time.Sleep(wait)
 		}
-		// Never a select here: under Yaegi v0.16.1 goroutines running
-		// the same select at once deadlock in it, never woken by their
-		// timer.
-		time.Sleep(wait)
 		if req.Context().Err() != nil {
 			return
 		}
-		if h.up(req.Context(), ps, deadline, target, req.Header) {
+		switch h.up(req.Context(), ps, deadline, since, target, req.Header) {
+		case answerUnseen:
+			if !seenDown {
+				h.giveUp(rw)
+				return
+			}
+			fallthrough
+		case answerUp:
 			rw.Header().Set("Location", target.String())
 			rw.Header().Set("Cache-Control", "no-store")
 			rw.WriteHeader(http.StatusTemporaryRedirect)
@@ -301,27 +318,44 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// What a probe said: nothing yet (another visitor's in flight or cut),
+// down, up, or up with no probe of the URL down since an interval before
+// the hold.
+const (
+	answerNone = iota
+	answerDown
+	answerUp
+	answerUnseen
+)
+
 // up: whether target answers, probed through ps, shared by every request
 // held on it: one probe at a time per URL, its answer good for an
 // interval (up, two), so a hundred visitors on a stopped page cost one probe a
-// second, and one slow answer (an app warming up) redirects them all. A
-// probe waits until the deadline at most.
-func (h *Hold) up(ctx context.Context, ps []*prober, deadline time.Time, target *url.URL, visitor http.Header) bool {
+// second, and one slow answer (an app warming up) redirects them all. An up
+// answer from before since (the hold's start) is probed again: it may be from
+// before the stop. Up is unseen when no probe of the URL, this visitor's or
+// another's, answered down since an interval before since: the 502 was not
+// a stop. A probe waits until the deadline at most.
+func (h *Hold) up(ctx context.Context, ps []*prober, deadline, since time.Time, target *url.URL, visitor http.Header) int {
 	key := target.String()
 	now := time.Now()
 	mu.Lock()
 	st := probed[key]
+	if st.probing {
+		mu.Unlock()
+		return answerNone
+	}
 	// Up is good for two intervals, so every visitor held on the URL,
 	// each waking once an interval, takes it.
 	good := h.interval
 	if st.up {
 		good = 2 * h.interval
 	}
-	if st.probing || now.Sub(st.at) < good {
+	if now.Sub(st.at) < good && (!st.up || !st.at.Before(since)) {
 		mu.Unlock()
-		return !st.probing && st.up
+		return st.answer(since.Add(-h.interval))
 	}
-	probed[key] = probeState{probing: true, at: st.at, up: st.up}
+	probed[key] = probeState{probing: true, at: st.at, up: st.up, down: st.down}
 	for k, v := range probed {
 		if !v.probing && now.Sub(v.at) > time.Minute {
 			delete(probed, k)
@@ -337,9 +371,28 @@ func (h *Hold) up(ctx context.Context, ps []*prober, deadline time.Time, target 
 		}
 	}
 	mu.Lock()
-	probed[key] = probeState{at: time.Now(), up: up}
-	mu.Unlock()
-	return up
+	defer mu.Unlock()
+	if !up && pctx.Err() != nil {
+		// Cut by the visitor leaving or the deadline: no answer.
+		probed[key] = st
+		return answerNone
+	}
+	st = probeState{at: time.Now(), up: up, down: st.down}
+	if !up {
+		st.down = st.at
+	}
+	probed[key] = st
+	return st.answer(since.Add(-h.interval))
+}
+
+func (st probeState) answer(downSince time.Time) int {
+	switch {
+	case !st.up:
+		return answerDown
+	case st.down.Before(downSince):
+		return answerUnseen
+	}
+	return answerUp
 }
 
 // giveUp answers the page, 503. Through the errors middleware the visitor gets
@@ -382,11 +435,12 @@ var (
 )
 
 // probeState: a probe of a URL running, or when the last one answered and
-// what.
+// what, and when one last answered down.
 type probeState struct {
 	probing bool
 	at      time.Time
 	up      bool
+	down    time.Time
 }
 
 // goneHost: when a host lost its routers, and their entrypoints.

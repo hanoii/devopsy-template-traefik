@@ -312,11 +312,11 @@ func TestRefreshReadsEveryChange(t *testing.T) {
 	defer reset()
 	defer func(d []time.Duration) { readDelays = d }(readDelays)
 	readDelays = []time.Duration{5 * time.Second}
-	var mu sync.Mutex
+	var apiMu sync.Mutex
 	routers := "[{\"rule\":\"Host(`a.example.com`)\",\"entryPoints\":[\"websecure\"],\"middlewares\":[\"hold@file\"]}]"
 	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
+		apiMu.Lock()
+		defer apiMu.Unlock()
 		rw.Header().Set("X-Next-Page", "1")
 		_, _ = rw.Write([]byte(routers))
 	}))
@@ -336,9 +336,9 @@ func TestRefreshReadsEveryChange(t *testing.T) {
 		defer mu.Unlock()
 		return present["a.example.com"] != nil
 	})
-	mu.Lock()
+	apiMu.Lock()
 	routers = "[]"
-	mu.Unlock()
+	apiMu.Unlock()
 	refresh(api.URL, "hold@file", time.Minute)
 	within("held", func() bool { return held("a.example.com", "websecure", time.Now(), time.Minute) })
 }
@@ -573,5 +573,38 @@ func TestHoldSlowAnswer(t *testing.T) {
 	defer smu.Unlock()
 	if renders > 2 {
 		t.Fatalf("%d slow probes for 10 visitors", renders)
+	}
+}
+
+// A 502 the site gives a request its probe does not repeat (a POST that
+// crashes the app, an app's own 502): the probe answers at once, the hold
+// never saw the site down, so the visitor gets the page, never a 307 the
+// browser would follow back into the same 502, its POST sent again each
+// time.
+func TestHoldRedirectsOnlyAfterDown(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{}
+	ep.set(true, http.StatusOK)
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/form"))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Location") != "" || time.Since(start) > time.Second {
+		t.Fatalf("got %d %v after %s, want the page at once", rec.Code, rec.Header(), time.Since(start))
+	}
+
+	// An up answer from before the hold is no answer to it: a stop right
+	// after another visitor's redirect is probed, seen down, and held.
+	mu.Lock()
+	probed["https://app.example.com/"] = probeState{at: time.Now(), up: true}
+	mu.Unlock()
+	ep.set(false, 0)
+	time.AfterFunc(50*time.Millisecond, func() { ep.set(true, http.StatusOK) })
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("got %d, want a hold ending in 307", rec.Code)
 	}
 }
