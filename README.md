@@ -462,7 +462,9 @@ In the Cloudflare account that holds the zone:
    The dashboard creates the record for a single name, not for a
    wildcard.
 4. SSL/TLS: Always Use HTTPS (requests reach Traefik as plain HTTP, past
-   its redirect), encryption mode Full (strict).
+   its redirect). The encryption mode does not apply to the tunnel's
+   hostnames: leave it as it is, Full (strict) for any record of the
+   zone that reaches a server directly.
 5. At your provider's firewall, inbound SSH only; outbound port 7844, UDP
    (QUIC) or TCP.
 
