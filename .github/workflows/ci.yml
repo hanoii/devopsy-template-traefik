@@ -10,12 +10,14 @@ jobs:
     if: github.repository == 'hanoii/devopsy-template-traefik'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # Standard library only: no go.sum, nothing to cache.
+          cache: false
       - name: plugins
         run: |
           go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1
