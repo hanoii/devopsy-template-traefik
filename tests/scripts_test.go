@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -135,5 +136,60 @@ func TestStaticEnv(t *testing.T) {
 	}
 	if after := sh(t, dir, nil, "cat .devopsy/mnt/traefik.env"); after != before {
 		t.Errorf("Docker failing changed traefik.env:\n%s", after)
+	}
+}
+
+// forget takes a domain and its wildcard out of every resolver's store
+// and the acme-dns registrations, keeps the rest, the files' mode and a
+// copy of each file it changed.
+func TestForget(t *testing.T) {
+	dir := project(t, "forget", nil)
+	cert := func(main string, sans ...string) string {
+		d := fmt.Sprintf(`{"main":%q}`, main)
+		if len(sans) > 0 {
+			d = fmt.Sprintf(`{"main":%q,"sans":["%s"]}`, main, strings.Join(sans, `","`))
+		}
+		return fmt.Sprintf(`{"domain":%s,"certificate":"c","key":"k","Store":"default"}`, d)
+	}
+	stores := map[string]string{
+		"acme-le-http01.json":           `{"le-http01":{"Account":{"Email":"admin@example.com"},"Certificates":[` + cert("old.example.com", "www.old.example.com") + `,` + cert("keep.example.com") + `]}}`,
+		"acme-le-dns01-selfhosted.json": `{"le-dns01-selfhosted":{"Account":null,"Certificates":[` + cert("*.old.example.com") + `]}}`,
+		"acme-dns-accounts.json":        `{"old.example.com":{"subdomain":"0a1b-2c3d","fulldomain":"0a1b-2c3d.acme.example.com"},"keep.example.com":{"subdomain":"4e5f","fulldomain":"4e5f.acme.example.com"}}`,
+	}
+	for f, content := range stores {
+		sh(t, dir, nil, `devopsy t 'in_traefik "umask 077; cat >/letsencrypt/$1" "$1"' "$1" <<EOF
+$2
+EOF`, f, content)
+	}
+
+	if out := sh(t, dir, nil, "devopsy forget"); !strings.Contains(out, "  old.example.com, www.old.example.com  certificate, le-http01") ||
+		!strings.Contains(out, "  *.old.example.com  certificate, le-dns01-selfhosted") || !strings.Contains(out, "  old.example.com  acme-dns registration") {
+		t.Fatalf("forget lists:\n%s", out)
+	}
+	if out, err := shErr(dir, nil, "devopsy forget 'bad_name.example.com'"); err == nil || !strings.Contains(out, "not a domain name") {
+		t.Errorf("a bad name: %v %s", err, out)
+	}
+	sh(t, dir, nil, "devopsy forget '*.old.example.com'")
+	out := sh(t, dir, nil, "devopsy t forget_apply")
+	for _, want := range []string{
+		"forgot the certificate for old.example.com, www.old.example.com (le-http01)",
+		"forgot the certificate for *.old.example.com (le-dns01-selfhosted)",
+		"forgot the acme-dns registration of old.example.com",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+	after := sh(t, dir, nil, `devopsy t 'in_traefik "cd /letsencrypt && stat -c \"%a %n\" acme-* | sort && cat acme-le-http01.json acme-le-dns01-selfhosted.json acme-dns-accounts.json && ls | grep -c forget-"'`)
+	for _, want := range []string{"600 acme-dns-accounts.json\n", "600 acme-le-http01.json\n", "600 acme-le-dns01-selfhosted.json\n", `"keep.example.com"`, `"4e5f"`, "\n3\n"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("want %q in the stores:\n%s", want, after)
+		}
+	}
+	if strings.Contains(after, "old.example.com") || strings.Contains(after, "0a1b") {
+		t.Errorf("old.example.com still stored:\n%s", after)
+	}
+	if _, err := shErr(dir, nil, "test -e .devopsy/mnt/forget.pending"); err == nil {
+		t.Error("the queue stayed")
 	}
 }

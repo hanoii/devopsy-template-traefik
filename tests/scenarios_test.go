@@ -155,3 +155,60 @@ func TestStart(t *testing.T) {
 		t.Errorf("https: %+v", a)
 	}
 }
+
+// lib/facts on a running Traefik's routers: per host whether it is
+// routed, its resolver and how its certificate is issued; one JSON
+// document whatever a project's rule says.
+func TestFacts(t *testing.T) {
+	traefik(t)
+	site(t, "facts-http", "facts-http.example.com", nil, "")
+	site(t, "facts-tunnel", "facts-tunnel.example.com", []string{"routers.<name>.entrypoints=tunnel"}, "")
+	// A stray quote in a rule once broke the document for the whole server.
+	site(t, "facts-quote", `facts-"quote.example.com`, nil, "")
+	shOn(t, server, proxy, nil, `touch .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
+	t.Cleanup(func() {
+		_, _ = shErrOn(server, proxy, nil, `rm -f .devopsy/mnt/dynamic/devopsy-retry-facts-http.example.com.yaml`)
+	})
+
+	var facts struct {
+		Retries []string
+		Hosts   []struct {
+			Host, Resolver, Method string
+			Routed                 bool
+			Entrypoints            []string
+		}
+	}
+	out := shOn(t, server, proxy, nil, `devopsy t '"$dir/lib/facts" --all' 2>/dev/null`)
+	if err := json.Unmarshal([]byte(out), &facts); err != nil {
+		t.Fatalf("facts --all: %v\n%s", err, out)
+	}
+	byHost := map[string]int{}
+	for i, h := range facts.Hosts {
+		byHost[h.Host] = i
+	}
+	for host, want := range map[string]string{
+		"facts-http.example.com":   "routed le-http01 http",
+		"facts-tunnel.example.com": "routed  tunnel",
+		`facts-"quote.example.com`: "routed le-http01 http",
+	} {
+		i, ok := byHost[host]
+		if !ok {
+			t.Errorf("no %s in %s", host, out)
+			continue
+		}
+		h := facts.Hosts[i]
+		if got := fmt.Sprintf("%s %s %s", map[bool]string{true: "routed"}[h.Routed], h.Resolver, h.Method); got != want {
+			t.Errorf("%s: %q, want %q", host, got, want)
+		}
+	}
+	if len(facts.Retries) != 1 || facts.Retries[0] != "facts-http.example.com" {
+		t.Errorf("retries: %v", facts.Retries)
+	}
+
+	// Named hosts, one not routed.
+	out = shOn(t, server, proxy, nil, `devopsy t '"$dir/lib/facts" FACTS-HTTP.example.com nowhere.example.com' 2>/dev/null`)
+	if err := json.Unmarshal([]byte(out), &facts); err != nil || len(facts.Hosts) != 2 ||
+		facts.Hosts[0].Host != "facts-http.example.com" || !facts.Hosts[0].Routed || facts.Hosts[1].Routed {
+		t.Errorf("facts of two hosts: %v\n%s", err, out)
+	}
+}
