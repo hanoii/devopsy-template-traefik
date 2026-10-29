@@ -38,13 +38,19 @@ func traefik(t *testing.T) {
 	}
 }
 
-// site runs a container routed through the shared Traefik for host, on
-// the traefik network, with labels added to its router's; removed when
-// the test ends. image runs args, or traefik/whoami without.
+// site runs a container routed through the shared Traefik for host (a
+// Host() rule, or the rule itself when it has a parenthesis), on the
+// traefik network, with labels added under traefik.http. (<name> its
+// name); removed when the test ends. image runs args, or traefik/whoami
+// without.
 func site(t *testing.T, name, host string, labels []string, image string, args ...string) {
 	t.Helper()
+	rule := fmt.Sprintf("Host(`%s`)", host)
+	if strings.Contains(host, "(") {
+		rule = host
+	}
 	cmd := []string{"docker", "run", "-d", "--name", name, "--network", "traefik", "-l", "traefik.enable=true",
-		"-l", fmt.Sprintf("traefik.http.routers.%s.rule=Host(`%s`)", name, host)}
+		"-l", fmt.Sprintf("traefik.http.routers.%s.rule=%s", name, rule)}
 	for _, l := range labels {
 		cmd = append(cmd, "-l", fmt.Sprintf("traefik.http.%s", strings.ReplaceAll(l, "<name>", name)))
 	}
@@ -79,6 +85,20 @@ func routed(t *testing.T, router string) {
 	}
 }
 
+// unrouted waits for router to leave Traefik's API (a container stopped).
+func unrouted(t *testing.T, router string) {
+	t.Helper()
+	for end := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+		out, err := shErrOn(server, "/", nil, `curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/http/routers/$1"`, router)
+		if err == nil && out == "404" {
+			return
+		}
+		if time.Now().After(end) {
+			t.Fatalf("router %s still in Traefik's API", router)
+		}
+	}
+}
+
 // api is Traefik's API at path, from the host.
 func api(t *testing.T, path string) string {
 	t.Helper()
@@ -100,9 +120,58 @@ func request(t *testing.T, url string, extra ...string) answer {
 	out := shOn(t, server, "/", nil, `url=$1 host=$2; shift 2
 		curl -sk -o /dev/null --max-time 120 --resolve "$host:443:127.0.0.1" --resolve "$host:80:127.0.0.1" \
 			-w '%{http_code} %{time_total} %{redirect_url}' "$@" "$url"`, append([]string{url, host}, extra...)...)
+	return parseAnswer(out)
+}
+
+func parseAnswer(line string) answer {
 	var a answer
-	fmt.Sscan(out, &a.Code, &a.Time, &a.Location)
+	fmt.Sscan(line, &a.Code, &a.Time, &a.Location)
 	return a
+}
+
+// during makes a visitor's request to url every 0.2 s, from a second
+// before action (a shell script on the server host) until a second after
+// it, and returns their answers.
+func during(t *testing.T, url, action string) []answer {
+	t.Helper()
+	host := regexp.MustCompile(`^https?://([^/:]+)`).FindStringSubmatch(url)[1]
+	out := shOn(t, server, "/", nil, `url=$1 host=$2 action=$3
+		out=$(mktemp) stop=$(mktemp -u)
+		(while [ ! -e "$stop" ]; do
+			curl -sk -o /dev/null --max-time 120 --resolve "$host:443:127.0.0.1" 				-w '%{http_code} %{time_total} %{redirect_url}
+' "$url" >>"$out" &
+			sleep 0.2
+		done; wait) &
+		loop=$!
+		sleep 1
+		sh -c "$action" >/dev/null
+		sleep 1
+		touch "$stop"
+		wait "$loop"
+		cat "$out"`, url, host, action)
+	var answers []answer
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		answers = append(answers, parseAnswer(line))
+	}
+	return answers
+}
+
+// heldThrough fails unless every answer is the site's 200 or the hold's
+// 307 to url, and some were held.
+func heldThrough(t *testing.T, url string, answers []answer) {
+	t.Helper()
+	held := 0
+	for _, a := range answers {
+		switch {
+		case a.Code == 307 && a.Location == url:
+			held++
+		case a.Code != 200:
+			t.Errorf("%+v", a)
+		}
+	}
+	if held == 0 {
+		t.Errorf("none held of %d", len(answers))
+	}
 }
 
 // Traefik as deploy leaves it: every service healthy, every router and
