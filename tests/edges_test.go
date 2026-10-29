@@ -70,7 +70,8 @@ func TestProxies(t *testing.T) {
 	h.site("proxied", "proxied.example.com", nil, "")
 	subnet := strings.TrimSpace(h.sh("/", nil, `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' traefik`))
 	h.sh(proxy, nil, `devopsy proxies add edge X-Edge-Ip "$1"`, subnet)
-	t.Cleanup(func() { _, _ = h.shErr(proxy, nil, "devopsy proxies remove edge") })
+	// Removed below; here too should the test end before.
+	t.Cleanup(func() { _, _ = h.shErr(proxy, nil, "devopsy proxies | grep -q edge && devopsy proxies remove edge") })
 	h.routed("proxied@docker")
 	request := []string{"--connect-to", "proxied.example.com:443:traefik:443", "-H", "X-Edge-Ip: 192.0.2.55", "-H", "X-Forwarded-For: 192.0.2.66",
 		"-H", "X-Forwarded-Host: evil.example.com", "-H", "X-Forwarded-Prefix: /evil", "-H", "X-Forwarded-Proto: https", "https://proxied.example.com/"}
@@ -84,6 +85,26 @@ func TestProxies(t *testing.T) {
 	if ip := header(echo, "X-Real-Ip"); ip == "192.0.2.55" || ip == "192.0.2.66" || strings.Contains(header(echo, "X-Forwarded-For"), "192.0.2.") ||
 		header(echo, "X-Forwarded-Host") != "proxied.example.com" || header(echo, "X-Forwarded-Prefix") != "" {
 		t.Errorf("from outside its range:\n%s", echo)
+	}
+
+	// static_env restarts Traefik only when its settings change, and a
+	// middleware's file goes once the running Traefik no longer names it.
+	started := func() string {
+		return h.sh(proxy, nil, `docker inspect -f '{{.State.StartedAt}}' "$(devopsy ps -q traefik)"`)
+	}
+	before := started()
+	if out := h.sh(proxy, nil, "devopsy t static_env"); strings.Contains(out, "restarting") || started() != before {
+		t.Errorf("static_env restarted Traefik with nothing changed: %s", out)
+	}
+	h.sh(proxy, nil, "devopsy proxies remove edge")
+	if started() == before {
+		t.Error("removing the last proxy did not restart Traefik")
+	}
+	if out, err := h.shErr(proxy, nil, "cat .devopsy/mnt/dynamic/proxies.yaml"); err == nil {
+		t.Errorf("proxies.yaml stayed:\n%s", out)
+	}
+	if env := h.sh(proxy, nil, "cat .devopsy/mnt/traefik.env"); strings.Contains(env, "proxies@file") {
+		t.Errorf("traefik.env still names proxies:\n%s", env)
 	}
 }
 
