@@ -2,8 +2,10 @@ package hold
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -626,5 +628,116 @@ func TestHoldRedirectsOnlyAfterDown(t *testing.T) {
 	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("got %d, want a hold ending in 307", rec.Code)
+	}
+}
+
+// Visitors on many URLs at once probe at once, each URL its own probe:
+// under Yaegi too (app-stop's review).
+func TestHoldDistinctURLs(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+	time.AfterFunc(300*time.Millisecond, func() { ep.set(true, http.StatusOK) })
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, fromErrors(fmt.Sprintf("https://app.example.com/p%d", i)))
+			if rec.Code != http.StatusTemporaryRedirect {
+				t.Errorf("p%d: got %d", i, rec.Code)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// Many catch-all requests waiting for the reads after a change at once:
+// none stays asleep (app-stop's review, after Yaegi's select deadlock).
+func TestCatchAllSettlingMany(t *testing.T) {
+	reset()
+	defer reset()
+	defer func(d []time.Duration) { readDelays = d }(readDelays)
+	readDelays = []time.Duration{200 * time.Millisecond, 200 * time.Millisecond}
+	ep := &entrypoint{}
+	ep.set(true, http.StatusOK)
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	var apiMu sync.Mutex
+	routers := "[{\"rule\":\"Host(`app.example.com`)\",\"entryPoints\":[\"websecure\"],\"middlewares\":[\"hold@file\"]}]"
+	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		apiMu.Lock()
+		defer apiMu.Unlock()
+		rw.Header().Set("X-Next-Page", "1")
+		_, _ = rw.Write([]byte(routers))
+	}))
+	defer api.Close()
+	build := func() http.Handler {
+		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL,
+			Probes: map[string]string{"websecure": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	build()
+	time.Sleep(time.Second)
+	h := build()
+	time.AfterFunc(100*time.Millisecond, func() { apiMu.Lock(); routers = "[]"; apiMu.Unlock() })
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", fmt.Sprintf("https://app.example.com/x%d", i), nil))
+			if rec.Code != http.StatusTemporaryRedirect {
+				t.Errorf("x%d: got %d", i, rec.Code)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// The shared state prunes itself as it goes (entries deleted while ranging
+// over the map, which Yaegi must do as Go does): probes older than a
+// minute but one running, redirects past their window.
+func TestHoldPrunes(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+	old := time.Now().Add(-2 * time.Minute)
+	mu.Lock()
+	for _, k := range []string{"a", "b", "c", "d"} {
+		probed["https://app.example.com/"+k] = probeState{at: old}
+		unseen["https://app.example.com/"+k+" 203.0.113.9"] = old
+	}
+	probed["https://app.example.com/running"] = probeState{probing: true, at: old}
+	mu.Unlock()
+	time.AfterFunc(50*time.Millisecond, func() { ep.set(true, http.StatusOK) })
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/new"))
+	// A 307 without the site seen down records it, pruning the rest.
+	ep.set(true, http.StatusOK)
+	r := fromErrors("https://app.example.com/other")
+	r.Header.Set("X-Real-Ip", "203.0.113.9")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	mu.Lock()
+	defer mu.Unlock()
+	var left []string
+	for k := range probed {
+		left = append(left, k)
+	}
+	sort.Strings(left)
+	if got := strings.Join(left, " "); got != "https://app.example.com/new https://app.example.com/other https://app.example.com/running" {
+		t.Errorf("probes left: %s", got)
+	}
+	if len(unseen) != 1 {
+		t.Errorf("redirects left: %v", unseen)
 	}
 }
