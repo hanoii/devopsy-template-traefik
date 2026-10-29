@@ -304,3 +304,37 @@ func TestNewChecks(t *testing.T) {
 		}
 	}
 }
+
+// A change while the reader waits for its second read is read at once: a
+// stop right after a start must be held as soon as Traefik drops the router.
+func TestRefreshReadsEveryChange(t *testing.T) {
+	reset()
+	defer reset()
+	defer func(d time.Duration) { readDelay = d }(readDelay)
+	readDelay = 5 * time.Second
+	var mu sync.Mutex
+	routers := "[{\"rule\":\"Host(`a.example.com`)\",\"entryPoints\":[\"websecure\"],\"middlewares\":[\"hold@file\"]}]"
+	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		rw.Header().Set("X-Next-Page", "1")
+		_, _ = rw.Write([]byte(routers))
+	}))
+	defer api.Close()
+	within := func(what string, ok func() bool) {
+		t.Helper()
+		for end := time.Now().Add(time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("not %s within a second", what)
+			}
+		}
+	}
+
+	refresh(api.URL, "hold@file", time.Minute)
+	within("routed", func() bool { return entryPoints("a.example.com") != nil })
+	mu.Lock()
+	routers = "[]"
+	mu.Unlock()
+	refresh(api.URL, "hold@file", time.Minute)
+	within("held", func() bool { return held("a.example.com", time.Now(), time.Minute) })
+}

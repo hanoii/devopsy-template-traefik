@@ -302,8 +302,12 @@ var (
 	mu      sync.Mutex
 	present map[string][]string // nil until the first read
 	gone    = map[string]time.Time{}
-	reading bool
-	again   bool
+	// The reader's: started once, kicked by every New, reading what the
+	// last New gave.
+	reader                  bool
+	kick                    = make(chan struct{}, 1)
+	readAPI, readMiddleware string
+	readMemory              time.Duration
 )
 
 // Literal hosts only: a HostRegexp names none.
@@ -347,38 +351,43 @@ func entryPoints(host string) []string {
 // from mattering.
 var readDelay = 2 * time.Second
 
-// refresh reads the routers now and again after readDelay, once at a time:
-// several instances are built on every change.
+// refresh has the routers read at once, and again readDelay after the last
+// change. One reader: several instances are built on every change, and a
+// change while it waits for its second read is read at once too (a stop
+// right after a start is marked gone as soon as Traefik drops the router).
 func refresh(api, middleware string, memory time.Duration) {
 	mu.Lock()
-	if reading {
-		again = true
-		mu.Unlock()
-		return
-	}
-	reading = true
+	readAPI, readMiddleware, readMemory = api, middleware, memory
+	start := !reader
+	reader = true
 	mu.Unlock()
-	go func() {
-		client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{}}
-		for {
-			for i := 0; i < 2; i++ {
-				if i > 0 {
-					time.Sleep(readDelay)
-				}
-				if hosts, err := routerHosts(client, api, middleware); err == nil {
-					remember(hosts, time.Now(), memory)
-				}
-			}
-			mu.Lock()
-			if !again {
-				reading = false
-				mu.Unlock()
-				return
-			}
-			again = false
-			mu.Unlock()
+	if start {
+		go read()
+	}
+	select {
+	case kick <- struct{}{}:
+	default: // a read is due already
+	}
+}
+
+func read() {
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{}}
+	again := time.NewTimer(readDelay)
+	again.Stop()
+	for {
+		select {
+		case <-kick:
+			again.Stop()
+			again.Reset(readDelay)
+		case <-again.C:
 		}
-	}()
+		mu.Lock()
+		api, middleware, memory := readAPI, readMiddleware, readMemory
+		mu.Unlock()
+		if hosts, err := routerHosts(client, api, middleware); err == nil {
+			remember(hosts, time.Now(), memory)
+		}
+	}
 }
 
 // routerHosts lists every literal host in the rules of Traefik's HTTP routers
