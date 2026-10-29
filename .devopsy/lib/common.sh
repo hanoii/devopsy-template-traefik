@@ -174,10 +174,80 @@ tunnel_subnet() {
   printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
 }
 
+# Holding visitors through an app's stop, for the sites whose router names
+# hold@file (the hold plugin, plugins-local/.../hold): mnt/dynamic/hold.yaml.
+#
+# - hold@file, the errors middleware: on the site's 502 (its port closed
+#   while its container still runs) it asks the hold service, Traefik
+#   itself on the loopback `hold` entrypoint, where the hold router runs
+#   the plugin, which answers once a router answers the visitor's URL. The
+#   visitor gets a 307 to that URL (statusRewrites: Traefik passes the
+#   original status otherwise), or past the wait the page under it.
+# - The catch-alls on websecure and tunnel, at priority 1: a request no
+#   router took, held when its host lost a router naming hold@file
+#   moments ago (read from the API), else a 404 as Traefik's own.
+#
+# Probes go to Traefik's own entrypoints inside its container; the API is
+# open to 127.0.0.1 (api_access). The same on every server.
+hold_middleware() {
+  _probes='            websecure: https://127.0.0.1:443
+            tunnel: http://127.0.0.1:8081'
+  _catchall=
+  _routers=
+  for _ep in websecure tunnel; do
+    _catchall="$_catchall
+    hold-$_ep:
+      plugin:
+        hold:
+          entryPoint: $_ep
+          api: http://127.0.0.1:8080
+          probes:
+$_probes"
+    _routers="$_routers
+    hold-$_ep:
+      entryPoints: [$_ep]
+      rule: 'PathPrefix(\`/\`)'
+      priority: 1
+      service: noop@internal
+      middlewares: [hold-$_ep]"
+  done
+  write_if_changed "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy': holding visitors through an app's stop.
+http:
+  middlewares:
+    # What a site's router names: traefik.http.routers.<name>.middlewares=hold@file
+    hold:
+      errors:
+        status: ['502']
+        statusRewrites:
+          '502': 307
+        service: hold
+        query: '/?url={url}'
+    hold-wait:
+      plugin:
+        hold:
+          probes:
+$_probes$_catchall
+  services:
+    hold:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8082
+  routers:
+    # The errors middleware's request carries the site's Host: on the hold
+    # entrypoint, which no site's router names, this one takes it.
+    hold:
+      entryPoints: [hold]
+      rule: 'PathPrefix(\`/\`)'
+      priority: 2000000000
+      service: noop@internal
+      middlewares: [hold-wait]$_routers
+" || true
+}
+
 # Traefik's static settings that depend on what is enabled, in
 # mnt/traefik.env (compose.yaml's env_file): the entrypoints' middlewares
 # (a visitor's Forwarded removed on websecure and tunnel, then `devopsy
-# proxies` on websecure and the tunnel's on tunnel), the proxies' plugin,
+# proxies` on websecure and the tunnel's on tunnel), the local plugins,
 # the forwarded-headers trust, and the default entrypoints. One writer,
 # called by deploy and proxies.
 #
@@ -259,6 +329,9 @@ $(printf '%s\n' "$_subnet" | tr ',' '\n' | sed 's/^/                - /')
     _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies
 "
   fi
+  # Always: hold.yaml names it (hold_middleware).
+  _env="${_env}TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold
+"
 
   # Routers naming no entrypoint: only the tunnel's on a server whose sites
   # are all tunneled, else web and websecure, so a tunnel opens no site
