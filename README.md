@@ -603,11 +603,15 @@ After 90 seconds the visitor gets a "back in a moment" page instead:
 503 when the router is gone, under a 307 without a `Location` on the
 502 path (the errors middleware keeps one status; browsers show the
 page). The hold never carries a site's response, so streamed responses
-keep their flushes. Only what follows a redirect is held: browsers do
-(a POST is sent again with its body: a request refused by a closed port
-never reached the app), WebSockets do not. Only a 502 is held, never a
-site's own 503 (a maintenance mode). Literal `Host()` rules only:
-a `HostRegexp` router is not held when gone. A site's `ipAllowList` must
+keep their flushes. Only what follows a redirect is held: browsers do,
+WebSockets do not. A POST is sent again with its body: right for one
+refused by the closed port, which never reached the app; one the app
+had read and then lost (cut by its stop past its grace period, or a
+crash) is sent twice, since a 502 does not tell the two apart. Only a
+502 is held, never a site's own 503 (a maintenance mode). An app slow
+to answer after its start counts as up. Literal `Host()` rules only:
+a `HostRegexp` router is not held when gone (its 502 is, probed
+through every entrypoint). A site's `ipAllowList` must
 let the server's own `127.0.0.1` in, or every probe is refused and the
 browser gives up after its redirects. A project that does not name it
 gets Traefik's 502 and 404 as before.

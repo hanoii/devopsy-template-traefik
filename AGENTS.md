@@ -293,7 +293,12 @@ Everything lives in `.devopsy/`:
   1; ; { ... page = next }` read the first page forever); and a map
   index on the left of a multiple assignment stores nothing
   (`m[k], err = f()`). Write `page := 1; for {` and assign through a
-  plain variable.
+  plain variable. And goroutines running the same `select` at once
+  deadlock in it, never woken by its `time.After` (ten held requests'
+  `select { case <-ctx.Done(): case <-time.After(d): }`: "all
+  goroutines are asleep", 2026-10-29): a request's waits are
+  `time.Sleep` then `ctx.Err()`, and only the one reader goroutine
+  selects.
 - **A plugin that fails to load stops Traefik**
   (`TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE=true`). Why: skipped, the
   entrypoint's middleware list still names `proxies`, and every router

@@ -142,9 +142,8 @@ func TestHoldAnswersAtOnce(t *testing.T) {
 	h := newHold(t, "", srv.URL, "10s")
 
 	for name, req := range map[string]*http.Request{
-		"another host":    fromErrors("https://elsewhere.example.com/"),
-		"relative url":    fromErrors("/x"),
-		"host not routed": httptest.NewRequest("GET", "http://shop.example.com/?url=https%3A%2F%2Fshop.example.com%2F", nil),
+		"another host": fromErrors("https://elsewhere.example.com/"),
+		"relative url": fromErrors("/x"),
 		"no hold asked": func() *http.Request {
 			r := fromErrors("https://app.example.com/")
 			r.Header.Set(Header, "no")
@@ -193,7 +192,8 @@ func reset() {
 	mu.Lock()
 	defer mu.Unlock()
 	present = nil
-	gone = map[string]time.Time{}
+	gone = map[string]goneHost{}
+	probed = map[string]probeState{}
 }
 
 func TestMemory(t *testing.T) {
@@ -201,28 +201,28 @@ func TestMemory(t *testing.T) {
 	defer reset()
 	now := time.Now()
 	remember(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}, now, time.Minute)
-	if held("a.example.com", now, time.Minute) {
+	if held("a.example.com", "websecure", now, time.Minute) {
 		t.Fatal("a held while routed")
 	}
 	remember(map[string][]string{"b.example.com": {"websecure"}}, now.Add(time.Second), time.Minute)
-	if !held("a.example.com", now.Add(2*time.Second), time.Minute) {
+	if !held("a.example.com", "websecure", now.Add(2*time.Second), time.Minute) {
 		t.Fatal("a not held once its router went")
 	}
 	for _, host := range []string{"b.example.com", "never.example.com"} {
-		if held(host, now.Add(2*time.Second), time.Minute) {
+		if held(host, "websecure", now.Add(2*time.Second), time.Minute) {
 			t.Fatalf("%s held", host)
 		}
 	}
-	if held("a.example.com", now.Add(2*time.Minute), time.Minute) {
+	if held("a.example.com", "websecure", now.Add(2*time.Minute), time.Minute) {
 		t.Fatal("a held past memory")
 	}
 	// Back: not held, and gone again later counts from then.
 	remember(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}, now.Add(3*time.Second), time.Minute)
-	if held("a.example.com", now.Add(4*time.Second), time.Minute) {
+	if held("a.example.com", "websecure", now.Add(4*time.Second), time.Minute) {
 		t.Fatal("a held while routed again")
 	}
 	remember(map[string][]string{}, now.Add(10*time.Minute), time.Minute)
-	if !held("a.example.com", now.Add(10*time.Minute+time.Second), time.Minute) {
+	if !held("a.example.com", "websecure", now.Add(10*time.Minute+time.Second), time.Minute) {
 		t.Fatal("a not held when gone again")
 	}
 }
@@ -257,7 +257,7 @@ func TestCatchAll(t *testing.T) {
 
 func TestRouterHosts(t *testing.T) {
 	pages := map[string]string{
-		"1": `[{"rule":"Host(` + "`a.example.com`) || Host(`B.example.com.`" + `)","entryPoints":["web","websecure"],"middlewares":["hold@file"]},
+		"1": `[{"rule":"Host(` + "`a.example.com`) || Host(\\\"B.example.com.\\\")" + `)","entryPoints":["web","websecure"],"middlewares":["hold@file"]},
 			{"rule":"PathPrefix(` + "`/`" + `)","middlewares":["hold@file"]},
 			{"rule":"Host(` + "`d.example.com`" + `)","entryPoints":["websecure"]}]`,
 		"2": `[{"rule":"HostRegexp(` + "`^.+\\\\.example\\\\.com$`" + `)","middlewares":["hold@file"]},
@@ -331,12 +331,16 @@ func TestRefreshReadsEveryChange(t *testing.T) {
 	}
 
 	refresh(api.URL, "hold@file", time.Minute)
-	within("routed", func() bool { return entryPoints("a.example.com") != nil })
+	within("routed", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return present["a.example.com"] != nil
+	})
 	mu.Lock()
 	routers = "[]"
 	mu.Unlock()
 	refresh(api.URL, "hold@file", time.Minute)
-	within("held", func() bool { return held("a.example.com", time.Now(), time.Minute) })
+	within("held", func() bool { return held("a.example.com", "websecure", time.Now(), time.Minute) })
 }
 
 // A request for a host the last read had, while the routers settle after a
@@ -409,5 +413,165 @@ func TestCatchAllSettling(t *testing.T) {
 		apiMu.Unlock()
 		build()
 		settled()
+	}
+}
+
+// A 502 from a router back on a new container before any read saw it again
+// (an app without a healthcheck answers before it listens): held, through
+// the entrypoints it had.
+func TestErrorsPathAfterRouterCameBack(t *testing.T) {
+	reset()
+	defer reset()
+	now := time.Now()
+	remember(map[string][]string{"app.example.com": {"websecure"}}, now, time.Minute)
+	remember(map[string][]string{}, now, time.Minute)
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+	time.AfterFunc(50*time.Millisecond, func() { ep.set(true, http.StatusOK) })
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("got %d, want a hold ending in 307", rec.Code)
+	}
+}
+
+// A probe the site keeps waiting never holds the visitor past maxWait.
+func TestHoldBoundedByMaxWait(t *testing.T) {
+	routed(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		select {
+		case <-req.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "100ms")
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+	if d := time.Since(start); d > time.Second || rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("%d after %s, past a maxWait of 100ms", rec.Code, d)
+	}
+}
+
+// A host gone from websecure is not held on another entrypoint.
+func TestCatchAllOtherEntryPoint(t *testing.T) {
+	reset()
+	defer reset()
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h, err := New(context.Background(), nil, &Config{EntryPoint: "tunnel", Middleware: "hold@file", API: "http://127.0.0.1:1",
+		Probes: map[string]string{"tunnel": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	remember(map[string][]string{"app.example.com": {"websecure"}}, now, time.Minute)
+	remember(map[string][]string{}, now, time.Minute)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "http://app.example.com/", nil))
+	if rec.Code != http.StatusNotFound || len(ep.probes()) != 0 {
+		t.Fatalf("got %d, %d probes", rec.Code, len(ep.probes()))
+	}
+}
+
+// Visitors held on one URL share its probes: one per interval, not one each.
+func TestHoldSharesProbes(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+	time.AfterFunc(300*time.Millisecond, func() { ep.set(true, http.StatusOK) })
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+			if rec.Code != http.StatusTemporaryRedirect {
+				t.Errorf("got %d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	// About 30 rounds of 10ms while down, then each visitor's last one.
+	if n := len(ep.probes()); n > 80 {
+		t.Fatalf("%d probes for 20 visitors over 300ms at 10ms", n)
+	}
+}
+
+// A host no read knows (a first release, a HostRegexp rule) is held through
+// every entrypoint: the one without its router answers from the hold, down.
+func TestHoldUnknownHost(t *testing.T) {
+	reset()
+	defer reset()
+	down, site := &entrypoint{}, &entrypoint{}
+	downSrv, siteSrv := httptest.NewServer(down), httptest.NewServer(site)
+	defer downSrv.Close()
+	defer siteSrv.Close()
+	h, err := New(context.Background(), nil, &Config{Probes: map[string]string{"websecure": downSrv.URL, "tunnel": siteSrv.URL},
+		MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(50*time.Millisecond, func() { site.set(true, http.StatusOK) })
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+	if rec.Code != http.StatusTemporaryRedirect || len(down.probes()) == 0 {
+		t.Fatalf("got %d, %d probes through websecure", rec.Code, len(down.probes()))
+	}
+}
+
+// An app that takes longer than an interval to answer is up, slow, and its
+// one probe answers every visitor held on the URL: no render per visitor.
+func TestHoldSlowAnswer(t *testing.T) {
+	routed(t)
+	var smu sync.Mutex
+	slow, renders := false, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		smu.Lock()
+		s := slow
+		if s {
+			renders++
+		}
+		smu.Unlock()
+		if !s {
+			rw.Header().Set(Header, "down")
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}))
+	defer srv.Close()
+	// An interval longer than the scheduler's jitter: each visitor wakes
+	// once within the interval the answer is good for, as with 1s.
+	h, err := New(context.Background(), nil, &Config{Probes: map[string]string{"websecure": srv.URL},
+		MaxWait: "3s", Interval: "100ms", Memory: "1m"}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(50*time.Millisecond, func() { smu.Lock(); slow = true; smu.Unlock() })
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
+			if rec.Code != http.StatusTemporaryRedirect {
+				t.Errorf("got %d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	smu.Lock()
+	defer smu.Unlock()
+	if renders > 2 {
+		t.Fatalf("%d slow probes for 10 visitors", renders)
 	}
 }

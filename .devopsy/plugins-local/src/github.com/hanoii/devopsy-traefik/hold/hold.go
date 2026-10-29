@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +102,7 @@ type Hold struct {
 	name       string
 	entryPoint string
 	probes     map[string]*prober
+	order      []string // the probes' entrypoints, sorted
 	maxWait    time.Duration
 	interval   time.Duration
 	memory     time.Duration
@@ -130,7 +132,6 @@ func newProber(address string) (*prober, error) {
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	return &prober{scheme: u.Scheme, client: &http.Client{
-		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				return dialer.DialContext(ctx, network, addr)
@@ -145,7 +146,8 @@ func newProber(address string) (*prober, error) {
 
 // up probes target as its visitor would (their headers: a site's own auth
 // answers the probe as it answers them), with HEAD: true once something other
-// than the hold or a 502 answers.
+// than the hold or a 502 answers. Bounded by ctx only: an app that takes long
+// to answer is up, slow.
 func (p *prober) up(ctx context.Context, target *url.URL, visitor http.Header) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, p.scheme+"://"+target.Host+target.RequestURI(), nil)
 	if err != nil {
@@ -196,7 +198,9 @@ func New(_ context.Context, _ http.Handler, config *Config, name string) (http.H
 			return nil, fmt.Errorf("%s: entrypoint %s: %w", name, ep, err)
 		}
 		h.probes[ep] = p
+		h.order = append(h.order, ep)
 	}
+	sort.Strings(h.order)
 	if h.entryPoint != "" {
 		if h.probes[h.entryPoint] == nil {
 			return nil, fmt.Errorf("%s: no probe for its entrypoint %s", name, h.entryPoint)
@@ -217,32 +221,47 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var target *url.URL
-	var p *prober
+	var ps []*prober
 	if h.entryPoint == "" {
 		// From the errors middleware: /?url=<original>, with the
 		// visitor's Host and headers. Only Traefik reaches it (its
 		// entrypoint listens on the container's loopback); the URL must
 		// still name the request's host, so a redirect never leads away.
-		// Probed through the first entrypoint of its router's with a
-		// probe: the router serves it the same on any of them.
-		for _, ep := range entryPoints(hostname(req.Host)) {
-			if h.probes[ep] != nil {
-				p = h.probes[ep]
-				break
-			}
-		}
 		u, err := url.Parse(req.URL.Query().Get("url"))
-		if p == nil || err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, req.Host) {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, req.Host) {
 			h.giveUp(rw)
 			return
 		}
 		target = u
+		// Probed through the first entrypoint of its router's with a
+		// probe (the router serves it the same on any of them), else,
+		// for a host no read knows (a first release, a HostRegexp rule),
+		// through every one: one without its router answers the probe
+		// from its catch-all, down.
+		for _, ep := range routedOn(hostname(req.Host)) {
+			if h.probes[ep] != nil {
+				ps = []*prober{h.probes[ep]}
+				break
+			}
+		}
+		if ps == nil {
+			for _, ep := range h.order {
+				ps = append(ps, h.probes[ep])
+			}
+		}
 	} else {
-		if !heldNow(req.Context(), hostname(req.Host), h.memory) {
+		host := hostname(req.Host)
+		if req.Header.Get(Header) == "no" {
+			// An answer at once, without waiting for the reads.
+			if !held(host, h.entryPoint, time.Now(), h.memory) {
+				http.NotFound(rw, req)
+				return
+			}
+		} else if !heldNow(req.Context(), host, h.entryPoint, h.memory) {
 			http.NotFound(rw, req)
 			return
 		}
-		p = h.probes[h.entryPoint]
+		ps = []*prober{h.probes[h.entryPoint]}
 		scheme := "http"
 		if req.TLS != nil {
 			scheme = "https"
@@ -258,12 +277,18 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	deadline := time.Now().Add(h.maxWait)
 	for {
-		select {
-		case <-req.Context().Done():
-			return
-		case <-time.After(h.interval):
+		wait := h.interval
+		if left := time.Until(deadline); left < wait {
+			wait = left
 		}
-		if p.up(req.Context(), target, req.Header) {
+		// Never a select here: under Yaegi v0.16.1 goroutines running
+		// the same select at once deadlock in it, never woken by their
+		// timer.
+		time.Sleep(wait)
+		if req.Context().Err() != nil {
+			return
+		}
+		if h.up(req.Context(), ps, deadline, target, req.Header) {
 			rw.Header().Set("Location", target.String())
 			rw.Header().Set("Cache-Control", "no-store")
 			rw.WriteHeader(http.StatusTemporaryRedirect)
@@ -274,6 +299,47 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+}
+
+// up: whether target answers, probed through ps, shared by every request
+// held on it: one probe at a time per URL, its answer good for an
+// interval (up, two), so a hundred visitors on a stopped page cost one probe a
+// second, and one slow answer (an app warming up) redirects them all. A
+// probe waits until the deadline at most.
+func (h *Hold) up(ctx context.Context, ps []*prober, deadline time.Time, target *url.URL, visitor http.Header) bool {
+	key := target.String()
+	now := time.Now()
+	mu.Lock()
+	st := probed[key]
+	// Up is good for two intervals, so every visitor held on the URL,
+	// each waking once an interval, takes it.
+	good := h.interval
+	if st.up {
+		good = 2 * h.interval
+	}
+	if st.probing || now.Sub(st.at) < good {
+		mu.Unlock()
+		return !st.probing && st.up
+	}
+	probed[key] = probeState{probing: true, at: st.at, up: st.up}
+	for k, v := range probed {
+		if !v.probing && now.Sub(v.at) > time.Minute {
+			delete(probed, k)
+		}
+	}
+	mu.Unlock()
+	pctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	up := false
+	for _, p := range ps {
+		if up = p.up(pctx, target, visitor); up {
+			break
+		}
+	}
+	mu.Lock()
+	probed[key] = probeState{at: time.Now(), up: up}
+	mu.Unlock()
+	return up
 }
 
 // giveUp answers the page, 503. Through the errors middleware the visitor gets
@@ -301,7 +367,9 @@ func hostname(host string) string {
 var (
 	mu      sync.Mutex
 	present map[string][]string // nil until the first read
-	gone    = map[string]time.Time{}
+	gone    = map[string]goneHost{}
+	// The last probe of each URL held on, shared by its held requests.
+	probed = map[string]probeState{}
 	// The reader's: started once, kicked by every New, reading what the
 	// last New gave; settling while reads after a change are due, reads
 	// counting those done.
@@ -313,21 +381,35 @@ var (
 	reads                   int
 )
 
+// probeState: a probe of a URL running, or when the last one answered and
+// what.
+type probeState struct {
+	probing bool
+	at      time.Time
+	up      bool
+}
+
+// goneHost: when a host lost its routers, and their entrypoints.
+type goneHost struct {
+	at  time.Time
+	eps []string
+}
+
 // Literal hosts only: a HostRegexp names none.
-var hostRule = regexp.MustCompile("Host\\(\\s*`([^`]+)`\\s*\\)")
+var hostRule = regexp.MustCompile("Host\\(\\s*[`\"]([^`\"]+)[`\"]\\s*\\)")
 
 // remember records the hosts routers have now: one that had a router at the
 // last read and has none now lost it now.
 func remember(hosts map[string][]string, now time.Time, memory time.Duration) {
 	mu.Lock()
 	defer mu.Unlock()
-	for host := range present {
+	for host, eps := range present {
 		if _, ok := hosts[host]; !ok {
-			gone[host] = now
+			gone[host] = goneHost{at: now, eps: eps}
 		}
 	}
-	for host, at := range gone {
-		if _, ok := hosts[host]; ok || now.Sub(at) > memory {
+	for host, g := range gone {
+		if _, ok := hosts[host]; ok || now.Sub(g.at) > memory {
 			delete(gone, host)
 		}
 	}
@@ -335,12 +417,34 @@ func remember(hosts map[string][]string, now time.Time, memory time.Duration) {
 	reads++
 }
 
-// held: host lost its router within memory, and has none again yet.
-func held(host string, now time.Time, memory time.Duration) bool {
+// held: host lost its router on entryPoint within memory, and has none
+// again yet.
+func held(host, entryPoint string, now time.Time, memory time.Duration) bool {
 	mu.Lock()
 	defer mu.Unlock()
-	at, ok := gone[host]
-	return ok && now.Sub(at) <= memory
+	g, ok := gone[host]
+	return ok && now.Sub(g.at) <= memory && contains(g.eps, entryPoint)
+}
+
+// settle waits, up to end, for the next read of the routers while reads
+// after a change are due: false once none is, or the visitor gave up.
+func settle(ctx context.Context, end time.Time) bool {
+	mu.Lock()
+	n, due := reads, settling
+	mu.Unlock()
+	for due && time.Now().Before(end) {
+		time.Sleep(50 * time.Millisecond) // no select: as in ServeHTTP
+		if ctx.Err() != nil {
+			return false
+		}
+		mu.Lock()
+		moved := reads != n || !settling
+		mu.Unlock()
+		if moved {
+			return true
+		}
+	}
+	return false
 }
 
 // heldNow is held, waiting while the routers settle after a change for a
@@ -348,41 +452,31 @@ func held(host string, now time.Time, memory time.Duration) bool {
 // calls New, sometimes a moment after, so a request for a host whose router
 // just went may come before the read that tells (measured on 3.7.16).
 // Bounded by settleWait and the visitor's wait.
-func heldNow(ctx context.Context, host string, memory time.Duration) bool {
+func heldNow(ctx context.Context, host, entryPoint string, memory time.Duration) bool {
 	end := time.Now().Add(settleWait)
 	for {
-		mu.Lock()
-		_, routed := present[host]
-		wait := settling && routed
-		n := reads
-		mu.Unlock()
-		if held(host, time.Now(), memory) {
+		if held(host, entryPoint, time.Now(), memory) {
 			return true
 		}
-		if !wait || !time.Now().Before(end) {
+		mu.Lock()
+		_, routed := present[host]
+		mu.Unlock()
+		if !routed || !settle(ctx, end) {
 			return false
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				return false
-			case <-time.After(50 * time.Millisecond):
-			}
-			mu.Lock()
-			moved := reads != n || !settling
-			mu.Unlock()
-			if moved || !time.Now().Before(end) {
-				break
-			}
 		}
 	}
 }
 
-// entryPoints: those of host's routers, nil when it has none.
-func entryPoints(host string) []string {
+// routedOn: the entrypoints of host's routers, or of those it lost within
+// memory (its router back on a new container answering 502 before a read
+// saw it again). Nil when no read knows it.
+func routedOn(host string) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	return present[host]
+	if eps := present[host]; eps != nil {
+		return eps
+	}
+	return gone[host].eps
 }
 
 // readDelays: the reads after a change, after the one at once, each after
@@ -401,13 +495,14 @@ func refresh(api, middleware string, memory time.Duration) {
 	settling = true
 	start := !reader
 	reader = true
+	// Under the lock, so the reader never reads settling over before the
+	// kick is there; refreshers send only here, so it never blocks.
+	if len(kick) == 0 {
+		kick <- struct{}{}
+	}
 	mu.Unlock()
 	if start {
 		go read()
-	}
-	select {
-	case kick <- struct{}{}:
-	default: // a read is due already
 	}
 }
 
