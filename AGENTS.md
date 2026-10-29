@@ -475,8 +475,17 @@ Decided 2026-10-28, with the connectors' template
   request through Traefik's own entrypoint (so through its current
   routers), and the visitor gets a 307 to the same URL once a router
   answers, which the browser follows into the site on the compiled
-  path. The 307 comes only on that evidence, never on a timeout, so it
-  cannot loop (but for an `ipAllowList` refusing 127.0.0.1: README).
+  path. The 307 comes only on that evidence, never on a timeout, and
+  only once a probe of the URL answered down since an interval before
+  the hold (the router gone counts on a catch-all), so it cannot loop:
+  a 502 the probe does not meet (a POST that crashes the app, an app's
+  own 502 to one request, an `ipAllowList` refusing 127.0.0.1) gets the
+  page at once (review: it was a 307 back into the same 502, a POST
+  sent again until the browser's 20 redirects). Hence the first probe
+  at once, while a stop's port is still closed, and an up answer from
+  before the hold probed again. The evidence is the URL's, shared like
+  its probes: a visitor whose every round took another's answer saw no
+  down of its own.
 - **The 502 comes through the errors middleware, per router:** it is
   compiled code on the response path (a match only fetches from the
   hold service, Traefik itself on the loopback `hold` entrypoint, where

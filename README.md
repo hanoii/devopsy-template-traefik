@@ -591,13 +591,17 @@ are covered:
   what is in flight, and Traefik keeps its router until Docker reports
   the container gone or unhealthy: a request meanwhile meets the closed
   port. `hold@file` is Traefik's errors middleware: on that 502 it asks
-  the hold, which tries the URL through Traefik every second until a
-  router answers it with anything but a 502.
+  the hold, which tries the URL through Traefik at once, then every
+  second until a router answers it with anything but a 502. A 502 that
+  try does not meet (one request crashing the app, an app's own 502 to
+  that request alone) is no stop: the visitor gets the page below at
+  once, never sent back into the same error.
 - **The router gone.** While the container is stopped, recreating or
   unhealthy, Traefik has no router for its hosts. A catch-all router at
   the lowest priority holds a request for a host whose router named
   `hold@file` within the last 5 minutes (read from Traefik's API); any
-  other host gets the usual 404 at once.
+  other host gets the usual 404 (at once, or within a few seconds right
+  after a change of routers, while Traefik's API catches up).
 
 After 90 seconds the visitor gets a "back in a moment" page instead:
 503 when the router is gone, under a 307 without a `Location` on the
@@ -606,14 +610,18 @@ page). The hold never carries a site's response, so streamed responses
 keep their flushes. Only what follows a redirect is held: browsers do,
 WebSockets do not. A POST is sent again with its body: right for one
 refused by the closed port, which never reached the app; one the app
-had read and then lost (cut by its stop past its grace period, or a
-crash) is sent twice, since a 502 does not tell the two apart. Only a
-502 is held, never a site's own 503 (a maintenance mode). An app slow
-to answer after its start counts as up. Literal `Host()` rules only:
-a `HostRegexp` router is not held when gone (its 502 is, probed
-through every entrypoint). A site's `ipAllowList` must
-let the server's own `127.0.0.1` in, or every probe is refused and the
-browser gives up after its redirects. A project that does not name it
+had read and then lost (cut by its stop past its grace period) is sent
+twice, since a 502 does not tell the two apart. Only a 502 is held,
+never a site's own 503 (a maintenance mode); an app answering 502 to
+every request (its upstream down) is held as a stop, the page after 90
+seconds. An app slow to answer after its start counts as up. Literal
+`Host()` rules only: a `HostRegexp` router is not held when gone (its
+502 is, probed through every entrypoint). Name `hold@file` before any
+middleware that changes the path (`stripPrefix`, `replacePath`): the
+errors middleware sees the URL as it reaches it, and the hold would
+try, and send the visitor to, the changed one. A site's `ipAllowList`
+must let the server's own `127.0.0.1` in, or every try is refused and
+nothing is held (the page at once). A project that does not name it
 gets Traefik's 502 and 404 as before.
 
 A project can still answer its own stops with a router on the app's rule
