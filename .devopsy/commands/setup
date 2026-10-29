@@ -410,8 +410,8 @@ if [ "$choice" = 5 ]; then
      ${green}http://traefik.tunnel:8081$reset (type HTTP)${route:+, and later the domains
      of sites}${route:-: the domains of sites}.
   3. DNS: ${route:-each name} CNAME $green<tunnel id>.cfargotunnel.com$reset, proxied
-     (orange cloud). The dashboard makes the record for a single name, not
-     for a wildcard.
+     (orange cloud). The dashboard creates it with the route: check
+     it is there.
   4. SSL/TLS: Always Use HTTPS on (requests reach Traefik as plain HTTP,
      past its redirect). The encryption mode does not apply to the
      tunnel; Full (strict) for the zone's records that reach a server

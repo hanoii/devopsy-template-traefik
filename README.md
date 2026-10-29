@@ -459,8 +459,7 @@ In the Cloudflare account that holds the zone:
    `http://traefik.tunnel:8081`, type HTTP. A site's own domain gets a
    route of its own.
 3. DNS: `*.example.com` CNAME `<tunnel id>.cfargotunnel.com`, proxied.
-   The dashboard creates the record for a single name, not for a
-   wildcard.
+   The dashboard creates it with the route: check it is there.
 4. SSL/TLS: Always Use HTTPS (requests reach Traefik as plain HTTP, past
    its redirect). The encryption mode does not apply to the tunnel's
    hostnames: leave it as it is, Full (strict) for any record of the
