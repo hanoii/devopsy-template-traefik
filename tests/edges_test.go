@@ -223,3 +223,23 @@ func TestAcmeDNSAndWildcard(t *testing.T) {
 		t.Errorf("acme-dns still running:\n%s", ps)
 	}
 }
+
+// Traefik loads its local plugins when it starts: a change to one alone
+// recreates it (the checksum label), and one that does not load stops
+// Traefik, so deploy fails rather than leaving every router on it broken
+// behind a healthy container.
+func TestPlugins(t *testing.T) {
+	h, dir := project(t, "plugins", nil)
+	h.sh(dir, nil, "devopsy deploy")
+	before := h.sh(dir, nil, "devopsy ps -q traefik")
+	h.sh(dir, nil, `printf '\n// changed\n' >>.devopsy/plugins-local/src/github.com/hanoii/devopsy-traefik/hold/hold.go && devopsy deploy`)
+	if after := h.sh(dir, nil, "devopsy ps -q traefik"); after == before {
+		t.Error("a changed plugin did not recreate Traefik")
+	}
+	h.sh(dir, nil, `printf 'package hold\n\nfunc broken( {\n' >.devopsy/plugins-local/src/github.com/hanoii/devopsy-traefik/hold/broken.go`)
+	if out, err := h.shErr(dir, nil, "timeout 180 devopsy deploy"); err == nil {
+		t.Errorf("deploy with a broken plugin went through:\n%s", out)
+	} else if strings.Contains(out, "Terminated") {
+		t.Errorf("deploy with a broken plugin hung:\n%s", out)
+	}
+}
