@@ -11,8 +11,10 @@
 #   devopsy proxies remove <name>
 #   devopsy proxies refresh                   fetch URL ranges again
 #
-# Requests from a proxy's ranges get the visitor from its header; any other
-# request loses those headers. Proxies using X-Forwarded-For or X-Real-Ip are
+# Requests from a proxy's ranges get the visitor from its header, and the
+# other forwarded headers as Traefik makes them for a direct visitor (the
+# proxy's X-Forwarded-For and -Proto aside); any other request loses those
+# headers. Proxies using X-Forwarded-For or X-Real-Ip are
 # also trusted for Traefik's forwarded headers. Adding the first proxy,
 # removing the last one, or changing those trusted ranges restarts Traefik;
 # anything else does not.

@@ -86,9 +86,9 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
-# The local plugins' checksum, in Traefik's label: Docker resolves the
-# mount through current when it creates the container, so only a new
-# container loads changed plugins. Kept in .env for a plain `devopsy up`.
+# The local plugins' checksum, in Traefik's label: Traefik loads them when
+# it starts, and a release changing only them would leave it running, so
+# changed plugins recreate it. Kept in .env for a plain `devopsy up`.
 sum=$(cd "$dir/plugins-local" && find . -type f | LC_ALL=C sort |
   while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum | cut -d' ' -f1)
 if [ "${PROXY_PLUGINS_SUM:-}" != "$sum" ]; then

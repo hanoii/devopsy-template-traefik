@@ -10,7 +10,7 @@
 // X-Forwarded-For and X-Real-Ip from untrusted connections, so proxies using
 // those must also be in the entrypoint's forwardedHeaders.trustedIPs; for a
 // request from a proxy, X-Forwarded-Host and -Port are set from the request
-// and X-Forwarded-Prefix and Forwarded removed, which a trusted proxy would
+// and the other forwarded headers removed, which a trusted proxy would
 // otherwise pass on from its visitor.
 package proxies
 
@@ -118,6 +118,26 @@ func (r *Proxies) visitor(p *proxy, req *http.Request) net.IP {
 	return nil
 }
 
+// untrusted are the headers Traefik removes from an untrusted peer, but
+// for those a proxy's request keeps (X-Forwarded-For and -Proto) or the
+// middleware sets (-Host, -Port, -Server and X-Real-Ip, set again below
+// when the proxy's header gives the visitor), plus Forwarded.
+var untrusted = []string{"X-Forwarded-Uri", "X-Forwarded-Method", "X-Forwarded-Prefix",
+	"X-Forwarded-Tls-Client-Cert", "X-Forwarded-Tls-Client-Cert-Info", "X-Real-Ip", "Forwarded"}
+
+// forwardedPort is Traefik's own rule: the Host's port, else 443 for
+// https and wss, else 80.
+func forwardedPort(req *http.Request) string {
+	if _, port, err := net.SplitHostPort(req.Host); err == nil && port != "" {
+		return port
+	}
+	switch req.Header.Get("X-Forwarded-Proto") {
+	case "https", "wss":
+		return "443"
+	}
+	return "80"
+}
+
 func (r *Proxies) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	host, port, err := net.SplitHostPort(req.RemoteAddr)
 	peer := net.ParseIP(host)
@@ -129,16 +149,13 @@ func (r *Proxies) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		// An entrypoint trusting the proxy keeps whatever X-Forwarded-*
 		// it passes on, its visitor's own included (Cloudflare overwrites
 		// only the proto): host and port are the request's, as Traefik
-		// sets them for an untrusted peer, and Forwarded, which Traefik
-		// never touches, goes.
+		// sets them for an untrusted peer, the rest it removes from one
+		// goes, and so does Forwarded, which Traefik never touches.
 		req.Header.Set("X-Forwarded-Host", req.Host)
-		if req.Header.Get("X-Forwarded-Proto") == "https" {
-			req.Header.Set("X-Forwarded-Port", "443")
-		} else {
-			req.Header.Set("X-Forwarded-Port", "80")
+		req.Header.Set("X-Forwarded-Port", forwardedPort(req))
+		for _, h := range untrusted {
+			req.Header.Del(h)
 		}
-		req.Header.Del("X-Forwarded-Prefix")
-		req.Header.Del("Forwarded")
 		if ip := r.visitor(p, req); ip != nil {
 			req.RemoteAddr = net.JoinHostPort(ip.String(), port)
 			req.Header.Set("X-Real-Ip", ip.String())

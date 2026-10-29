@@ -59,9 +59,9 @@ services:
       # with user. Traefik creates its ACME files with mode 600, which it
       # insists on (see AGENTS.md).
       - devopsy.mnt.owner=10001:10001
-      # Traefik loads its local plugins when it starts, from the release
-      # its container was created in: deploy keeps their checksum here, so
-      # a release that changes them recreates it.
+      # Traefik loads its local plugins when it starts, and a release that
+      # changes only them would not restart it: deploy keeps their checksum
+      # here, so it recreates it.
       - devopsy.plugins=${PROXY_PLUGINS_SUM:-}
     depends_on:
       dockerproxy:

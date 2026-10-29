@@ -371,7 +371,11 @@ Ranges are CIDRs, or `https` URLs listing one per line. For a request from a
 proxy's ranges, the visitor's IP (for `X-Forwarded-For`, the rightmost address
 that is not a trusted proxy) becomes the client IP: Traefik sends it as
 `X-Forwarded-For` and `X-Real-Ip`, so applications keep trusting only
-Traefik. Any other request loses the proxies' headers, so they cannot be
+Traefik. The other forwarded headers are as Traefik makes them for a
+direct visitor, whatever the proxy or its visitor sent:
+`X-Forwarded-Host` and `-Port` from the request's `Host`, the rest and
+`Forwarded` removed; only `X-Forwarded-For` and `-Proto` come from the
+proxy. Any other request loses the proxies' headers, so they cannot be
 spoofed by reaching the server directly. Proxied and direct sites work on the
 same server: each request is judged by who connected.
 
@@ -460,7 +464,8 @@ In the Cloudflare account that holds the zone:
    `http://traefik.tunnel:8081`, type HTTP. A site's own domain gets a
    route of its own.
 3. DNS: `*.example.com` CNAME `<tunnel id>.cfargotunnel.com`, proxied.
-   The dashboard creates it with the route: check it is there.
+   The dashboard creates it with the route, only when the name has no
+   record: remove one from before (an A record to the server) first.
 4. SSL/TLS: Always Use HTTPS (requests reach Traefik as plain HTTP, past
    its redirect). The encryption mode does not apply to the tunnel's
    hostnames: leave it as it is, Full (strict) for any record of the
@@ -519,7 +524,8 @@ and `websecure`: a tunnel opens no site that does not ask. A site goes
 through the tunnel only by naming it, `PROXY_ENTRYPOINTS=tunnel` in the
 site templates (with `PROXY_CERTRESOLVER` unset: a router with a resolver
 is a TLS router, which never matches the tunnel's plain HTTP). Such a site
-answers nothing on ports 80 and 443, its Host header and SNI included.
+is not served on ports 80 and 443, its Host header and SNI included: port
+80 only redirects to HTTPS, and 443 answers 404.
 
 ### What `domains` reports
 
