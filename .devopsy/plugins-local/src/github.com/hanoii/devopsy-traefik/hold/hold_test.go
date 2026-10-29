@@ -194,6 +194,7 @@ func reset() {
 	present = nil
 	gone = map[string]goneHost{}
 	probed = map[string]probeState{}
+	unseen = map[string]time.Time{}
 }
 
 func TestMemory(t *testing.T) {
@@ -576,11 +577,12 @@ func TestHoldSlowAnswer(t *testing.T) {
 	}
 }
 
-// A 502 the site gives a request its probe does not repeat (a POST that
-// crashes the app, an app's own 502): the probe answers at once, the hold
-// never saw the site down, so the visitor gets the page, never a 307 the
-// browser would follow back into the same 502, its POST sent again each
-// time.
+// A 502 the probe does not meet: a container restarted within a moment
+// (the stale router's 502, the site up again by the first probe) or a
+// request the app itself answers 502 (a POST that crashes it). The hold
+// cannot tell them apart, so it redirects once per visitor and URL; a
+// second such 502 within ten intervals gets the page, never a loop the
+// browser follows, its POST sent again each time.
 func TestHoldRedirectsOnlyAfterDown(t *testing.T) {
 	routed(t)
 	ep := &entrypoint{}
@@ -588,11 +590,29 @@ func TestHoldRedirectsOnlyAfterDown(t *testing.T) {
 	srv := httptest.NewServer(ep)
 	defer srv.Close()
 	h := newHold(t, "", srv.URL, "10s")
-	start := time.Now()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, fromErrors("https://app.example.com/form"))
-	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Location") != "" || time.Since(start) > time.Second {
-		t.Fatalf("got %d %v after %s, want the page at once", rec.Code, rec.Header(), time.Since(start))
+	from := func(visitor string) *http.Request {
+		r := fromErrors("https://app.example.com/form")
+		r.Header.Set("X-Real-Ip", visitor)
+		return r
+	}
+	for i, c := range []struct {
+		visitor string
+		wait    time.Duration
+		code    int
+	}{
+		{"203.0.113.7", 0, http.StatusTemporaryRedirect},
+		{"203.0.113.7", 0, http.StatusServiceUnavailable},
+		{"203.0.113.8", 0, http.StatusTemporaryRedirect},
+		// Past ten intervals (10ms here): its own once again.
+		{"203.0.113.7", 150 * time.Millisecond, http.StatusTemporaryRedirect},
+	} {
+		time.Sleep(c.wait)
+		start := time.Now()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, from(c.visitor))
+		if rec.Code != c.code || (c.code == http.StatusServiceUnavailable) != (rec.Header().Get("Location") == "") || time.Since(start) > time.Second {
+			t.Fatalf("%d, %s: got %d %v after %s, want %d at once", i, c.visitor, rec.Code, rec.Header(), time.Since(start), c.code)
+		}
 	}
 
 	// An up answer from before the hold is no answer to it: a stop right
@@ -602,7 +622,7 @@ func TestHoldRedirectsOnlyAfterDown(t *testing.T) {
 	mu.Unlock()
 	ep.set(false, 0)
 	time.AfterFunc(50*time.Millisecond, func() { ep.set(true, http.StatusOK) })
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, fromErrors("https://app.example.com/"))
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("got %d, want a hold ending in 307", rec.Code)

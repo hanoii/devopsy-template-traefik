@@ -1,0 +1,28 @@
+# The template's checks (AGENTS.md, Checks). Only in this repository: a
+# project started from the template gets this file too, and runs nothing
+# unless its owner drops the condition.
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  checks:
+    if: github.repository == 'hanoii/devopsy-template-traefik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: plugins
+        run: |
+          go install github.com/traefik/yaegi/cmd/yaegi@v0.16.1
+          cd .devopsy/plugins-local
+          for p in proxies hold; do
+            (cd src/github.com/hanoii/devopsy-traefik/$p && go vet ./... && go test -race -count=1 ./...)
+            GOPATH=$PWD GO111MODULE=off "$(go env GOPATH)/bin/yaegi" test github.com/hanoii/devopsy-traefik/$p
+          done
+      - name: tests
+        run: go vet -tags e2e ./tests && go test -tags e2e -count=1 -v -timeout 20m ./tests

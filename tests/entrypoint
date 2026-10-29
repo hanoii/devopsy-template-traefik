@@ -1,0 +1,6 @@
+#!/bin/sh
+# dockerd and sshd; the tests exec into the container.
+set -eu
+dockerd >/var/log/dockerd.log 2>&1 &
+/usr/sbin/sshd
+exec sleep infinity

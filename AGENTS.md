@@ -12,7 +12,9 @@ is in its comments.
 
 ## Layout
 
-Everything lives in `.devopsy/`:
+What a server runs lives in `.devopsy/`, the only directory a release
+uploads (`mode: image`); `tests/` (with the root's `go.mod`) and
+`.github/workflows/ci.yml` are the checks (Checks).
 
 - `config.yaml`: `project: traefik`, its one environment `prod` and the
   release steps; no servers, which are the operator's.
@@ -29,7 +31,8 @@ Everything lives in `.devopsy/`:
   @<server>:prod setup`, or an alias, the address as typed in
   `DEVOPSY_COMMAND_TARGET`).
 - `lib/facts` and `lib/retry`: what Traefik knows about hosts (JSON) and
-  the retry router file, for `domains`. `lib/common.sh`: sourced by
+  the retry router file, for `domains`; `lib/domains/`: its report's jq
+  filters (`report.jq`, `text.jq`), files so the tests run them alone. `lib/common.sh`: sourced by
   commands and lib's scripts (`in_traefik`, `jq`, `quiet`, `env_set`,
   `hold_middleware`, `static_env`, `api_access`, `forget_apply`).
 - `mnt/` (on servers `shared/mnt`, never uploaded): `letsencrypt/` (ACME
@@ -476,16 +479,21 @@ Decided 2026-10-28, with the connectors' template
   routers), and the visitor gets a 307 to the same URL once a router
   answers, which the browser follows into the site on the compiled
   path. The 307 comes only on that evidence, never on a timeout, and
-  only once a probe of the URL answered down since an interval before
-  the hold (the router gone counts on a catch-all), so it cannot loop:
-  a 502 the probe does not meet (a POST that crashes the app, an app's
-  own 502 to one request, an `ipAllowList` refusing 127.0.0.1) gets the
-  page at once (review: it was a 307 back into the same 502, a POST
-  sent again until the browser's 20 redirects). Hence the first probe
-  at once, while a stop's port is still closed, and an up answer from
-  before the hold probed again. The evidence is the URL's, shared like
-  its probes: a visitor whose every round took another's answer saw no
-  down of its own.
+  once a probe of the URL answered down since an interval before the
+  hold (the router gone counts on a catch-all), so it cannot loop. A
+  502 the probe does not meet is a container restarted within a moment
+  (its stale router's 502, the site up again by the first probe) or one
+  the app gives that request itself (a POST that crashes it, an
+  `ipAllowList` refusing 127.0.0.1): the errors middleware passes
+  nothing of the response, so the hold cannot tell them apart, and
+  redirects once per visitor (`X-Real-Ip`) and URL within ten intervals
+  (`unseenOnce`), then gives the page. Review: a 307 back into the same
+  502 sent a POST again until the browser's 20 redirects; the page at
+  once instead failed the quick restart, which the tests' quick rounds
+  found. Hence the first probe at once, while a stop's port is still
+  closed, and an up answer from before the hold probed again. The
+  evidence is the URL's, shared like its probes: a visitor whose every
+  round took another's answer saw no down of its own.
 - **The 502 comes through the errors middleware, per router:** it is
   compiled code on the response path (a match only fetches from the
   hold service, Traefik itself on the loopback `hold` entrypoint, where
@@ -583,31 +591,53 @@ GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/proxies
 GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
 ```
 
-Run it locally on other ports, and route a `traefik/whoami` container
-through it (network `traefik`):
+The tests (`tests/`, Go behind the `e2e` tag, since every one needs
+Docker): the template on the real devopsy and a real Docker, never
+fakes (decided: the template's contract with devopsy, its environment,
+its commands found by their `## Description:` line, `run --rm --no-deps
+-T` as compose runs it, is what breaks when devopsy changes, and a fake
+would pass there).
 
 ```sh
-PROXY_HTTP_PORT=18080 PROXY_HTTPS_PORT=18443 \
-  PROXY_API_PORT=127.0.0.1:18081 devopsy deploy
+go test -tags e2e -count=1 -v ./tests                      # about a minute
+go test -tags e2e -count=1 -v -run '^TestHoldNot$' ./tests # one test
+DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
 ```
 
-Check all containers are healthy, `http://` redirects, `https://`
-reaches whoami, and the Traefik log has no new warnings. Then `devopsy
-down`.
+- Privileged Debian containers (`tests/Dockerfile`) as hosts, each its
+  own dockerd and the deploy user, devopsy installed in them (the latest
+  release, installed once and copied, else `DEVOPSY_BIN`, a linux
+  build), the checkout's `.devopsy/` copied in (`git ls-files`, so never
+  `.env` or `mnt`). A test takes a host for itself (`take`): the
+  networks have fixed names (`traefik`, `tunnel`) and the ports are the
+  host's. One scripts host, where script tests make and remove the
+  networks and nothing stays deployed, and `TESTS_LANES` (3) server
+  hosts, each with a Traefik of its own that the first scenario taking
+  it deploys (`traefik()`), so scenarios run that many at once. Docker
+  Hub through a mirror kept in a volume (`devopsy-traefik-tests-mirror`);
+  `TESTS_KEEP=1` leaves the containers.
+- A script test: `h, dir := project(t, name, env)` (a copy with its own
+  compose project and `.env`, taken down after), then `h.sh(dir, env,
+  "devopsy ...")`; `devopsy t '<shell>'` runs `lib/common.sh`'s
+  functions through devopsy (a command each copy gets, never the
+  template's). A scenario: `h := traefik(t)`, `h.site(...)` (a container
+  routed through it), then `h.request`, `h.during` (a request every 0.2
+  s around an action), `h.from` (curl on a network), `h.api`. A scenario
+  leaves its host's Traefik as it found it (`proxies add` removes its
+  proxy). Wait for what Traefik does (`h.routed`, `h.unrouted`), never
+  sleep for it.
 
-lib's scripts run directly with the project's environment loaded, for
-example `env $(devopsy --env | grep -v '^#' | xargs)
-DEVOPSY_PROJECT_DIR=$PWD/.devopsy sh .devopsy/lib/facts --all` (with the
-same test variables).
+CI (`ci.yml`, in this repository only) runs shellcheck, the plugins
+under Go and Yaegi, and the tests on every push.
 
-For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
+By hand still: what needs a real ACME, DNS, Cloudflare or a public IP
+(certificates, acme-dns registrations, a real tunnel, `domains` against
+real DNS), and a release onto a server (`check` before the switch,
+`mnt`'s owners, the proxy role, imports): on an OrbStack machine, as
+devopsy-cli's AGENTS.md describes at the end of its Checks, with Traefik
+on 18080 and 18443. For acme-dns, add `COMPOSE_PROFILES=acmedns`, a test
 `PROXY_ACMEDNS_DOMAIN` and `PROXY_ACMEDNS_PORT=15353`, then query it
 with `dig @127.0.0.1 -p 15353 <domain> SOA`.
-
-On macOS, OrbStack fakes ownership changes on bind mounts: test ownership,
-a release and the commands on an OrbStack Linux machine. End to end,
-with a template importing from it: on an OrbStack machine, as
-devopsy-cli's AGENTS.md describes at the end of its Checks.
 
 ## Commits
 

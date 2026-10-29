@@ -593,9 +593,11 @@ are covered:
   port. `hold@file` is Traefik's errors middleware: on that 502 it asks
   the hold, which tries the URL through Traefik at once, then every
   second until a router answers it with anything but a 502. A 502 that
-  try does not meet (one request crashing the app, an app's own 502 to
-  that request alone) is no stop: the visitor gets the page below at
-  once, never sent back into the same error.
+  first try does not meet is sent on once: a container restarted within
+  a moment (its old router's 502, the site already back) goes through;
+  a second such 502 for the same visitor and URL within 10 seconds gets
+  the page below at once, so a request the app itself answers 502 (one
+  that crashes it) is sent at most twice, never in a loop.
 - **The router gone.** While the container is stopped, recreating or
   unhealthy, Traefik has no router for its hosts. A catch-all router at
   the lowest priority holds a request for a host whose router named
@@ -621,7 +623,7 @@ middleware that changes the path (`stripPrefix`, `replacePath`): the
 errors middleware sees the URL as it reaches it, and the hold would
 try, and send the visitor to, the changed one. A site's `ipAllowList`
 must let the server's own `127.0.0.1` in, or every try is refused and
-nothing is held (the page at once). A project that does not name it
+nothing is held (one redirect, then the page). A project that does not name it
 gets Traefik's 502 and 404 as before.
 
 A project can still answer its own stops with a router on the app's rule
