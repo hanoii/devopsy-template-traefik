@@ -599,7 +599,7 @@ its commands found by their `## Description:` line, `run --rm --no-deps
 would pass there).
 
 ```sh
-go test -tags e2e -count=1 -v ./tests                      # about a minute
+go test -tags e2e -count=1 -v ./tests                      # under 2 minutes
 go test -tags e2e -count=1 -v -run '^TestHoldNot$' ./tests # one test
 DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
 ```
@@ -610,10 +610,13 @@ DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
   build), the checkout's `.devopsy/` copied in (`git ls-files`, so never
   `.env` or `mnt`). A test takes a host for itself (`take`): the
   networks have fixed names (`traefik`, `tunnel`) and the ports are the
-  host's. One scripts host, where script tests make and remove the
-  networks and nothing stays deployed, and `TESTS_LANES` (3) server
-  hosts, each with a Traefik of its own that the first scenario taking
-  it deploys (`traefik()`), so scenarios run that many at once. Docker
+  host's. Scripts hosts, where script tests make and remove the
+  networks or deploy a Traefik of their own (taken down after), and
+  server hosts, each with a Traefik that the first scenario taking it
+  deploys and the next ones share (`traefik()`): `TESTS_LANES` (3) of
+  those and one fewer of these run at once. A test that changes its
+  Traefik's settings or log (a resolver it lacks, a setting of its own)
+  deploys one on a scripts host instead. Docker
   Hub through a mirror kept in a volume (`devopsy-traefik-tests-mirror`);
   `TESTS_KEEP=1` leaves the containers.
 - A script test: `h, dir := project(t, name, env)` (a copy with its own
