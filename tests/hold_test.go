@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -105,5 +106,28 @@ func TestHoldNot(t *testing.T) {
 	out := h.sh("/", nil, `curl -sk -D - --resolve dead.example.com:443:127.0.0.1 -H 'X-Devopsy-Hold: no' https://dead.example.com/`)
 	if !strings.Contains(strings.ToLower(out), "x-devopsy-hold: down") || !strings.Contains(out, "Back in a moment") {
 		t.Errorf("the page:\n%s", out)
+	}
+}
+
+// What a site answers passes the hold's errors middleware as it comes: a
+// streamed response in its pieces, a WebSocket's upgrade.
+func TestHoldPassesThrough(t *testing.T) {
+	h := traefik(t)
+	h.site("stream", "stream.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), "busybox:1.37", "sh", "-c",
+		`mkdir -p /www/cgi-bin && printf '#!/bin/sh\necho "Content-Type: text/plain"\necho\necho one\nsleep 2\necho two\n' >/www/cgi-bin/stream &&
+		chmod 755 /www/cgi-bin/stream && exec httpd -f -p 80 -h /www`)
+	h.site("ws", "ws.example.com", hold, "")
+	// Seconds from the request to each line.
+	out := h.sh("/", nil, `start=$(date +%s%N); curl -skN --resolve stream.example.com:443:127.0.0.1 https://stream.example.com/cgi-bin/stream |
+		while IFS= read -r l; do echo "$(( ($(date +%s%N) - start) / 100000000 )) $l"; done`)
+	var first, second int
+	var a, b string
+	if n, _ := fmt.Sscan(out, &first, &a, &second, &b); n != 4 || a != "one" || b != "two" || first > 10 || second-first < 15 {
+		t.Errorf("the stream, tenths of a second per line:\n%s", out)
+	}
+	out, _ = h.shErr("/", nil, `curl -sk -i -N --http1.1 --max-time 3 --resolve ws.example.com:443:127.0.0.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+		-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://ws.example.com/echo`)
+	if !strings.HasPrefix(out, "HTTP/1.1 101") {
+		t.Errorf("the WebSocket's upgrade:\n%s", out)
 	}
 }
