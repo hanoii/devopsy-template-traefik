@@ -40,6 +40,11 @@ func traefik(t *testing.T) host {
 		deployedMu.Lock()
 		deployed[h.name] = err
 		deployedMu.Unlock()
+		if err == nil {
+			// Its router is the last thing deploy writes (api_access),
+			// read by Traefik a moment after deploy returns.
+			h.routed("devopsy-api@file")
+		}
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -288,5 +293,36 @@ func TestFacts(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &facts); err != nil || len(facts.Hosts) != 2 ||
 		facts.Hosts[0].Host != "facts-http.example.com" || !facts.Hosts[0].Routed || facts.Hosts[1].Routed {
 		t.Errorf("facts of two hosts: %v\n%s", err, out)
+	}
+}
+
+// lib/retry writes a router asking for the certificates again; a host
+// like *.example.org stays a word even where a file matches it (set -f).
+func TestRetry(t *testing.T) {
+	h := traefik(t)
+	h.site("retry", "www.retry.example.org", []string{"routers.<name>.tls.domains[0].main=*.retry.example.org"}, "")
+	h.sh(proxy, nil, `touch www.retry.example.org`)
+	h.sh(proxy, nil, `devopsy t '"$dir/lib/retry" globs "*.retry.example.org" www.retry.example.org'`)
+	t.Cleanup(func() { _, _ = h.shErr(proxy, nil, `devopsy t '"$dir/lib/retry" globs --done'`) })
+	out := h.sh(proxy, nil, `cat .devopsy/mnt/dynamic/devopsy-retry-globs.yaml`)
+	if !strings.Contains(out, "- main: '*.retry.example.org'\n") || !strings.Contains(out, "- main: 'www.retry.example.org'\n") ||
+		!strings.Contains(out, "certResolver: le-http01") {
+		t.Fatalf("the retry file:\n%s", out)
+	}
+	h.sh(proxy, nil, `devopsy t '"$dir/lib/retry" globs --done'`)
+	if _, err := h.shErr(proxy, nil, `test -e .devopsy/mnt/dynamic/devopsy-retry-globs.yaml`); err == nil {
+		t.Error("--done left the file")
+	}
+}
+
+// lib/facts reads Traefik's API from inside its container, where the
+// Docker client's proxy settings reach too and busybox's wget ignores
+// no_proxy: a dead proxy there changes nothing (wget -Y off).
+func TestFactsBehindAProxy(t *testing.T) {
+	h := traefik(t)
+	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":""}}}' >/tmp/proxied/config.json`)
+	out := h.sh(proxy, map[string]string{"DOCKER_CONFIG": "/tmp/proxied"}, `devopsy t '"$dir/lib/facts" --all' 2>&1`)
+	if !strings.Contains(out, `"hosts"`) {
+		t.Fatalf("facts behind a dead proxy:\n%s", out)
 	}
 }
