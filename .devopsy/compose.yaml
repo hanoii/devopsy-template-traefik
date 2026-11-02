@@ -58,11 +58,10 @@ services:
       - devopsy.role=proxy
       - devopsy.export.BASE_DOMAIN=${PROXY_BASE_DOMAIN:-}
       # devopsy creates mnt/letsencrypt and gives it, and everything in it,
-      # to this UID before the run step: shared/mnt starts empty and
-      # belongs to the deploy user, which cannot chown. Keep it in step
-      # with user. Traefik creates its ACME files with mode 600, which it
-      # insists on (see AGENTS.md).
-      - devopsy.mnt.owner=10001:10001
+      # to user: below before the run step: shared/mnt starts empty and
+      # belongs to the deploy user, which cannot chown. Traefik creates its
+      # ACME files with mode 600, which it insists on (see AGENTS.md).
+      - devopsy.mnt.owner=user
       # Traefik loads its local plugins when it starts, and a release that
       # changes only them would not restart it: deploy keeps their checksum
       # here, so it recreates it.
@@ -247,9 +246,9 @@ services:
     environment:
       - ACMEDNS_DOMAIN=${PROXY_ACMEDNS_DOMAIN-}
     labels:
-      # devopsy gives mnt/acmedns to this UID, like mnt/letsencrypt above.
-      # acme-dns creates its database with mode 600.
-      - devopsy.mnt.owner=10001:10001
+      # devopsy gives mnt/acmedns to user: below, like mnt/letsencrypt
+      # above. acme-dns creates its database with mode 600.
+      - devopsy.mnt.owner=user
     # acme-dns only reads a config file: write it from the environment.
     entrypoint: ['/bin/sh', '-c']
     command:
