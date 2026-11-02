@@ -64,8 +64,8 @@ uploads (`mode: image`); `tests/` (with the root's `go.mod`) and
 - **Containers run as `10001`,** like every devopsy project's, never as
   the deploy user, who is in the docker group. `mnt/letsencrypt` and
   `mnt/acmedns` are 10001's (devopsy gives them, with everything in
-  them, before the run step: `devopsy.mnt.owner` on `traefik` and
-  `acmedns`), their files mode 600: scripts touch them only through
+  them, before the run step: `devopsy.mnt.owner=user` on `traefik` and
+  `acmedns`, their `user:`), their files mode 600: scripts touch them only through
   `in_traefik`, a one-off Traefik container as 10001. The host needs no
   `jq`, `curl` or `sqlite`: the `tools` services and Traefik's `wget`
   cover them.
@@ -191,7 +191,8 @@ uploads (`mode: image`); `tests/` (with the root's `go.mod`) and
 ### Settings and ownership
 
 - **devopsy gives `mnt/letsencrypt` and `mnt/acmedns` to 10001,**
-  through `devopsy.mnt.owner=10001:10001` on `traefik` and `acmedns`:
+  through `devopsy.mnt.owner=user` on `traefik` and `acmedns`, which
+  takes each one's `user:` (so the two never drift apart):
   `shared/mnt` starts empty, Docker creates missing bind-mount
   directories as root, and the deploy user cannot chown to 10001. Before
   the run step devopsy creates each entry (mode 755) and gives it, and
