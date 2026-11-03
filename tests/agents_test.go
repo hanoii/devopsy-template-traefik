@@ -16,7 +16,7 @@ import (
 const repoRoot = ".."
 
 // rootDoc is the agents' root file, from the repository's root.
-const rootDoc = "AGENTS.new.md"
+const rootDoc = "AGENTS.md"
 
 // Every path, shell word and Go name the agents' rules cite in code
 // spans exists: a rename or a removal that leaves the rules behind fails
@@ -94,14 +94,15 @@ var (
 )
 
 // isPath says whether a span is a path of the repository's. The
-// runtime's (mnt/, shared/, a server's) are none.
+// runtime's (mnt/, shared/, a server's) and a checkout's own, never
+// committed (config.local.yaml), are none.
 func isPath(span string) bool {
 	for _, p := range []string{"mnt/", ".devopsy/mnt", "shared/"} {
 		if strings.HasPrefix(span, p) {
 			return false
 		}
 	}
-	return pathSpan.MatchString(span)
+	return pathSpan.MatchString(span) && !strings.HasSuffix(span, "config.local.yaml")
 }
 
 // paths are the repository's files and directories, slash separated
