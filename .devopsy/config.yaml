@@ -1,6 +1,6 @@
-# devopsy config: see devopsy-cli's README, "Servers".
+# devopsy config: see devopsy-cli's docs/config.md.
 # One environment, prod, on every server: devopsy @<server>:prod, or an
-# alias in the user-level ~/.config/devopsy/config.yaml (README, Setup).
+# alias in the user-level ~/.config/devopsy/config.yaml (README.md, Setup).
 project: traefik
 secrets: [PROXY_CLOUDFLARE_DNS_API_TOKEN]
 defaults:

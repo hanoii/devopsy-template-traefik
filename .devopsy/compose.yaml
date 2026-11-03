@@ -51,7 +51,7 @@ services:
   traefik:
     restart: unless-stopped
     image: traefik:v3.7
-    # For devopsy (see its README, "Roles, exports and imports"): this is the
+    # For devopsy (devopsy-cli's docs/roles.md): this is the
     # host's proxy, and projects importing proxy/BASE_DOMAIN get the
     # server's base domain (empty: none) in each release.
     labels:
@@ -167,7 +167,7 @@ services:
       - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
 
       # DNS-01 through Cloudflare's API. Always defined; it only works with
-      # PROXY_CLOUDFLARE_DNS_API_TOKEN in .env (see README.md). Same account
+      # PROXY_CLOUDFLARE_DNS_API_TOKEN in .env (see docs/certificates.md). Same account
       # and CA as le-http01. Propagation is checked against the host's
       # resolvers (Docker's embedded DNS, 127.0.0.11), then public ones: lego
       # asks the next one when a resolver fails or has no answer yet. Then

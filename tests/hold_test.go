@@ -47,7 +47,7 @@ func TestHoldClosedPort(t *testing.T) {
 
 // A HostRegexp router is remembered by no read: its 502 while the app
 // closes its port is held all the same, probed through every entrypoint
-// (once the container is gone its host gets the usual 404: README).
+// (once the container is gone its host gets the usual 404: docs/hold.md).
 func TestHoldHostRegexp(t *testing.T) {
 	h := traefik(t)
 	h.site("regexp", "HostRegexp(`^regexp[.]example[.]com$`)", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
