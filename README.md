@@ -547,7 +547,7 @@ connected to Cloudflare. Tunneled hosts are left out of the `devopsy
 
 What a tunnel and Cloudflare's Free plan give, and what stays yours. The
 host's half (firewall, SSH, upgrades, backups) is in
-[devopsy-server's README](https://github.com/hanoii/devopsy-server#things-to-know).
+[devopsy-server's "Things to know"](https://github.com/hanoii/devopsy-server/blob/main/docs/things-to-know.md).
 
 Covered, on the Free plan:
 
