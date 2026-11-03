@@ -8,8 +8,8 @@ project on it, with automatic Let's Encrypt certificates. It is run with
   opts in with `traefik.enable=true`.
 - Traefik never mounts the Docker socket. It reads a filtered, read-only
   API through [socket-proxy](https://github.com/wollomatic/socket-proxy).
-- Sites can be served only through a Cloudflare Tunnel, with no port open
-  but SSH (devopsy-template-cloudflared).
+- Optionally, sites are served only through a Cloudflare Tunnel, with no
+  port open but SSH (devopsy-template-cloudflared).
 - HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by
   default, or DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are

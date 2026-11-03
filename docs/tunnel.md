@@ -22,7 +22,8 @@ released after this one. This template always has the other end:
 - trust of that network's subnet, which every `deploy` reads from Docker.
   From that subnet, Traefik takes the visitor's IP from `CF-Connecting-IP`
   (through the proxies plugin, built in: `devopsy proxies` lists it) and
-  sets `X-Forwarded-Proto: https`, so applications build `https://` URLs.
+  keeps the connector's `X-Forwarded-Proto: https`, so applications build
+  `https://` URLs.
   A request to port 8081 from anywhere else (another project on the
   `traefik` network) is not trusted.
 

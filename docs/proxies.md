@@ -34,9 +34,9 @@ server, since each request is judged by who connected.
 The proxies are kept in `mnt/proxies/proxies.conf`. Traefik restarts when
 the first proxy is added, when the last one is removed, or when the ranges
 of an `X-Forwarded-For` or `X-Real-Ip` proxy change, since those proxies
-are also trusted for Traefik's forwarded headers. Nothing else restarts
-it. Those are static settings, which `deploy` and `devopsy proxies` write
-together in `mnt/traefik.env`.
+are also trusted for Traefik's forwarded headers. No other change of
+proxies restarts it. Those are static settings, which `deploy` and
+`devopsy proxies` write together in `mnt/traefik.env`.
 
 Every `deploy`, so every release, fetches the URL ranges again.
 Cloudflare's change rarely. To refresh them in between, schedule `devopsy
