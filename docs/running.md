@@ -10,7 +10,7 @@ profile on (`COMPOSE_PROFILES`) needs a release, which pulls the profile's
 image.
 
 A release first runs `check`, which refuses, before anything changes, the
-settings Traefik would take without a word: a resolver it lacks, or one
+settings Traefik would accept silently: a resolver it lacks, or one
 that nothing answers. Then each release runs `deploy`, which prepares
 `mnt/`, writes the public wildcard certificate, refreshes the trusted
 proxies' ranges and starts or updates every service.
@@ -23,10 +23,10 @@ Upgrading is a release from a newer checkout, and `devopsy @vm1-traefik
 --rollback` goes back. Routed sites are without Traefik for a few seconds
 while its container is recreated.
 
-Traefik floats on its minor (`traefik:v3.7`): every release pulls the
-image again, so patches arrive with your next release. A new minor brings
-[migration notes](https://doc.traefik.io/traefik/migrate/v3/) and a new
-Yaegi for the plugins, so you move to it by editing the tag in
+The Traefik image tracks its minor version (`traefik:v3.7`), and every
+release pulls it again, so patches arrive with your next release. A new
+minor brings [migration notes](https://doc.traefik.io/traefik/migrate/v3/)
+and a new Yaegi for the plugins. To move to it, edit the tag in
 `.devopsy/compose.yaml`. socket-proxy, acme-dns and the tools (jq, curl)
 publish no minor tag, so they stay pinned exactly.
 

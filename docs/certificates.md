@@ -1,7 +1,7 @@
 # Certificates
 
-There are three resolvers, all Let's Encrypt, named by CA (`le`), ACME
-challenge and, for DNS-01, who answers it. Every router uses this server's
+There are three resolvers, all Let's Encrypt. Their names give the CA
+(`le`), the ACME challenge and, for DNS-01, who answers it. Every router uses this server's
 default, `PROXY_CERTRESOLVER` in `.env` (`le-http01` when unset), unless
 it picks one with `traefik.http.routers.<name>.tls.certresolver=<resolver>`.
 The site templates leave the choice to the server unless their own
@@ -78,7 +78,7 @@ Token > Custom token) with:
 - Permissions: Zone > Zone > Read, and Zone > DNS > Edit, nothing else.
   Read finds a record's zone, and Edit writes the challenge's TXT record.
 - Zone resources: Include > Specific zone, only the zones that receive
-  challenge records, never "All zones".
+  challenge records. Do not pick "All zones".
 - Client IP filtering, optionally: the server's IP, so the token is
   useless anywhere else.
 
@@ -104,15 +104,15 @@ devopsy @vm1-traefik --vars set --show PROXY_DNS_SKIP_CHECKS PROXY_DNS_PROPAGATI
 
 Checking through the host's resolver alone does not work. Traefik looks
 the name up before writing the record, and the resolver caches that it
-does not exist, for up to the zone's negative TTL. Waiting is reliable:
-Cloudflare's API writes the record within seconds, and Let's Encrypt asks
+does not exist, for up to the zone's negative TTL. Waiting works because
+Cloudflare's API writes the record within seconds and Let's Encrypt asks
 the authoritative nameservers itself.
 
 ## DNS-01 for any domain: CNAME delegation
 
 Let's Encrypt checks a TXT record at `_acme-challenge.<domain>`. It
-follows a CNAME there, and so does Traefik when it writes the record. So a
-domain can hand its challenge to a zone you control, without giving you
+follows a CNAME there, and so does Traefik when it writes the record. This
+lets a domain hand its challenge to a zone you control, without giving you
 access to its DNS:
 
 1. Add a dedicated domain to Cloudflare as its own zone, used only for
@@ -131,10 +131,10 @@ access to its DNS:
    the CNAME, writes the TXT record at `client.org.example-acme.com` and
    removes it once the domain is validated. Renewals need nothing more.
 
-The token then needs only the challenge zone, however many domains
-delegate to it. The zones the sites live in stay out of its reach, even
-when they are on Cloudflare too. That makes this the safest setup, not
-only the one for outside domains.
+The token needs only the challenge zone, however many domains delegate
+to it, and the zones the sites live in stay out of its reach, even when
+they are on Cloudflare too. This makes it the safest setup for your own
+domains as well.
 
 Keep the CNAME as long as the site uses the `le-dns01-cloudflare`
 resolver. Removing it breaks the next renewal, about 30 days before
