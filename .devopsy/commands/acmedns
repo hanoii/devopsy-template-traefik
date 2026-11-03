@@ -2,7 +2,7 @@
 ## Description: DNS records the le-dns01-selfhosted resolver needs (delegation, a CNAME per certificate)
 # Prints the DNS records the le-dns01-selfhosted resolver needs: the one-time delegation
 # of PROXY_ACMEDNS_DOMAIN to this server, and one CNAME per certificate Traefik
-# has registered with acme-dns. See README.md.
+# has registered with acme-dns. See docs/certificates.md.
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 

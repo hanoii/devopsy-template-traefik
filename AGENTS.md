@@ -80,6 +80,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - `.devopsy/mnt/` (on servers `shared/mnt`, never uploaded) holds the ACME stores, acme-dns's database, Traefik's file provider (`mnt/dynamic/`), the proxies' list, `mnt/traefik.env` (the static settings) and `mnt/forget.pending`.
 - `.devopsy/plugins-local/` holds the local Traefik plugins, `proxies` and `hold`, run by Yaegi: standard library only.
 - `tests/` (with the root's `go.mod`) and `.github/workflows/ci.yml` are the checks.
+- `README.md` and `docs/` are what users see: a change to behavior changes the doc that covers it (each area's line names it, `docs/running.md` the settings and upgrades) in the same commit.
 
 ## Rules
 
@@ -100,7 +101,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - An image built here has no setuid binaries or file capabilities it does not need.
 - Images float on the series upstream patches (for example `traefik:v3.7`), never `latest` or a major tag; a minor is bumped by hand, in a commit, after reading every migration note in between (`https://doc.traefik.io/traefik/migrate/v3/`): a minor brings migration notes and a new Yaegi for the plugins.
 - What publishes no minor tag is pinned exactly (socket-proxy, acme-dns, jq, curl), socket-proxy's release notes read on every upgrade: its allow-list flags are security settings.
-- A pinned name changes with a bump, so a rollback across one goes back exactly, while a floating name goes forward on a rollback (devopsy-cli's README, "Choosing tags").
+- A pinned name changes with a bump, so a rollback across one goes back exactly, while a floating name goes forward on a rollback (devopsy-cli's docs, "Choosing tags").
 - `setup` keeps no state: it drives the other commands through its target and sets values with `--vars set` from its environment, never as arguments.
 - No migration code: a breaking change to `shared/` is moved by hand on each server.
 
@@ -144,10 +145,10 @@ go test -count=1 ./tests                                   # the agents' names a
 
 Each area is read when its line says so; its history, `internals/<area>.history.md`, as Workflow's Docs says. The root's own sections have `internals/rules.history.md`, `internals/releases.history.md` and `internals/checks.history.md`.
 
-- `internals/certificates.md`: the resolvers and their names, a router's `tls` label, when Traefik requests or retries a certificate, the ACME stores and `forget`, acme-dns, DNS-01 checks and `check_settings` (`commands/letsencrypt`, `acmedns`, `forget`, `check`, `lib/retry`, `check_settings` and `forget_apply` in `lib/common.sh`); read when a task touches a certificate, a resolver, acme-dns or `PROXY_DNS_*`.
-- `internals/proxies.md`: the `proxies` plugin, the forwarded headers and `Forwarded`, Yaegi's limits, plugins loaded again (`plugins-local/.../proxies/`, `commands/proxies`, `mnt/proxies/`); read when a task touches a plugin, a proxy in front, the client IP or a forwarded header.
-- `internals/network.md`: the `traefik` network and its aliases, the socket proxy, Traefik read-only, the API's access, `PROXY_READ_TIMEOUT`, an HTTP proxy on the host (`compose.yaml`, `api_access` in `lib/common.sh`); read when a task touches a network, the socket proxy, the API or an entrypoint's settings.
-- `internals/domains.md`: the domains report, checked from the server (`commands/domains`, `lib/facts`, `lib/domains/`); read when a task touches `domains`.
-- `internals/tunnel.md`: the tunnel end, its trust, default entrypoints and `PROXY_TUNNEL_ONLY` (`tunnel_subnet` and `static_env` in `lib/common.sh`, `commands/setup`); read when a task touches Cloudflare Tunnel or which entrypoints a router gets.
-- `internals/hold.md`: holding visitors through a site's stop, the errors middleware, the catch-all, stopped and paused containers (`plugins-local/.../hold/`, `hold_middleware` in `lib/common.sh`); read when a task touches what a visitor gets while a site is down.
+- `internals/certificates.md`: the resolvers and their names, a router's `tls` label, when Traefik requests or retries a certificate, the ACME stores and `forget`, acme-dns, DNS-01 checks and `check_settings` (`commands/letsencrypt`, `acmedns`, `forget`, `check`, `lib/retry`, `check_settings` and `forget_apply` in `lib/common.sh`); its user doc `docs/certificates.md`; read when a task touches a certificate, a resolver, acme-dns or `PROXY_DNS_*`.
+- `internals/proxies.md`: the `proxies` plugin, the forwarded headers and `Forwarded`, Yaegi's limits, plugins loaded again (`plugins-local/.../proxies/`, `commands/proxies`, `mnt/proxies/`); its user doc `docs/proxies.md`; read when a task touches a plugin, a proxy in front, the client IP or a forwarded header.
+- `internals/network.md`: the `traefik` network and its aliases, the socket proxy, Traefik read-only, the API's access, `PROXY_READ_TIMEOUT`, an HTTP proxy on the host (`compose.yaml`, `api_access` in `lib/common.sh`); its user docs `README.md` (Routing a project), `docs/running.md`; read when a task touches a network, the socket proxy, the API or an entrypoint's settings.
+- `internals/domains.md`: the domains report, checked from the server (`commands/domains`, `lib/facts`, `lib/domains/`); its user doc `docs/domains.md`; read when a task touches `domains`.
+- `internals/tunnel.md`: the tunnel end, its trust, default entrypoints and `PROXY_TUNNEL_ONLY` (`tunnel_subnet` and `static_env` in `lib/common.sh`, `commands/setup`); its user doc `docs/tunnel.md`; read when a task touches Cloudflare Tunnel or which entrypoints a router gets.
+- `internals/hold.md`: holding visitors through a site's stop, the errors middleware, the catch-all, stopped and paused containers (`plugins-local/.../hold/`, `hold_middleware` in `lib/common.sh`); its user doc `docs/hold.md`; read when a task touches what a visitor gets while a site is down.
 - `internals/tests.md`: the test hosts, lanes, script tests, scenarios and releases (`tests/`); read before writing or changing a test.

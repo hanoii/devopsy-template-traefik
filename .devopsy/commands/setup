@@ -298,7 +298,7 @@ case $choice in
     else
       dns01=le-dns01-cloudflare
       say "A Cloudflare token: Zone > Zone > Read and Zone > DNS > Edit, for the
-zone of $domain only (README.md, \"Cloudflare API token\")."
+zone of $domain only (docs/certificates.md, \"Cloudflare API token\")."
       if [ -n "$(current PROXY_CLOUDFLARE_DNS_API_TOKEN)" ] &&
         ! confirm "A token is already set. Replace it?" n; then
         :
