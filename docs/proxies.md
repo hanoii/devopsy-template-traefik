@@ -27,8 +27,8 @@ sent: `X-Forwarded-Host` and `-Port` come from the request's `Host`, and
 the rest are removed (`Forwarded` too, as from anyone). Only
 `X-Forwarded-For` and `-Proto` come from the proxy.
 
-Any other request loses the proxies' headers, so nobody can spoof them by
-reaching the server directly. Proxied and direct sites work on the same
+Any other request loses the proxies' headers, so they cannot be spoofed
+by reaching the server directly. Proxied and direct sites work on the same
 server, since each request is judged by who connected.
 
 The proxies are kept in `mnt/proxies/proxies.conf`. Traefik restarts when
@@ -38,8 +38,8 @@ are also trusted for Traefik's forwarded headers. No other change of
 proxies restarts it. Those are static settings, which `deploy` and
 `devopsy proxies` write together in `mnt/traefik.env`.
 
-Every `deploy`, so every release, fetches the URL ranges again.
-Cloudflare's change rarely. To refresh them in between, schedule `devopsy
+`deploy`, which every release runs, fetches the URL ranges again.
+Cloudflare's ranges change rarely. To refresh them in between, schedule `devopsy
 @vm1-traefik proxies refresh` from CI or locally, or add a cron to the
 deploy user's crontab on the server; the release lock keeps it out of a
 release. The cron below assumes the release root is the deploy user's
@@ -51,6 +51,6 @@ home:
 
 Load balancers that pass TCP connections with the PROXY protocol (HAProxy,
 most cloud network load balancers) need no plugin, since Traefik supports
-the protocol natively: set
+the protocol natively. Set
 `TRAEFIK_ENTRYPOINTS_WEBSECURE_PROXYPROTOCOL_TRUSTEDIPS` in a compose
 override, for example.

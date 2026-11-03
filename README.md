@@ -8,15 +8,15 @@ project on it, with automatic Let's Encrypt certificates. It is run with
   opts in with `traefik.enable=true`.
 - Traefik never mounts the Docker socket. It reads a filtered, read-only
   API through [socket-proxy](https://github.com/wollomatic/socket-proxy).
-- Optionally, sites are served only through a Cloudflare Tunnel, with no
-  port open but SSH (devopsy-template-cloudflared).
+- Optionally, sites are served only through a Cloudflare Tunnel, with
+  only SSH open (devopsy-template-cloudflared).
 - HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by
   default, or DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
-  dropped, so they cannot fool PHP backends. So is a visitor's `Forwarded`
-  (RFC 7239), which Traefik itself would pass on: an app that trusts
-  Traefik as its reverse proxy never takes a visitor's host or scheme from
-  it.
+  dropped, since PHP backends would read them as the real ones. A
+  visitor's `Forwarded` header (RFC 7239), which Traefik itself would pass
+  on, is dropped too, so an app that trusts Traefik as its reverse proxy
+  cannot take a visitor's host or scheme from it.
 - Traefik and acme-dns run as UID 10001, like every devopsy project's
   containers, never as the deploy user. They have no capabilities, a
   read-only root filesystem and `no-new-privileges`, and devopsy gives
@@ -25,15 +25,15 @@ project on it, with automatic Let's Encrypt certificates. It is run with
 - It is released like any devopsy project: upgrades and changes of
   settings are releases, and a bad one rolls back.
 - The host needs only Docker and devopsy. The commands use Traefik's own
-  `wget` and the jq, curl and Python images (profile `tools`: sqlite is
-  Python's module, curl the `curlimages/curl` image).
+  `wget` and the jq, curl and Python images (profile `tools`; sqlite
+  comes from Python's module, curl from the `curlimages/curl` image).
 
 ## Using this template
 
-It is a starting point to own, not a dependency. Start a project from it
+This template is meant to be copied and changed. Start a project from it
 on GitHub ("Use this template"), or clone it and keep this repository as a
-remote (`upstream`) to pull its changes when you choose. Nothing but your
-own release updates your copy or what runs on your servers.
+remote (`upstream`) to pull its changes when you choose. Your copy and your
+servers change only when you release.
 
 The other templates (whoami, drupal11, registry) route through it and
 import its base domain, so a change here can break them. Keep its
@@ -75,8 +75,8 @@ same by hand.
 Its one environment, `prod`, is the same on every server: `devopsy
 @<server>:prod` from your checkout (`traefik/prod` under the server's
 release root, compose project `traefik-prod`). Add an alias per server to
-your user config, with `source:` naming your checkout. Releases then run
-only from there, and every other command works from any directory.
+your user config, with `source:` naming your checkout. Releases run only
+from there, and every other command works from any directory.
 
 ```yaml
 # ~/.config/devopsy/config.yaml
@@ -117,8 +117,8 @@ networks:
 Router names must be unique on the host, so prefix them with the project
 name.
 
-The `traefik` network is shared: every container on it can reach every
-other one, on any port, without going through Traefik. So:
+Every container on the shared `traefik` network can reach every other
+one, on any port, without going through Traefik:
 
 - Only the service Traefik routes joins it. Databases, caches and workers
   stay on the project's own network.
@@ -126,8 +126,7 @@ other one, on any port, without going through Traefik. So:
   service's only protection, since another project's container reaches it
   directly. The application checks access itself.
 
-That is fine for projects that trust each other, the usual case on a
-server. Projects that do not belong on separate servers.
+Projects that do not trust each other belong on separate servers.
 
 ## Documentation
 
