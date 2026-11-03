@@ -3,6 +3,7 @@ History, not rules: `internals/proxies.md` wins where they differ.
 - The plugin changing the request's remote address, and Traefik building X-Forwarded-For from it, was verified on v3.7.13.
 - Yaegi's lost flushes: it hands a plugin's ResponseWriter wrapper to Go code as ResponseWriter plus Hijacker, never Flusher (yaegi v0.16.1, `stdlib/wrapper-composed.go`; traefik/traefik#10269). Websockets work through a wrapper (checked on v3.7.13).
 - Yaegi's loop variable and map assignment (v0.16.1, 2026-10-28): `for page := 1; ; { ... page = next }` read the first page forever.
+- Yaegi's unnamed parameters (v0.16.1, 2026-11-03): the hold's `CheckRedirect` was `func(*http.Request, []*http.Request) error`, and Go's client panicked calling it with `reflect.Set: value of type *http.Request is not assignable to type error`. The same function with named or `_` parameters ran; checked under `yaegi run`.
 - Yaegi's `select` deadlock (2026-10-29): ten held requests each in `select { case <-ctx.Done(): case <-time.After(d): }` ended in "all goroutines are asleep".
 - `TRAEFIK_EXPERIMENTAL_ABORTONPLUGINFAILURE` was checked on v3.7.13 with a broken plugin: skipped, every router went while the container looked healthy.
 - The plugins' checksum label came after a release changing only a plugin neither recreated nor restarted Traefik, and the old plugin ran on (seen on a test machine, 2026-10-28, where a `devopsy restart` did not load the new one either).

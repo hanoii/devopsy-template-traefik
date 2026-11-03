@@ -8,6 +8,8 @@ Holding a site's visitors through its app's stop, rather than a 502 or a 404, fo
 - Each probe is a new request through Traefik's own entrypoint, so through its current routers, and the visitor gets a 307 to the same URL once a router answers, which the browser follows into the site.
 - The 307 comes only on that evidence, never on a timeout, and only once a probe of the URL answered down since an interval before the hold (the router gone counts, on a catch-all), so it cannot loop.
 - The first probe goes at once, while a stopping app's port is still closed, and an up answer from before the hold is probed again.
+- A probe follows no redirect: a site's redirect is its answer, so the site is up.
+- A probe ended without an answer (a visitor gone, the deadline, a panic) leaves no mark on its URL, since a mark left would keep the URL from any later probe.
 - The evidence is the URL's, shared like its probes, since a visitor whose every round took another's answer sees no down of its own.
 - A 502 the probe does not meet (a container restarted within a moment, or one the app gives that request itself) is redirected once per visitor (`X-Real-Ip`) and URL within ten intervals (`unseenOnce`), then the page is given: the errors middleware passes nothing of the response, so the hold cannot tell them apart.
 

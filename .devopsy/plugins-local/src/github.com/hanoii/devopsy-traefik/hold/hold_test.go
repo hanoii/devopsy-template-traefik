@@ -18,6 +18,7 @@ type entrypoint struct {
 	mu     sync.Mutex
 	up     bool
 	status int
+	moved  string // Location of a redirect, when status is one
 	seen   []*http.Request
 }
 
@@ -29,6 +30,9 @@ func (e *entrypoint) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set(Header, "down")
 		rw.WriteHeader(http.StatusBadGateway)
 		return
+	}
+	if e.moved != "" {
+		rw.Header().Set("Location", e.moved)
 	}
 	rw.WriteHeader(e.status)
 }
@@ -110,6 +114,55 @@ func TestHoldUntilUp(t *testing.T) {
 	// As the visitor, never as Traefik's own forwarding.
 	if p.Header.Get(Header) != "probe" || p.Header.Get("Cookie") != "session=1" || p.Header.Get("X-Forwarded-For") != "" {
 		t.Fatalf("probe headers: %v", p.Header)
+	}
+}
+
+// A site that redirects is up, and the visitor gets the 307 to its own URL
+// to follow it from there. Only yaegi test shows this, and only with a
+// Location: an http.Client called the plugin's CheckRedirect then, and Yaegi
+// panicked on its unnamed parameters.
+func TestHoldProbeRedirected(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{moved: "/elsewhere"}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "10s")
+
+	time.AfterFunc(50*time.Millisecond, func() { ep.set(true, http.StatusFound) })
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/moved"))
+	if rec.Code != http.StatusTemporaryRedirect || rec.Header().Get("Location") != "https://app.example.com/moved" {
+		t.Fatalf("got %d to %q, want a 307 to the same URL", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// A probe that panics takes its mark with it: otherwise no probe of the URL
+// ever runs again, and every later visitor waits the whole hold for the page,
+// until Traefik restarts.
+func TestHoldProbePanics(t *testing.T) {
+	routed(t)
+	ep := &entrypoint{}
+	ep.set(true, http.StatusOK)
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	h := newHold(t, "", srv.URL, "1s").(*Hold)
+	working := h.probes["websecure"]
+
+	h.probes["websecure"] = &prober{scheme: "http"} // no transport: it panics
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the probe did not panic")
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), fromErrors("https://app.example.com/panics"))
+	}()
+
+	h.probes["websecure"] = working
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, fromErrors("https://app.example.com/panics"))
+	if rec.Code != http.StatusTemporaryRedirect || len(ep.probes()) == 0 {
+		t.Fatalf("got %d after %d probes, want the URL probed again and a 307", rec.Code, len(ep.probes()))
 	}
 }
 

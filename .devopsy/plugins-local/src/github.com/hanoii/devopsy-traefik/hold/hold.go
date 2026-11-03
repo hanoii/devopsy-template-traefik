@@ -111,10 +111,11 @@ type Hold struct {
 
 // prober sends probes to one of Traefik's entrypoints, whatever host the
 // probe names: the host goes in the URL (SNI and Host), the dial goes to the
-// entrypoint. No proxy: Traefik's own address.
+// entrypoint. No proxy: Traefik's own address. A transport, never a client: it
+// follows no redirect, which is a site's answer like any other.
 type prober struct {
-	scheme string
-	client *http.Client
+	scheme    string
+	transport *http.Transport
 }
 
 func newProber(address string) (*prober, error) {
@@ -131,16 +132,13 @@ func newProber(address string) (*prober, error) {
 		addr = net.JoinHostPort(u.Hostname(), port)
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	return &prober{scheme: u.Scheme, client: &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, addr)
-			},
-			// Traefik's own certificate, in its own container.
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			DisableKeepAlives: true,
+	return &prober{scheme: u.Scheme, transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, addr)
 		},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		// Traefik's own certificate, in its own container.
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		DisableKeepAlives: true,
 	}}, nil
 }
 
@@ -163,7 +161,7 @@ func (p *prober) up(ctx context.Context, target *url.URL, visitor http.Header) b
 		req.Header[k] = v
 	}
 	req.Header.Set(Header, "probe")
-	resp, err := p.client.Do(req)
+	resp, err := p.transport.RoundTrip(req)
 	if err != nil {
 		return false
 	}
@@ -387,19 +385,29 @@ func (h *Hold) up(ctx context.Context, ps []*prober, deadline, since time.Time, 
 	mu.Unlock()
 	pctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	// Without an answer the mark goes, whatever ended the probe: left in, a
+	// panic would keep the URL from any probe until Traefik restarts.
+	answered := false
+	defer func() {
+		if !answered {
+			mu.Lock()
+			probed[key] = st
+			mu.Unlock()
+		}
+	}()
 	up := false
 	for _, p := range ps {
 		if up = p.up(pctx, target, visitor); up {
 			break
 		}
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	if !up && pctx.Err() != nil {
 		// Cut by the visitor leaving or the deadline: no answer.
-		probed[key] = st
 		return answerNone
 	}
+	answered = true
+	mu.Lock()
+	defer mu.Unlock()
 	st = probeState{at: time.Now(), up: up, down: st.down}
 	if !up {
 		st.down = st.at
