@@ -21,7 +21,7 @@ unhealthy, and a request in that window hits the closed port and gets a
 the hold. The hold tries the URL through Traefik at once, then every
 second, until a router answers with something other than a 502.
 
-If the first try gets no 502, the request is passed on once. That lets
+If the first try gets no 502, the visitor is redirected once. That lets
 through a container that restarted within a moment, when the 502 came
 from its old router and the site is already back. A second such 502 for
 the same visitor and URL within 10 seconds gets the "back in a moment"
@@ -46,7 +46,7 @@ status, and browsers show the page.
 
 ## What is held
 
-- The hold only redirects. The site's response reaches the visitor
+- The hold redirects the visitor, and the site's response reaches them
   directly, so streamed responses keep their flushes.
 - Only clients that follow redirects are held. Browsers do; WebSockets do
   not.
@@ -80,5 +80,5 @@ A project can answer its own stops with a router on the app's rule at
 `alwaysup` does this with a Caddy that waits for the app and shows its own
 maintenance page. Give that router the app's certificate resolver label as
 well. Leave its service without a `devopsy.data` label and without a
-`depends_on` on the app, which would stop it with the app, and a sync or
-an import leaves it running.
+`depends_on` on the app, which would stop it with the app. A sync or an
+import then never stops it.

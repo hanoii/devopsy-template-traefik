@@ -61,8 +61,8 @@ reach.
    again without a restart ([Checking
    domains](domains.md#checking-domains)). Renewals need nothing more.
 
-Each domain's credentials can change only its own challenge record, and
-cannot touch real DNS records. acme-dns resolves no other names,
+Each domain's credentials can change only its own challenge record, so
+nothing here can touch real DNS records. acme-dns resolves no other names,
 so port 53 is not an open resolver.
 
 The registrations live in `mnt/letsencrypt/acme-dns-accounts.json`. A site
@@ -78,7 +78,7 @@ Token > Custom token) with:
 - Permissions: Zone > Zone > Read, and Zone > DNS > Edit, nothing else.
   Read finds a record's zone, and Edit writes the challenge's TXT record.
 - Zone resources: Include > Specific zone, only the zones that receive
-  challenge records.
+  challenge records. Do not pick "All zones".
 - Client IP filtering, optionally: the server's IP, so the token is
   useless anywhere else.
 
@@ -129,7 +129,7 @@ access to its DNS:
    For a wildcard certificate, the same record covers `*.client.org`.
 3. Route the site with the `le-dns01-cloudflare` resolver. Traefik follows
    the CNAME, writes the TXT record at `client.org.example-acme.com` and
-   removes it once the domain is validated.
+   removes it once the domain is validated. Renewals need nothing more.
 
 The token needs only the challenge zone, however many domains delegate
 to it, and the zones the sites live in stay out of its reach, even when

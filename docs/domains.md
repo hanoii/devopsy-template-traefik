@@ -20,7 +20,7 @@ the release's `devopsy-target.env`, unless the target sets
 `PROXY_BASE_DOMAIN` itself (empty for no automatic URL). A release fails
 while no proxy runs, unless the import ends in `?`.
 
-devopsy-cli does not compute URLs. The site templates compute their hosts
+devopsy-cli knows nothing of URLs. The site templates compute their hosts
 in their `env` capability (`.devopsy/capabilities/env/compute`), from the compose
 project name (`COMPOSE_PROJECT_NAME`, which devopsy sets), the imported
 domain and the environment's `PROXY_DOMAINS`, and use the resulting rule
