@@ -4,43 +4,46 @@ The Traefik setup for a devopsy server: one per Docker host, routing every
 project on it, with automatic Let's Encrypt certificates. It is run with
 [devopsy-cli](https://github.com/hanoii/devopsy-cli).
 
-- Traefik v3 with the Docker provider. Containers are only routed if they opt
-  in with `traefik.enable=true`.
-- Traefik never mounts the Docker socket. It reads a filtered, read-only API
-  through [socket-proxy](https://github.com/wollomatic/socket-proxy).
-- Optionally, sites only through a Cloudflare Tunnel: no port open but
-  SSH (devopsy-template-cloudflared).
-- HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by default,
-  with DNS-01 through the server's own acme-dns or Cloudflare.
+- Traefik v3 with the Docker provider. A container is routed only when it
+  opts in with `traefik.enable=true`.
+- Traefik never mounts the Docker socket. It reads a filtered, read-only
+  API through [socket-proxy](https://github.com/wollomatic/socket-proxy).
+- Sites can be served only through a Cloudflare Tunnel, with no port open
+  but SSH (devopsy-template-cloudflared).
+- HTTP redirects to HTTPS. Certificates use the HTTP-01 challenge by
+  default, or DNS-01 through the server's own acme-dns or Cloudflare.
 - Headers that alias others (`X_Forwarded_For` for `X-Forwarded-For`) are
-  dropped, so PHP backends cannot be fooled by them, and so is a visitor's
-  `Forwarded` (RFC 7239), which Traefik itself passes on: an app that
-  trusts Traefik as its reverse proxy never takes a visitor's host or
-  scheme from it.
+  dropped, so they cannot fool PHP backends. So is a visitor's `Forwarded`
+  (RFC 7239), which Traefik itself would pass on: an app that trusts
+  Traefik as its reverse proxy never takes a visitor's host or scheme from
+  it.
 - Traefik and acme-dns run as UID 10001, like every devopsy project's
-  containers, never as the deploy user, with no capabilities, a read-only
-  root filesystem and `no-new-privileges`. devopsy gives them their `mnt`
-  directories (`devopsy.mnt.owner=user`, from their `user:`). The dashboard listens on localhost
-  only.
-- Released like any devopsy project: upgrades and settings changes are
-  releases, and a bad one rolls back.
-- The host needs Docker and devopsy only: commands use Traefik's own
+  containers, never as the deploy user. They have no capabilities, a
+  read-only root filesystem and `no-new-privileges`, and devopsy gives
+  them their `mnt` directories (`devopsy.mnt.owner=user`, from their
+  `user:`). The dashboard listens on localhost only.
+- It is released like any devopsy project: upgrades and changes of
+  settings are releases, and a bad one rolls back.
+- The host needs only Docker and devopsy. The commands use Traefik's own
   `wget` and the jq, curl and Python images (profile `tools`: sqlite is
   Python's module, curl the `curlimages/curl` image).
 
 ## Using this template
 
-A starting point to own, not a dependency: start a project from it on
-GitHub ("Use this template"), or clone it and keep this repository as a
-remote (`upstream`) to pull its changes when you choose. Nothing updates
-your copy, or what runs on your servers, but your own release.
+It is a starting point to own, not a dependency. Start a project from it
+on GitHub ("Use this template"), or clone it and keep this repository as a
+remote (`upstream`) to pull its changes when you choose. Nothing but your
+own release updates your copy or what runs on your servers.
 
 The other templates (whoami, drupal11, registry) route through it and
-import its base domain, so a change here can break them: keep its
-interface (`devopsy.role=proxy`, the `BASE_DOMAIN` export, the
-`traefik` network, the `le-http01`, `le-dns01-selfhosted` and
-`le-dns01-cloudflare` resolvers, the `web`, `websecure` and `tunnel`
-entrypoints, the `tunnel` network), or change the sites with it.
+import its base domain, so a change here can break them. Keep its
+interface, or change the sites with it:
+
+- `devopsy.role=proxy` and the `BASE_DOMAIN` export;
+- the `traefik` and `tunnel` networks;
+- the `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`
+  resolvers;
+- the `web`, `websecure` and `tunnel` entrypoints.
 
 ## Setup
 
@@ -53,22 +56,27 @@ Debian. Then, from your checkout:
 devopsy @vm1:prod setup   # vm1: the server's SSH destination
 ```
 
-It asks for the settings (email, wildcard URLs and their certificates,
-or a Cloudflare Tunnel, the resolver sites use by default, Cloudflare's
-proxy), writes them with `--vars`, releases, prints the DNS
-records to create (the wildcard's DNS only, never proxied; for a tunnel,
-the Cloudflare steps and its proxied record), checks them
-with `domains`, and adds the alias below under a name you give. It
-defaults to production certificates; answer no for staging. Each step is
-a devopsy command, printed before it runs; run it again to change a
-setting, like the wildcard's resolver. The rest of this section is the
+`setup` asks for the settings: an email, wildcard URLs and their
+certificates or a Cloudflare Tunnel, the resolver sites use by default,
+and Cloudflare's proxy. Then it:
+
+1. writes them with `--vars`;
+2. releases;
+3. prints the DNS records to create: the wildcard's, DNS only and never
+   proxied, or for a tunnel the Cloudflare steps and its proxied record;
+4. checks them with `domains`;
+5. adds the alias below, under a name you give.
+
+It defaults to production certificates; answer no for staging. Each step
+is a devopsy command, printed before it runs. Run `setup` again to change
+a setting, like the wildcard's resolver. The rest of this section does the
 same by hand.
 
-Its one environment, `prod`, is the same on every server:
-`devopsy @<server>:prod` from your checkout (`traefik/prod` under the
-server's release root, compose project `traefik-prod`). Add an alias per
-server to your user config, with `source:` naming your checkout: releases
-run only from there, and every other command works from any directory.
+Its one environment, `prod`, is the same on every server: `devopsy
+@<server>:prod` from your checkout (`traefik/prod` under the server's
+release root, compose project `traefik-prod`). Add an alias per server to
+your user config, with `source:` naming your checkout. Releases then run
+only from there, and every other command works from any directory.
 
 ```yaml
 # ~/.config/devopsy/config.yaml
@@ -76,7 +84,7 @@ aliases:
   vm1-traefik: {source: ~/src/devopsy-template-traefik, to: "devopsy@203.0.113.10:prod"}
 ```
 
-Set its settings before the first release, then release it:
+Set the settings before the first release, then release it:
 
 ```sh
 devopsy @vm1-traefik --vars set --show PROXY_LE_ACME_EMAIL
@@ -106,19 +114,20 @@ networks:
     external: true
 ```
 
-Router names must be unique on the host. Prefix them with the project name.
+Router names must be unique on the host, so prefix them with the project
+name.
 
-The `traefik` network is shared: every container on it can reach every other
-one, on any port, without going through Traefik. So:
+The `traefik` network is shared: every container on it can reach every
+other one, on any port, without going through Traefik. So:
 
 - Only the service Traefik routes joins it. Databases, caches and workers
   stay on the project's own network.
-- Do not rely on Traefik middlewares (basic auth, IP allow lists) as a
-  service's only protection: another project's container reaches it
+- Never rely on Traefik middlewares (basic auth, IP allow lists) as a
+  service's only protection, since another project's container reaches it
   directly. The application checks access itself.
 
 That is fine for projects that trust each other, the usual case on a
-server; projects that do not belong on separate servers.
+server. Projects that do not belong on separate servers.
 
 ## Documentation
 
