@@ -72,6 +72,9 @@ services:
       - TRAEFIK_ACCESSLOG=true
 ```
 
+Files in `mnt/dynamic/` are Traefik's dynamic configuration (its file
+provider), for anything else that does not belong to a project.
+
 There is one Traefik per host. It holds the `proxy` role, so a release of
 a second one on the same server is refused, and its network is always
 `traefik`.
