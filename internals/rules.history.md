@@ -1,0 +1,5 @@
+History, not rules: AGENTS.md's Rules win where they differ.
+
+- The `jq` and `curl` tools run as 10001, though their images default to root and UID 100: both work as 10001 with a read-only root (jq 1.8.1 and curl 8.15.0, checked).
+- Names became `PROXY_*` on 2026-10-26, never `DEVOPSY_*`, which made these look like devopsy's, nor `TRAEFIK_*`. `BASE_DOMAIN` was `WILDCARD_DOMAIN`, which said nothing of the domain every environment's default host goes under. Sites import it under the same name, and a target may override it there; `PROXY_CERTRESOLVER` is the default here and a site's own choice there; `PROXY_DOMAINS` is a site's. A server's keys were renamed by hand, with no migration.
+- Images float on the series: `traefik:v3.7` gets upstream's fixes with every release, since each release pulls its images again. A pinned name changes with a bump, so a rollback across one goes back exactly, while a floating name goes forward on a rollback (devopsy-cli's README, "Choosing tags").

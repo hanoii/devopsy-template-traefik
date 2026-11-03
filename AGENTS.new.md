@@ -15,7 +15,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 
 - The `traefik` network, the resolvers `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`, the entrypoints `web`, `websecure` and `tunnel`, the `tunnel` network and `http://traefik.tunnel:8081`, and the labels `devopsy.role=proxy` and `devopsy.export.BASE_DOMAIN` keep their names: other projects name them in their own compose files, released on their own schedule.
 - What a command writes at runtime goes in `mnt/` or `.env`, and `.env` is written through it (`env_set`, `cat >`), never `mv` over it: elsewhere in `.devopsy/` a file goes with the next release, and on servers `.env` is a link to `shared/.env`.
-- Containers run as 10001, never as the deploy user, who is in the docker group; scripts touch `mnt/letsencrypt` and `mnt/acmedns`, 10001's and mode 600, only through `in_traefik`.
+- Containers run as 10001, never as the deploy user, who is in the docker group; scripts touch `mnt/letsencrypt` and `mnt/acmedns`, 10001's with files of mode 600, only through `in_traefik` (a one-off Traefik container as 10001).
 - The host needs Docker and devopsy only: `jq`, `curl` and `sqlite` are the `tools` profile's services, and Traefik's own `wget` does the rest.
 - Traefik is configured with `TRAEFIK_*` variables in `compose.yaml`, never static config files, and what a server may change is a variable with a default in `.env.example`.
 - The template's settings are `PROXY_*`, a name meaning one fact on both sides of the proxy role (for example `PROXY_BASE_DOMAIN`, exported as `BASE_DOMAIN`): `DEVOPSY_*` are devopsy-cli's own, and Traefik reads `TRAEFIK_*` as its static configuration.

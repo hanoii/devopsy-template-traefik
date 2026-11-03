@@ -85,7 +85,7 @@ func codeSpans(md string) []string {
 var (
 	// A path: a directory of the repository's, of .devopsy/'s, or a name
 	// with an extension; `...` stands for any directories between.
-	pathSpan = regexp.MustCompile(`^(\.devopsy/|commands/|lib/|plugins-local/|tests/|internals/|\.github/)[A-Za-z0-9_./-]*$|^\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*\.(go|md|mod|yml|yaml|sh|example)$`)
+	pathSpan = regexp.MustCompile(`^(\.devopsy/|commands/|lib/|plugins-local/|tests/|internals/|\.github/)[A-Za-z0-9_./-]*$|^\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*\.(go|md|mod|yml|yaml|sh|example|jq)$`)
 	// A shell function's or a compose key's name: lowercase, with an
 	// underscore.
 	shellWord = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)+$`)
