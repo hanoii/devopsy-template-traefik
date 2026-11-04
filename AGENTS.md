@@ -48,6 +48,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - A review brief also asks for the same pattern written twice and for workarounds of the design (Refactors).
 - A reviewer writes what it tests into the repository as `test:` commits on the task's branch, a failing test that proves a bug kept with a comment naming it, never product code: a harness outside the repository is lost with its round.
 - While building or after a review, a bug, an edge case, a name or a verified finding is decided and fixed without asking, a fix with its failing test first, and said in the summary; only what changes the agreed design or user-facing behavior is asked.
+- Before a branch merges, a review's tests move into the files of what they cover, named for what they check, each comment saying what the test keeps true: a name or file after its round says only when it was written, and a comment naming a bug reads as an open one after its fix.
 - At most two rounds per branch: after the second round's fixes, the tests, the end-to-end suite and a hand test cover the rest.
 
 ### Servers and names
