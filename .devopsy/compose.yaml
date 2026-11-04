@@ -6,7 +6,7 @@ services:
   # security settings, so a bump is read in its release notes first.
   dockerproxy:
     restart: unless-stopped
-    image: wollomatic/socket-proxy:1.13.1
+    image: wollomatic/socket-proxy:1
     command:
       - '-loglevel=info' # debug for far more logging
       - '-listenip=0.0.0.0'
