@@ -78,9 +78,9 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 
 ## Layout
 
-- `.devopsy/` is all a release uploads: `config.yaml` (`project: traefik`, its one environment `prod`, the release steps), `compose.yaml` (Traefik, socket-proxy, acme-dns in the `acmedns` profile, `jq`, `curl` and `sqlite` in the `tools` profile, for scripts only) and `.env.example` (what a server sets in its `shared/.env`).
+- `.devopsy/` is all a release uploads: `config.yaml` (`project: traefik`, its one environment `prod`, the release steps), `compose.yaml` (Traefik, `dockerproxy`, `attach` and `netproxy`, acme-dns in the `acmedns` profile, `jq`, `curl` and `sqlite` in the `tools` profile, for scripts only) and `.env.example` (what a server sets in its `shared/.env`).
 - `.devopsy/commands/` are POSIX `sh`, each with a `## Description:` line; `setup` is the only one run locally (`## Run: local`, `## Needs: target`), and `check` is a release's prepare step.
-- `.devopsy/lib/common.sh` is sourced by the commands and lib's scripts; `lib/facts`, `lib/retry` and `lib/domains/` serve `domains`.
+- `.devopsy/lib/common.sh` is sourced by the commands and lib's scripts; `lib/facts`, `lib/retry` and `lib/domains/` serve `domains`; `lib/attach` is the `attach` service.
 - `.devopsy/mnt/` (on servers `shared/mnt`, never uploaded) holds the ACME stores, acme-dns's database, Traefik's file provider (`mnt/dynamic/`), the proxies' list, `mnt/traefik.env` (the static settings) and `mnt/forget.pending`.
 - `.devopsy/plugins-local/` holds the local Traefik plugins, `proxies` and `hold`, run by Yaegi: standard library only.
 - `tests/` (with the root's `go.mod`) and `.github/workflows/ci.yml` are the checks.
@@ -88,7 +88,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 
 ## Rules
 
-- The `traefik` network, the resolvers `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`, the entrypoints `web`, `websecure` and `tunnel`, the `tunnel` network and `http://traefik.tunnel:8081`, and the labels `devopsy.role=proxy` and `devopsy.export.BASE_DOMAIN` keep their names: other projects name them in their own compose files, released on their own schedule.
+- The `traefik` network, the resolvers `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`, the entrypoints `web`, `websecure` and `tunnel`, the `tunnel` network and `http://traefik.tunnel:8081`, and the labels `devopsy.role=proxy`, `devopsy.export.BASE_DOMAIN` and `traefik.docker.network` keep their names: other projects name them in their own compose files, released on their own schedule.
 - What a command writes at runtime goes in `mnt/` or `.env`: elsewhere in `.devopsy/` a file goes with the next release.
 - `.env` is written through it (`env_set`, `cat >`), never `mv` over it: on servers it is a link to `shared/.env`.
 - Containers run as 10001, never as the deploy user, who is in the docker group; scripts touch `mnt/letsencrypt` and `mnt/acmedns`, 10001's with files of mode 600, only through `in_traefik` (a one-off Traefik container as 10001).
@@ -98,7 +98,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - `PROXY_BASE_DOMAIN` is this server's setting and reaches a site through the export label, read by devopsy-cli from the running container at each of the site's releases (a target may override it there); `PROXY_CERTRESOLVER` is the default here and a site's own choice there, and `PROXY_DOMAINS` is a site's.
 - The entrypoints' middleware lists have one writer, `static_env` (`lib/common.sh`, called by `deploy` and `proxies`), which composes `mnt/traefik.env` and restarts Traefik only when it changed: entrypoints are static configuration.
 - A middleware file is written before the env names it and removed only once the running Traefik no longer does: an entrypoint naming a missing middleware breaks every router.
-- Traefik never mounts the Docker socket, socket-proxy stays read-only and accepts only the `traefik` container, both run unprivileged, and the dashboard stays on localhost.
+- Traefik never mounts the Docker socket, `dockerproxy` stays read-only and accepts only the `traefik` container, `netproxy` accepts only `attach`, they run unprivileged, and the dashboard stays on localhost.
 - Every service has a fixed non-root UID (10001; socket-proxy's 65534, in the socket's group), `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, a capability added back only for a stated reason (none today): a tool as root, even without capabilities, reads files the deploy user cannot.
 - A tool whose image only works as root is the one exception to the non-root UID, said here with why.
 - A new service gets all four.
@@ -119,7 +119,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 ## Checks
 
 ```sh
-cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/common.sh
+cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/attach lib/common.sh
 ```
 
 Plugins: `go test` in each plugin's directory, then the same tests under Traefik's interpreter, from `.devopsy/plugins-local`:
@@ -151,7 +151,7 @@ Each area is read when its line says so; its history, `internals/<area>.history.
 
 - `internals/certificates.md`: the resolvers and their names, a router's `tls` label, when Traefik requests or retries a certificate, the ACME stores and `forget`, acme-dns, DNS-01 checks and `check_settings` (`commands/letsencrypt`, `acmedns`, `forget`, `check`, `lib/retry`, `check_settings` and `forget_apply` in `lib/common.sh`); its user doc `docs/certificates.md`; read when a task touches a certificate, a resolver, acme-dns or `PROXY_DNS_*`.
 - `internals/proxies.md`: the `proxies` plugin, the forwarded headers and `Forwarded`, Yaegi's limits, plugins loaded again (`plugins-local/.../proxies/`, `commands/proxies`, `mnt/proxies/`); its user doc `docs/proxies.md`; read when a task touches a plugin, a proxy in front, the client IP or a forwarded header.
-- `internals/network.md`: the `traefik` network and its aliases, the socket proxy, Traefik read-only, the API's access, `PROXY_READ_TIMEOUT`, an HTTP proxy on the host (`compose.yaml`, `api_access` in `lib/common.sh`); its user docs `README.md` (Routing a project), `docs/running.md`; read when a task touches a network, the socket proxy, the API or an entrypoint's settings.
+- `internals/network.md`: the `traefik` network and its aliases, projects' own networks and `attach`, the socket proxies, Traefik read-only, the API's access, `PROXY_READ_TIMEOUT`, an HTTP proxy on the host (`compose.yaml`, `lib/attach`, `api_access` in `lib/common.sh`); its user docs `README.md` (Routing a project), `docs/running.md`; read when a task touches a network, `attach`, a socket proxy, the API or an entrypoint's settings.
 - `internals/domains.md`: the domains report, checked from the server (`commands/domains`, `lib/facts`, `lib/domains/`); its user doc `docs/domains.md`; read when a task touches `domains`.
 - `internals/tunnel.md`: the tunnel end, its trust, default entrypoints and `PROXY_TUNNEL_ONLY` (`tunnel_subnet` and `static_env` in `lib/common.sh`, `commands/setup`); its user doc `docs/tunnel.md`; read when a task touches Cloudflare Tunnel or which entrypoints a router gets.
 - `internals/hold.md`: holding visitors through a site's stop, the errors middleware, the catch-all, stopped and paused containers (`plugins-local/.../hold/`, `hold_middleware` in `lib/common.sh`); its user doc `docs/hold.md`; read when a task touches what a visitor gets while a site is down.

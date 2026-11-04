@@ -16,7 +16,7 @@ The template's tests: hosts, lanes, script tests, scenarios and releases. Code: 
 
 - A script test is `h, dir := project(t, name, env)` (a copy with its own compose project and `.env`, taken down after), then `h.sh(dir, env, "devopsy ...")`.
 - `devopsy t '<shell>'` runs `lib/common.sh`'s functions through devopsy, a command each copy gets, never the template's.
-- A scenario is `h := traefik(t)` and `h.site(...)` (a container routed through it), then `h.request`, `h.during` (a request every 0.2 s around an action), `h.from` (curl on a network) and `h.api`.
+- A scenario is `h := traefik(t)` and `h.site(...)` (a container routed through it, on `traefik`) or `h.isolated(...)` (a compose project on its own network, as the templates are), then `h.request`, `h.during` (a request every 0.2 s around an action), `h.from` (curl on a network) and `h.api`.
 - A scenario leaves its host's Traefik as it found it (for example `proxies add` removes its proxy).
 - A test waits for what Traefik does (`h.routed`, `h.unrouted`), never sleeps for it.
 - Every host's deploy user reaches itself over SSH, so a test releases the template as to a server (`devopsy @devopsy@localhost:prod --release`, `TestRelease`): the upload, the activation, `shared/`, `--vars`, `--reload`, the role and imports.

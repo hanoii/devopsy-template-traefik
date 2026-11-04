@@ -46,6 +46,80 @@ services:
     networks:
       - dockerproxy
 
+  # A second socket proxy, for attach alone: what connects and removes networks,
+  # so dockerproxy stays read-only. Docker refuses to remove a network with
+  # anything running on it. It filters by URL, so it cannot tell which network or
+  # container: what compromises attach can connect or cut any of them.
+  netproxy:
+    restart: unless-stopped
+    image: wollomatic/socket-proxy:1.13.1
+    command:
+      - '-loglevel=info'
+      - '-listenip=0.0.0.0'
+      - '-allowfrom=attach'
+      - '-allowGET=/v1\..{1,2}/(version|containers/json|containers/[a-zA-Z0-9_.-]+/json|events|networks|networks/[a-zA-Z0-9_.-]+)'
+      - '-allowHEAD=/_ping'
+      - '-allowPOST=/v1\..{1,2}/networks/[a-zA-Z0-9_.-]+/(connect|disconnect)'
+      - '-allowDELETE=/v1\..{1,2}/networks/[a-zA-Z0-9_.-]+'
+      - '-shutdowngracetime=5'
+      - '-watchdoginterval=3600'
+      - '-stoponwatchdog'
+      - '-allowhealthcheck'
+    healthcheck:
+      test: ['CMD', './healthcheck']
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 30s
+      start_interval: 1s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    user: 65534:${PROXY_DOCKER_GID-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - netproxy
+
+  # Keeps Traefik on the networks routed containers name: lib/attach.
+  attach:
+    restart: unless-stopped
+    # Floats on the minor, as Traefik does.
+    image: docker:29.9-cli
+    depends_on:
+      netproxy:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '/attach']
+    healthcheck:
+      test: ['CMD', 'test', '-e', '/tmp/attach.ready']
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 30s
+      start_interval: 1s
+    labels:
+      # A bind mount's content is not in compose's hash: deploy's checksum of
+      # lib/attach recreates this when the script changes.
+      - devopsy.attach=${PROXY_ATTACH_SUM:-}
+    environment:
+      - DOCKER_HOST=tcp://netproxy:2375
+      - DOCKER_CONFIG=/tmp
+      - ATTACH_PROJECT=${COMPOSE_PROJECT_NAME}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    volumes:
+      - ./lib/attach:/attach:ro
+    networks:
+      - netproxy
+
   # Floats on v3.7: every release pulls its patches. Minors (v3.8) bring
   # migration notes and a new Yaegi for the plugins: bump them by hand.
   traefik:
@@ -227,10 +301,13 @@ services:
       # Local Traefik plugins (Traefik reads ./plugins-local from /).
       - ./plugins-local:/plugins-local:ro
     networks:
-      - default
-      - dockerproxy
-      - acmedns
-      - tunnel
+      # Docker otherwise moves the default gateway, and the published ports with
+      # it, to a project's network that sorts earlier, cutting requests in flight.
+      default:
+        gw_priority: 100
+      dockerproxy: {}
+      acmedns: {}
+      tunnel: {}
 
   # Optional acme-dns server for the le-dns01-selfhosted resolver: DNS-01 for any domain
   # after a one-time CNAME, without DNS provider tokens. Runs only with
@@ -352,6 +429,8 @@ networks:
   default:
     name: traefik
   dockerproxy:
+    internal: true
+  netproxy:
     internal: true
   # Traefik and acme-dns only, so projects cannot reach the acme-dns API.
   acmedns: {}

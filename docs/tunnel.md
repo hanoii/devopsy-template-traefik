@@ -24,7 +24,7 @@ released after this one. Traefik's side is always part of this template:
   `CF-Connecting-IP` (through the proxies plugin, built in: `devopsy
   proxies` lists it) and keeps the connector's `X-Forwarded-Proto:
   https`, so applications build `https://` URLs. Requests to port 8081
-  from anywhere else, such as another project on the `traefik` network,
+  from anywhere else, such as a project on the shared `traefik` network,
   are not trusted.
 
 Since Traefik trusts the network's subnet rather than each connector,

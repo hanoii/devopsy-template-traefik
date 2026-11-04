@@ -1,0 +1,127 @@
+#!/bin/sh
+# Keeps the proxy on the networks routed containers name, and removes a
+# project's network once nothing is left on it. One pass at the start, then one
+# per burst of container events. Runs as the attach service, through netproxy.
+set -u
+self=${ATTACH_PROJECT:?}
+dirty=/tmp/attach.dirty ended=/tmp/attach.ended ready=/tmp/attach.ready
+nl='
+'
+
+# A compose project's label on network $1, into np. networks is |name=project|...
+project_of() {
+  np=
+  case $networks in *"|$1="*)
+    np=${networks#*"|$1="}
+    np=${np%%|*}
+    ;;
+  esac
+}
+
+# A label's value from its JSON into v, empty unless it is a plain name: a label
+# is anyone's text, and must not pass for the fields around it.
+plain() {
+  v=
+  case $1 in \"*\") v=${1#\"} v=${v%\"} ;; esac
+  case $v in *[!a-zA-Z0-9_.-]*) v= ;; esac
+}
+
+# The networks routed containers name, into wanted (,name,name,): only one its
+# container is on, of that container's compose project, never the proxy's own.
+wanted_networks() {
+  wanted=,
+  # shellcheck disable=SC2016
+  format='{{json (index .Config.Labels "traefik.docker.network")}}|{{json (index .Config.Labels "com.docker.compose.project")}}|{{range $k,$v := .NetworkSettings.Networks}},{{$k}},{{end}}'
+  labeled=$(docker ps -aq --filter label=traefik.enable=true --filter label=traefik.docker.network) || return 1
+  [ -n "$labeled" ] || return 0
+  # shellcheck disable=SC2086
+  lines=$(docker inspect -f "$format" $labeled 2>/dev/null)
+  ifs=$IFS IFS=$nl
+  set -f
+  for line in $lines; do
+    plain "${line%%|*}"
+    n=$v
+    on=${line##*|}
+    p=${line#*|}
+    p=${p%|*}
+    plain "$p"
+    p=$v
+    if [ -z "$n" ] || [ -z "$p" ]; then
+      echo "attach: refused a label: $line"
+      continue
+    fi
+    project_of "$n"
+    if [ "$np" = "$self" ]; then
+      continue # On it already, as a project on the shared network says.
+    fi
+    case $on in
+      *",$n,"*) ;;
+      *)
+        echo "attach: $n: its container is not on it"
+        continue
+        ;;
+    esac
+    if [ "$np" != "$p" ]; then
+      echo "attach: $n: of project '$np', its container's is '$p'"
+      continue
+    fi
+    wanted="$wanted$n,"
+  done
+  set +f
+  IFS=$ifs
+}
+
+pass() {
+  proxy=$(docker ps -aq --filter "label=com.docker.compose.project=$self" --filter label=devopsy.role=proxy | head -n 1)
+  [ -n "$proxy" ] || return 0
+  networks=$(docker network ls --format '|{{.Name}}={{.Label "com.docker.compose.project"}}' | tr -d '\n') || return 0
+  networks="$networks|"
+  wanted_networks || return 0
+  # shellcheck disable=SC2016
+  have=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}},{{$k}},{{end}}' "$proxy" 2>/dev/null) || return 0
+  for n in $(printf '%s' "$wanted" | tr ',' ' '); do
+    case $have in
+      *",$n,"*) ;;
+      *) docker network connect "$n" "$proxy" && echo "attach: connected $n" ;;
+    esac
+  done
+  for n in $(printf '%s' "$have" | tr ',' ' '); do
+    project_of "$n"
+    case $np in '' | "$self") continue ;; esac
+    case $wanted in *",$n,"*) continue ;; esac
+    docker network disconnect "$n" "$proxy" && echo "attach: disconnected $n"
+    # compose's down gave up on it while the proxy held it. A stopped container
+    # still needs it.
+    if [ -z "$(docker ps -aq --filter "network=$n")" ]; then
+      docker network rm "$n" >/dev/null && echo "attach: removed $n"
+    fi
+  done
+}
+
+rm -f "$ready" "$dirty" "$ended"
+# The stream first, so nothing happens between the first pass and it. When it
+# ends the script exits, for the restart policy: PID 1 ignores a signal it has
+# no handler for, so it could not kill itself from there, and would go on deaf.
+(
+  docker events --filter type=container --filter event=create --filter event=start --filter event=destroy --format x |
+    while read -r _; do : >"$dirty"; done
+  : >"$ended"
+) &
+# What happened before the stream connected.
+(
+  sleep 1
+  : >"$dirty"
+) &
+pass
+: >"$ready"
+while :; do
+  if [ -e "$ended" ]; then
+    echo "attach: the event stream ended"
+    exit 1
+  fi
+  if [ -e "$dirty" ]; then
+    rm -f "$dirty"
+    pass
+  fi
+  sleep 0.2
+done

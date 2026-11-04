@@ -14,7 +14,8 @@
 #   once a first `up` made it: static_env after `up` restarts Traefik
 #   then, once.
 # - The hold (hold_middleware): the middleware sites name, its routers.
-# - The local plugins' checksum, which recreates Traefik when they change.
+# - The local plugins' checksum, which recreates Traefik when they change, and
+#   lib/attach's, which recreates attach.
 # - Domains queued by `devopsy forget` leave Traefik's stores (forget_apply).
 # - Then, with Traefik running, middlewares turned off are removed, and who
 #   may reach its API is updated (api_access).
@@ -87,15 +88,22 @@ http:
   echo "deploy: public wildcard *.$domain through $resolver"
 fi
 
-# The local plugins' checksum, in Traefik's label: Traefik loads them when
-# it starts, and a release changing only them would leave it running, so
-# changed plugins recreate it. Kept in .env for a plain `devopsy up`.
-sum=$(cd "$dir/plugins-local" && find . -type f | LC_ALL=C sort |
-  while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum | cut -d' ' -f1)
-if [ "${PROXY_PLUGINS_SUM:-}" != "$sum" ]; then
-  env_set PROXY_PLUGINS_SUM "$sum"
-  export PROXY_PLUGINS_SUM="$sum"
-fi
+# keep_sum NAME SUM: a checksum kept in .env for a plain `devopsy up`, read by a
+# service's label, so a change recreates that service.
+keep_sum() {
+  kept=
+  eval "kept=\${$1:-}"
+  if [ "$kept" != "$2" ]; then
+    env_set "$1" "$2"
+    export "$1=$2"
+  fi
+}
+
+# Traefik loads the local plugins when it starts, and attach reads its script
+# then: a release changing only them would leave either running.
+keep_sum PROXY_PLUGINS_SUM "$(cd "$dir/plugins-local" && find . -type f | LC_ALL=C sort |
+  while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done | cksum | cut -d' ' -f1)"
+keep_sum PROXY_ATTACH_SUM "$(cksum <"$dir/lib/attach" | cut -d' ' -f1)"
 
 # Holding visitors of the sites that ask through their app's stop.
 hold_middleware

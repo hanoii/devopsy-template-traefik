@@ -158,7 +158,7 @@ func (h host) during(url, action string) []answer {
 		done; wait) &
 		loop=$!
 		sleep 1
-		sh -c "$action" >/dev/null
+		sh -c "$action" >/dev/null 2>&1
 		sleep 1
 		touch "$stop"
 		wait "$loop"
