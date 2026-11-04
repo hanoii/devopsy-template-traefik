@@ -82,6 +82,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - `.devopsy/commands/` are POSIX `sh`, each with a `## Description:` line; `setup` is the only one run locally (`## Run: local`, `## Needs: target`), and `check` is a release's prepare step.
 - `.devopsy/lib/common.sh` is sourced by the commands and lib's scripts; `lib/facts`, `lib/retry` and `lib/domains/` serve `domains`; `lib/attach` is the `attach` service.
 - `.devopsy/mnt/` (on servers `shared/mnt`, never uploaded) holds the ACME stores, acme-dns's database, Traefik's file provider (`mnt/dynamic/`), the proxies' list, `mnt/traefik.env` (the static settings) and `mnt/forget.pending`.
+- A file in `mnt/dynamic/` is written outside that folder and renamed in (`write_if_changed`): Traefik reading the folder during the write can lose the file until its next reload.
 - `.devopsy/plugins-local/` holds the local Traefik plugins, `proxies` and `hold`, run by Yaegi: standard library only.
 - `tests/` (with the root's `go.mod`) and `.github/workflows/ci.yml` are the checks.
 - `README.md` and `docs/` are what users see: a change to behavior changes the doc that covers it (each area's line names it, `docs/running.md` the settings and upgrades) in the same commit.

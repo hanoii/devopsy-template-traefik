@@ -66,6 +66,13 @@ func TestWriteIfChanged(t *testing.T) {
 	if out != "wrote\nsame\nwrote\nb" {
 		t.Fatalf("got %q", out)
 	}
+	// Written outside the folder Traefik watches and renamed in: at the rename
+	// the folder holds nothing but what it held.
+	out = h.sh(dir, nil, `devopsy t 'mkdir -p "$dir/mnt/dynamic"; mv() { ls -A "$dir/mnt/dynamic"; command mv "$@"; }
+		write_if_changed "$dir/mnt/dynamic/y.yaml" a; cat "$dir/mnt/dynamic/y.yaml"'`)
+	if out != "a" {
+		t.Errorf("the folder at the rename, then the file: %q", out)
+	}
 }
 
 // static_env writes Traefik's static settings from what is enabled: the

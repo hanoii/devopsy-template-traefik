@@ -55,5 +55,4 @@ $groups
 EOF
 
 mkdir -p "$dir/mnt/dynamic"
-printf '%s' "$yaml" >"$file.tmp"
-mv "$file.tmp" "$file"
+write_if_changed "$file" "$yaml" || true

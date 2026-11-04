@@ -84,13 +84,16 @@ jq() {
   quiet run --rm --no-deps -T jq "$@"
 }
 
-# Writes $2 to $1 when different; returns 1 when unchanged.
+# Writes $2 to $1, a file under mnt, when different; returns 1 when unchanged.
+# The temporary file goes in mnt itself, outside the folder Traefik watches, so
+# Traefik's read never meets the rename.
 write_if_changed() {
   if [ -f "$1" ] && printf '%s' "$2" | cmp -s - "$1"; then
     return 1
   fi
-  printf '%s' "$2" >"$1.tmp"
-  mv "$1.tmp" "$1"
+  _tmp=$dir/mnt/.$(basename "$1").tmp
+  printf '%s' "$2" >"$_tmp"
+  mv "$_tmp" "$1"
 }
 
 # Replaces KEY=value in .env, or appends it. Writes through the file, never
