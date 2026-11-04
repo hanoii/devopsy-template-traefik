@@ -8,6 +8,17 @@ dirty=/tmp/attach.dirty ended=/tmp/attach.ended ready=/tmp/attach.ready
 nl='
 '
 
+# docker network ...: what compose's down or a pass before this got to first is
+# no failure, and says nothing.
+network() {
+  out=$(docker network "$@" 2>&1) && return 0
+  case $out in
+    *"already exists"* | *"not found"*) ;;
+    *) printf 'attach: %s\n' "$out" ;;
+  esac
+  return 1
+}
+
 # A compose project's label on network $1, into np. networks is |name=project|...
 project_of() {
   np=
@@ -82,18 +93,18 @@ pass() {
   for n in $(printf '%s' "$wanted" | tr ',' ' '); do
     case $have in
       *",$n,"*) ;;
-      *) docker network connect "$n" "$proxy" && echo "attach: connected $n" ;;
+      *) network connect "$n" "$proxy" && echo "attach: connected $n" ;;
     esac
   done
   for n in $(printf '%s' "$have" | tr ',' ' '); do
     project_of "$n"
     case $np in '' | "$self") continue ;; esac
     case $wanted in *",$n,"*) continue ;; esac
-    docker network disconnect "$n" "$proxy" && echo "attach: disconnected $n"
+    network disconnect "$n" "$proxy" && echo "attach: disconnected $n"
     # compose's down gave up on it while the proxy held it. A stopped container
     # still needs it.
     if [ -z "$(docker ps -aq --filter "network=$n")" ]; then
-      docker network rm "$n" >/dev/null && echo "attach: removed $n"
+      network rm "$n" && echo "attach: removed $n"
     fi
   done
 }
