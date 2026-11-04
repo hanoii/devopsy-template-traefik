@@ -25,8 +25,8 @@ If the first try gets no 502, the visitor is redirected once. That lets
 through a container that restarted within a moment, when the 502 came
 from its old router and the site is already back. A second such 502 for
 the same visitor and URL within 10 seconds gets the "back in a moment"
-page at once. A request that the app itself answers with a 502, one that
-crashes it, is sent at most twice.
+page at once, so a request that the app itself answers with a 502, one
+that crashes it, is sent at most twice and never loops.
 
 ## The router gone
 

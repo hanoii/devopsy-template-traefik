@@ -27,7 +27,8 @@ released after this one. Traefik's side is always part of this template:
   from anywhere else, such as another project on the `traefik` network,
   are not trusted.
 
-Tunnels are added and removed by releases of their own, without
+Since Traefik trusts the network's subnet rather than each connector,
+tunnels are added and removed by releases of their own, without
 restarting Traefik. The first release with the tunnel entrypoint recreates
 Traefik twice, once for the entrypoint and once for its trust, which is
 read from the network the first start created.
@@ -91,7 +92,7 @@ the route, since a route creates a record only for a name that has none
 id>.cfargotunnel.com`.
 
 The easiest arrangement is a server that belongs to the client, on the
-client's account, with you as a member they can remove. On a shared
+client's account and zones, with you as a member they can remove. On a shared
 server of your own, there are two ways to serve a client's domain:
 
 - Cloudflare for SaaS. The client's name becomes a custom hostname in
