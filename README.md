@@ -138,9 +138,11 @@ routers, as any visitor does. Only the services you put on `proxy` share
 a network with Traefik, so keep databases, caches and workers off it.
 
 A change to the `proxy` network's own settings, such as a driver option,
-fails its release, since Compose cannot recreate a network Traefik is on,
-and the previous release comes back. Take the project down first
-(`devopsy @prod down`), and Traefik lets the network go.
+needs the project down first (`devopsy @prod down`), so Traefik lets the
+network go. Otherwise its release fails, since Compose cannot recreate a
+network Traefik is on, and though the previous release comes back, its
+container is left off the network. The site then does not answer until
+`devopsy @prod up -d --force-recreate`.
 
 While `attach` is down, sites already connected keep working. A new one
 is not connected: a release succeeds, its visitors wait 30 seconds and get
