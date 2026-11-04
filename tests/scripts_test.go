@@ -4,6 +4,7 @@ package tests
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -85,29 +86,29 @@ func TestStaticEnv(t *testing.T) {
 	}{
 		{"nothing", "", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both},
 		{"tunnel only", "", map[string]string{"PROXY_TUNNEL_ONLY": "true"}, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true\n"},
 		{"proxies", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
 			echo 'cloudflare' >.devopsy/mnt/proxies/proxies.conf && echo '198.51.100.0/24' >.devopsy/mnt/proxies/forwarded-ips`, nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=198.51.100.0/24\n" +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file,proxies@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + proxies + hold + both},
 		{"proxies commented out", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
 			printf '# cloudflare\n\n' >.devopsy/mnt/proxies/proxies.conf`, nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file\n" + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both},
 		{"tunnel", "docker network create --subnet 10.99.0.0/24 tunnel >/dev/null", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.99.0.0/24\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file,tunnel@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
 		// Made again on another subnet: the trust follows it.
 		{"tunnel again", "docker network rm tunnel >/dev/null && docker network create --subnet 10.98.0.0/24 tunnel >/dev/null", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.98.0.0/24\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=forwarded@file,tunnel@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
 	} {
 		h.sh(dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
 		if c.setup != "" {
@@ -123,6 +124,18 @@ func TestStaticEnv(t *testing.T) {
 		tunnel, _ := h.shErr(dir, nil, "cat .devopsy/mnt/dynamic/tunnel.yaml")
 		if want := strings.HasPrefix(c.name, "tunnel") && c.name != "tunnel only"; want != strings.Contains(tunnel, "CF-Connecting-IP") {
 			t.Errorf("%s: tunnel.yaml:\n%s", c.name, tunnel)
+		}
+		// Its loopback always, for the hold's probes; its subnet once there is one.
+		allow := []string{}
+		for _, ip := range regexp.MustCompile(`(?m)^ +- (\S+)$`).FindAllStringSubmatch(h.sh(dir, nil, "cat .devopsy/mnt/dynamic/tunnel-allow.yaml"), -1) {
+			allow = append(allow, ip[1])
+		}
+		want := "127.0.0.1/32"
+		if m := regexp.MustCompile(`TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=(.*)`).FindStringSubmatch(c.want); m != nil {
+			want += "," + m[1]
+		}
+		if got := strings.Join(allow, ","); got != want {
+			t.Errorf("%s: tunnel-allow.yaml has %s, want %s", c.name, got, want)
 		}
 	}
 

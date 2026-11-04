@@ -24,9 +24,8 @@ released after this one. Traefik's side is always part of this template:
   `CF-Connecting-IP` (through the proxies plugin, built in: `devopsy
   proxies` lists it) and keeps the connector's `X-Forwarded-Proto:
   https`, so applications build `https://` URLs. Requests to port 8081
-  from anywhere else, such as another project's container, are answered
-  but not trusted, and Cloudflare's own rules (Access, WAF) are not in
-  their way: a tunneled site that relies on those checks access itself.
+  from anywhere else, such as another project's container, get a 403, so
+  they cannot get round Cloudflare's rules (Access, WAF).
 
 Since Traefik trusts the network's subnet rather than each connector,
 tunnels are added and removed by releases of their own, without

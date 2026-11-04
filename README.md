@@ -135,9 +135,10 @@ is not restarted, so a project's release never interrupts the others.
 network, since Traefik is on it at that moment, and exits 0.
 
 A project's containers reach another project's only through Traefik's
-entrypoints, as any visitor does, and a tunneled site's too, without
-Cloudflare's own rules in front (docs/tunnel.md). Only the services you put on `proxy` share
-a network with Traefik, so keep databases, caches and workers off it.
+`web` and `websecure` entrypoints, as any visitor does. A site served only
+through a tunnel is out of their reach (docs/tunnel.md). Only the services
+you put on `proxy` share a network with Traefik, so keep databases, caches
+and workers off it.
 
 A change to the `proxy` network's own settings, such as a driver option,
 needs the project down first (`devopsy @prod down`), so Traefik lets the

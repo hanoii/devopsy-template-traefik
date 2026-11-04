@@ -59,6 +59,28 @@ func TestHoldHostRegexp(t *testing.T) {
 	}
 }
 
+// A tunneled site's stop, its port closed and then its router gone: held
+// until the start. The probes come from Traefik's loopback, past the
+// entrypoint's allow list: refused, a 403 would read as the site being up.
+func TestHoldThroughTunnel(t *testing.T) {
+	h := traefik(t)
+	tunneled := []string{"routers.<name>.entrypoints=tunnel", "services.<name>.loadbalancer.server.port=80"}
+	h.site("tunclosing", "tunclosing.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
+	h.site("tungone", "tungone.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
+	for _, c := range []struct{ name, stop string }{
+		{"tunclosing", `docker kill -s TERM "$1" >/dev/null && sleep 0.5`},
+		{"tungone", `docker stop "$1" >/dev/null`},
+	} {
+		out := h.sh("/", nil, c.stop+`
+			docker run --rm -q --network tunnel curlimages/curl:8.15.0 -s -o /dev/null --max-time 60 -H "Host: $1.example.com" \
+				-w '%{http_code} %{time_total} %{redirect_url}' http://traefik.tunnel:8081/ >/tmp/through &
+			docker wait "$1" >/dev/null; sleep 4; docker start "$1" >/dev/null; wait; cat /tmp/through`, c.name)
+		if a := parseAnswer(out); a.Code != 307 || a.Time < 2 || !strings.Contains(a.Location, c.name+".example.com") {
+			t.Errorf("%s: %+v, want held until the start, then a 307 to the same URL", c.name, a)
+		}
+	}
+}
+
 // What is not held answers at once: a host never routed, a site without
 // hold@file (its 404 and its 502 as before), a visitor asking not to be
 // held; and a 502 the probe does not meet (a POST its app answers 502)

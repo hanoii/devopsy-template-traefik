@@ -174,6 +174,11 @@ tunnel_subnet() {
   printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
 }
 
+# Comma-separated subnets ($1) as YAML list items, indented by $2.
+subnet_list() {
+  printf '%s\n' "$1" | tr ',' '\n' | sed "/^\$/d; s/^/$2- /"
+}
+
 # Holding visitors through an app's stop, for the sites whose router names
 # hold@file (the hold plugin, plugins-local/.../hold): mnt/dynamic/hold.yaml.
 #
@@ -257,6 +262,11 @@ $_probes$_catchall
 # X-Forwarded-Proto, so applications build https URLs. Nothing else is on
 # that network but Traefik and the connectors.
 #
+# It also takes requests from nowhere else (`tunnel-allow`, first on it, by
+# the connection's address, never a header): Traefik is on every project's
+# network, and a project's container there would skip Cloudflare's rules.
+# Traefik's own loopback stays in, for the hold's probes (hold_middleware).
+#
 # An entrypoint naming a missing middleware breaks every router: a
 # middleware's file is written before the env names it, and removed only
 # once the running Traefik no longer names it. Static settings need a
@@ -283,7 +293,7 @@ http:
           Forwarded: \"\"
 " || true
   _websecure=forwarded@file
-  _tunnelmw=forwarded@file
+  _tunnelmw=tunnel-allow@file,forwarded@file
 
   # Proxies: configured and their middleware written (`devopsy proxies`).
   _proxies=false
@@ -303,6 +313,15 @@ http:
   # The tunnel: once its network exists.
   _tunnel=false
   _subnet=$(tunnel_subnet) || exit 1
+  write_if_changed "$dir/mnt/dynamic/tunnel-allow.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': who may use the tunnel entrypoint.
+http:
+  middlewares:
+    tunnel-allow:
+      ipAllowList:
+        sourceRange:
+          - 127.0.0.1/32
+$(subnet_list "$_subnet" '          ')
+" || true
   if [ -n "$_subnet" ]; then
     _tunnel=true
     _plugin=true
@@ -316,7 +335,7 @@ http:
             - name: tunnel
               header: CF-Connecting-IP
               trustedIPs:
-$(printf '%s\n' "$_subnet" | tr ',' '\n' | sed 's/^/                - /')
+$(subnet_list "$_subnet" '                ')
 " || true
     _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=$_subnet
 "

@@ -221,7 +221,7 @@ func TestStart(t *testing.T) {
 		}
 		want := map[string][]string{
 			"routers":     {"hold@file", "hold-websecure@file", "hold-tunnel@file", "devopsy-api@file", "start@docker"},
-			"middlewares": {"hold@file", "hold-wait@file", "hold-websecure@file", "hold-tunnel@file", "forwarded@file"},
+			"middlewares": {"hold@file", "hold-wait@file", "hold-websecure@file", "hold-tunnel@file", "forwarded@file", "tunnel-allow@file"},
 			"services":    {"hold@file"},
 		}[kind]
 		for _, n := range want {

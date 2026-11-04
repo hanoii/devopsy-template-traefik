@@ -160,9 +160,12 @@ func TestProjectIsolation(t *testing.T) {
 	}
 
 	h.sh(proxy, nil, "devopsy t api_access")
-	api := "http://" + h.address("traefik-traefik-1", "aa-iso_proxy") + ":8080/api/version"
-	if out, err := h.inside(web, "wget -S -q -T 3 -O /dev/null "+api+" 2>&1 || true"); err != nil || !strings.Contains(out, "403") {
-		t.Errorf("the API from a site: %v\n%s", err, out)
+	// The API, and the tunnel's entrypoint, which Cloudflare's rules guard.
+	for _, path := range []string{":8080/api/version", ":8081/"} {
+		url := "http://" + h.address("traefik-traefik-1", "aa-iso_proxy") + path
+		if out, err := h.inside(web, "wget -S -q -T 3 -O /dev/null "+url+" 2>&1 || true"); err != nil || !strings.Contains(out, "403") {
+			t.Errorf("%s from a site: %v\n%s", path, err, out)
+		}
 	}
 	if out := h.api("/api/version"); !strings.Contains(out, "Version") {
 		t.Errorf("the API from the host: %s", out)
@@ -256,7 +259,9 @@ func TestProjectNetworksLifecycle(t *testing.T) {
 	h.sh(dir, nil, "docker compose -p ll-iso start")
 	h.waitFor("the started project answers", func() bool { return h.request("https://ll-iso.example.com/").Code == 200 })
 
-	route := func() string { return h.sh("/", nil, `docker exec traefik-traefik-1 ip route | awk '/^default/ {print $3}'`) }
+	route := func() string {
+		return h.sh("/", nil, `docker exec traefik-traefik-1 ip route | awk '/^default/ {print $3}'`)
+	}
 	before := route()
 	h.sh(proxy, nil, "devopsy up -d --wait --force-recreate traefik")
 	h.waitFor("Traefik back on every project", func() bool {

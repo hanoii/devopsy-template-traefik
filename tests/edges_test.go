@@ -27,8 +27,9 @@ func header(echo, name string) string {
 }
 
 // The tunnel entrypoint trusts its network's connectors: the visitor's
-// IP from CF-Connecting-IP and its X-Forwarded-Proto; from any other
-// network neither. A visitor's Forwarded never reaches a site, on the
+// IP from CF-Connecting-IP and its X-Forwarded-Proto. Any other network
+// is refused, a host with no router too, so nothing there gets round
+// Cloudflare's rules. A visitor's Forwarded never reaches a site, on the
 // tunnel or on websecure.
 func TestTunnelTrust(t *testing.T) {
 	h := traefik(t)
@@ -41,10 +42,10 @@ func TestTunnelTrust(t *testing.T) {
 	if header(echo, "X-Real-Ip") != "192.0.2.44" || header(echo, "X-Forwarded-Proto") != "https" || header(echo, "Forwarded") != "" {
 		t.Errorf("through the tunnel:\n%s", echo)
 	}
-	visitor[len(visitor)-1] = "http://traefik:8081/"
-	echo = h.from("traefik", visitor...)
-	if header(echo, "X-Real-Ip") == "192.0.2.44" || header(echo, "X-Forwarded-Proto") != "http" || header(echo, "Forwarded") != "" {
-		t.Errorf("from the traefik network:\n%s", echo)
+	for _, name := range []string{"tun.example.com", "nothing.example.com"} {
+		if out := h.from("traefik", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: "+name, "http://traefik:8081/"); out != "403" {
+			t.Errorf("%s from the traefik network: %s", name, out)
+		}
 	}
 	echo = h.sh("/", nil, `curl -sk --resolve direct.example.com:443:127.0.0.1 -H 'Forwarded: host=evil.example.com;proto=http' https://direct.example.com/`)
 	if header(echo, "Forwarded") != "" || !strings.Contains(echo, "Host: direct.example.com") {
