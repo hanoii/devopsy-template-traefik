@@ -134,6 +134,9 @@ services:
       # Traefik could not start on.
       attach:
         condition: service_healthy
+    # It is on every project's network: never a route between them.
+    sysctls:
+      - net.ipv4.ip_forward=0
     environment:
       # Dashboard and API on port 8080, published on localhost only (see
       # ports). Reach it with an SSH tunnel. Not insecure: its router

@@ -10,11 +10,12 @@ The `traefik` network, projects' own networks and `attach`, the socket proxies, 
 - `attach` filters on `traefik.docker.network` alone, since Traefik takes other spellings of `traefik.enable=true`, and joining a network its own project names for nothing costs nothing.
 - `attach` takes Traefik by project, role and not one-off: a one-off of the service (`in_traefik`) carries its labels, and is newer.
 - `attach` reads a container's and a network's labels as JSON and refuses all but a plain name: a label is anyone's text, and could otherwise pass for the fields around it.
-- `attach` skips a pass when a read fails: an empty answer would read as nothing wanted, and cut every site.
+- `attach` retries a pass when a read fails, and is healthy only after one worked: an empty answer would read as nothing wanted, and cut every site.
 - `attach` trusts labels only as far as a compromised container goes: `docker run` can claim Traefik's project and role, or a project's, and that takes the Docker API, which is root until a broker polices it.
-- `attach` removes a project's network once Traefik left and no container is on it, stopped ones included: `down` gives up on it while Traefik holds it, and a stopped container cannot start without it.
+- `attach` removes a project's network 10 seconds after Traefik left it, unless a container is on it, stopped ones included: `down` gives up on it while Traefik holds it, a `down` then an `up` would otherwise lose it between compose finding it and creating a container, and a stopped container cannot start without it.
 - `attach` leaves networks of no compose project alone, so one connected by hand stays.
-- Traefik waits for `attach`'s first pass (`depends_on`), which drops a network removed while Traefik was stopped: Docker removes one a stopped container names, and that container cannot start.
+- `attach` compares Traefik's networks by id, and Traefik waits for its first pass (`depends_on`): Docker removes a network a stopped container names, compose may make it again under the name, and that container cannot start on either; compose's own `restart` skips the wait, and a later `up` recovers.
+- `sysctls` turns IP forwarding off on Traefik, the one container on every project's network.
 - A change to `<project>_proxy`'s own settings needs that project down first, so `attach` removes the network: otherwise compose disconnects its container and then fails on Traefik's endpoint, the failed release's `up` starts that container off the network, and only `up -d --force-recreate` brings it back.
 - `attach` exits when its event stream ends, for the restart policy: as PID 1 it ignores a signal it has no handler for, and would go on healthy and deaf.
 - `deploy` stays a plain `up`, and `attach` reconnects a recreated Traefik: connecting a created container first was slower at every size.

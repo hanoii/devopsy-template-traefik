@@ -8,6 +8,8 @@ dirty=/tmp/attach.dirty ended=/tmp/attach.ended ready=/tmp/attach.ready
 nl='
 '
 said=
+leaving=
+empty_for=10
 
 # docker network ...: what compose's down or a pass before this got to first is
 # no failure, and says nothing.
@@ -39,15 +41,18 @@ plain() {
   case $v in *[!a-zA-Z0-9_.-]*) v= ;; esac
 }
 
-# The networks there are, into networks (|name=project|...).
+# The networks there are, into networks (|name=project|...) and ids (|name=id|...).
 read_networks() {
-  lines=$(docker network ls --format '{{.Name}}={{json (.Label "com.docker.compose.project")}}') || return 1
-  networks='|'
+  lines=$(docker network ls --no-trunc --format '{{.Name}}={{.ID}}={{json (.Label "com.docker.compose.project")}}') || return 1
+  networks='|' ids='|'
   ifs=$IFS IFS=$nl
   set -f
   for line in $lines; do
-    plain "${line#*=}"
-    networks="$networks${line%%=*}=$v|"
+    n=${line%%=*}
+    r=${line#*=}
+    plain "${r#*=}"
+    networks="$networks$n=$v|"
+    ids="$ids$n=${r%%=*}|"
   done
   set +f
   IFS=$ifs
@@ -108,14 +113,42 @@ wanted_networks() {
   IFS=$ifs
 }
 
-# A one-off of the proxy's service (a command's) carries its labels too.
-pass() {
-  proxy=$(docker ps -aq --filter "label=com.docker.compose.project=$self" --filter label=devopsy.role=proxy --filter label=com.docker.compose.oneoff=False | head -n 1)
-  [ -n "$proxy" ] || return 0
-  read_networks || return 0
-  wanted_networks || return 0
+# The proxy's networks into have (,name,name,). One gone, or back under its name
+# with a new id, is dropped: Docker removes a network a stopped container names,
+# and that container could not start on it. A created container has no id yet.
+read_have() {
   # shellcheck disable=SC2016
-  have=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}},{{$k}},{{end}}' "$proxy" 2>/dev/null) || return 0
+  on=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}={{$v.NetworkID}} {{end}}' "$proxy" 2>/dev/null) || return 1
+  have=,
+  for e in $on; do
+    n=${e%%=*}
+    id=${e#*=}
+    case $ids in
+      *"|$n=$id|"*) ;;
+      *"|$n="*)
+        if [ -n "$id" ]; then
+          network disconnect "$n" "$proxy" && echo "attach: dropped $n, made again"
+          continue
+        fi
+        ;;
+      *)
+        network disconnect "$n" "$proxy" && echo "attach: dropped $n, which is gone"
+        continue
+        ;;
+    esac
+    have="$have$n,"
+  done
+}
+
+# One pass, failing when a read does: an answer it did not get must not read as
+# nothing wanted. A one-off of the proxy's service carries its labels too.
+pass() {
+  found=$(docker ps -aq --filter "label=com.docker.compose.project=$self" --filter label=devopsy.role=proxy --filter label=com.docker.compose.oneoff=False) || return 1
+  proxy=${found%%"$nl"*}
+  [ -n "$proxy" ] || return 0
+  read_networks || return 1
+  wanted_networks || return 1
+  read_have || return 1
   for n in $(printf '%s' "$wanted" | tr ',' ' '); do
     case $have in
       *",$n,"*) ;;
@@ -123,30 +156,39 @@ pass() {
     esac
   done
   for n in $(printf '%s' "$have" | tr ',' ' '); do
-    case $networks in
-      *"|$n="*) ;;
-      *)
-        # Removed while the proxy was stopped, which could not start on it.
-        network disconnect "$n" "$proxy" && echo "attach: dropped $n, which is gone"
-        continue
-        ;;
-    esac
     project_of "$n"
     case $np in '' | "$self") continue ;; esac
     case $wanted in *",$n,"*) continue ;; esac
-    network disconnect "$n" "$proxy" && echo "attach: disconnected $n"
-    # compose's down gave up on it while the proxy held it. A stopped container
-    # still needs it.
-    if [ -z "$(docker ps -aq --filter "network=$n")" ]; then
-      network rm "$n" && echo "attach: removed $n"
+    if network disconnect "$n" "$proxy"; then
+      echo "attach: disconnected $n"
+      leaving="$leaving $n@$(($(date +%s) + empty_for))"
     fi
   done
 }
 
+# Removes what the proxy left once it has stayed empty, which compose's down gave
+# up on while the proxy held it. Not at once: a down then an up would lose the
+# network between compose finding it and creating a container on it. A stopped
+# container still needs it.
+sweep() {
+  [ -n "$leaving" ] || return 0
+  now=$(date +%s)
+  keep=
+  for e in $leaving; do
+    n=${e%@*}
+    if [ "$now" -lt "${e##*@}" ]; then
+      keep="$keep $e"
+    elif c=$(docker ps -aq --filter "network=$n") && [ -z "$c" ]; then
+      network rm "$n" && echo "attach: removed $n"
+    fi
+  done
+  leaving=$keep
+}
+
 rm -f "$ready" "$dirty" "$ended"
+trap 'exit 0' TERM INT
 # The stream first, so nothing happens between the first pass and it. When it
-# ends the script exits, for the restart policy: PID 1 ignores a signal it has
-# no handler for, so it could not kill itself from there, and would go on deaf.
+# ends the script exits, for the restart policy.
 (
   docker events --filter type=container --filter event=create --filter event=start --filter event=destroy --format x |
     while read -r _; do : >"$dirty"; done
@@ -157,7 +199,10 @@ rm -f "$ready" "$dirty" "$ended"
   sleep 1
   : >"$dirty"
 ) &
-pass
+until pass; do
+  [ ! -e "$ended" ] || exit 1
+  sleep 1
+done
 : >"$ready"
 while :; do
   if [ -e "$ended" ]; then
@@ -166,7 +211,11 @@ while :; do
   fi
   if [ -e "$dirty" ]; then
     rm -f "$dirty"
-    pass
+    pass || {
+      sleep 1
+      : >"$dirty"
+    }
   fi
+  sweep
   sleep 0.2
 done

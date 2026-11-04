@@ -127,14 +127,16 @@ Router names must be unique on the host, so prefix them with the project
 name.
 
 The `attach` service connects Traefik to that network when the container
-appears, and removes the network once nothing is left on it. It connects
+appears, and removes the network about 10 seconds after nothing is left
+on it. It connects
 only a network the container is on, of the same compose project. Traefik
 is not restarted, so a project's release never interrupts the others.
 `docker compose down` still says `Resource is still in use` about that
 network, since Traefik is on it at that moment, and exits 0.
 
 A project's containers reach another project's only through Traefik's
-routers, as any visitor does. Only the services you put on `proxy` share
+entrypoints, as any visitor does, and a tunneled site's too, without
+Cloudflare's own rules in front (docs/tunnel.md). Only the services you put on `proxy` share
 a network with Traefik, so keep databases, caches and workers off it.
 
 A change to the `proxy` network's own settings, such as a driver option,

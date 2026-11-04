@@ -78,10 +78,16 @@ func (h host) inside(container, script string) (string, error) {
 	return h.shErr("/", nil, `docker run --rm -q --network "container:$1" busybox:1.37 sh -c "$2"`, container, script)
 }
 
-// proxyNetworks is what Traefik's container is on, sorted by Docker.
+// networksOf is what container is on, sorted by Docker.
+func (h host) networksOf(container string) string {
+	h.t.Helper()
+	return strings.TrimSpace(h.sh("/", nil, `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$1"`, container))
+}
+
+// proxyNetworks is what Traefik's container is on.
 func (h host) proxyNetworks() string {
 	h.t.Helper()
-	return strings.TrimSpace(h.sh("/", nil, `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' traefik-traefik-1`))
+	return h.networksOf("traefik-traefik-1")
 }
 
 // address is container's address on network.
@@ -147,6 +153,10 @@ func TestProjectIsolation(t *testing.T) {
 	}
 	if route, err := h.inside(web, "ip route"); err != nil || !strings.Contains(route, "default") {
 		t.Errorf("the app's routes: %v\n%s", err, route)
+	}
+
+	if out := h.sh("/", nil, `docker exec traefik-traefik-1 cat /proc/sys/net/ipv4/ip_forward`); strings.TrimSpace(out) != "0" {
+		t.Errorf("Traefik forwards between the networks it is on: %s", out)
 	}
 
 	h.sh(proxy, nil, "devopsy t api_access")
@@ -246,6 +256,8 @@ func TestProjectNetworksLifecycle(t *testing.T) {
 	h.sh(dir, nil, "docker compose -p ll-iso start")
 	h.waitFor("the started project answers", func() bool { return h.request("https://ll-iso.example.com/").Code == 200 })
 
+	route := func() string { return h.sh("/", nil, `docker exec traefik-traefik-1 ip route | awk '/^default/ {print $3}'`) }
+	before := route()
 	h.sh(proxy, nil, "devopsy up -d --wait --force-recreate traefik")
 	h.waitFor("Traefik back on every project", func() bool {
 		n := h.proxyNetworks()
@@ -253,6 +265,10 @@ func TestProjectNetworksLifecycle(t *testing.T) {
 	})
 	for _, site := range []string{"ll-iso", "kk-iso"} {
 		h.waitFor(site+" answers after Traefik's recreate", func() bool { return h.request("https://"+site+".example.com/").Code == 200 })
+	}
+
+	if after := route(); after != before {
+		t.Errorf("Traefik's default route moved with its recreate:\n%s\nto\n%s", before, after)
 	}
 
 	h.sh(dir, nil, "docker compose -p ll-iso down -v")
@@ -263,7 +279,7 @@ func TestProjectNetworksLifecycle(t *testing.T) {
 	if a := h.request("https://kk-iso.example.com/"); a.Code != 200 {
 		t.Errorf("the other project after the down: %+v", a)
 	}
-	// Down and up at once: the removal never beats the next up.
+	// Down and up at once: the removal waits, so it does not beat the next up.
 	h.sh(dir, nil, "docker compose -p ll-iso up -d --wait")
 	h.waitFor("up again", func() bool { return h.request("https://ll-iso.example.com/").Code == 200 })
 	for i := 0; i < 3; i++ {
@@ -302,7 +318,11 @@ func TestAttach(t *testing.T) {
 	if out := h.sh(dir, nil, "devopsy domains 2>&1"); strings.Contains(out, "attach is not running") {
 		t.Errorf("domains with attach up:\n%s", out)
 	}
+	start := time.Now()
 	h.sh(dir, nil, "devopsy stop attach")
+	if took := time.Since(start); took > 8*time.Second {
+		t.Errorf("attach took %s to stop: it waited out the grace period", took)
+	}
 	if out := h.sh(dir, nil, "devopsy domains 2>&1"); !strings.Contains(out, "attach is not running") {
 		t.Errorf("domains with attach down:\n%s", out)
 	}
@@ -329,7 +349,7 @@ func TestOneOffIsNotTraefik(t *testing.T) {
 	h.isolated("ob-iso", "ob-iso.example.com")
 	h.waitFor("Traefik on a project that appeared", func() bool { return joined(h.proxyNetworks(), "ob-iso_proxy") })
 	for _, id := range ids() {
-		n := h.sh("/", nil, `docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$1"`, id)
+		n := h.networksOf(id)
 		if strings.Contains(n, "_proxy") {
 			t.Errorf("a one-off joined a project's network: %s", n)
 		}
@@ -354,9 +374,9 @@ func TestNetworkLabelsAreText(t *testing.T) {
 	h.waitFor("Traefik on a project another network's label names", func() bool { return joined(h.proxyNetworks(), "ww-iso_proxy") })
 }
 
-// Docker removes a network a stopped container names, and that container cannot
-// start: a project's down while Traefik and attach are stopped must not keep
-// Traefik down.
+// Docker removes a network a stopped container names, compose may make it again
+// under the name, and that container cannot start on either: a project's down, or
+// its down and up, while Traefik and attach are stopped must not keep Traefik down.
 func TestDownWhileTraefikStopped(t *testing.T) {
 	h := traefik(t)
 	h.isolated("ds-iso", "ds-iso.example.com")
@@ -367,6 +387,17 @@ func TestDownWhileTraefikStopped(t *testing.T) {
 		t.Fatalf("up does not bring Traefik back: %v\n%s", err, out)
 	}
 	h.routed("devopsy-api@file")
+
+	dir := "/home/devopsy/sites/ds-iso"
+	h.sh(dir, nil, "docker compose -p ds-iso up -d --wait")
+	h.waitFor("Traefik on the site again", func() bool { return joined(h.proxyNetworks(), "ds-iso_proxy") })
+	h.sh(proxy, nil, "devopsy stop attach traefik")
+	h.sh(dir, nil, "docker compose -p ds-iso down -v && docker compose -p ds-iso up -d --wait")
+	if out, err := h.shErr(proxy, nil, "devopsy up -d --wait 2>&1"); err != nil {
+		t.Fatalf("up does not bring Traefik back on a network made again: %v\n%s", err, out)
+	}
+	h.routed("ds-iso@docker")
+	h.waitFor("the site answers on the network made again", func() bool { return h.request("https://ds-iso.example.com/").Code == 200 })
 }
 
 // A project's service named as one of Traefik's own does not take that name over:
@@ -396,25 +427,36 @@ networks:
 }
 
 // A read that fails skips the pass: an empty answer would read as nothing wanted,
-// and take Traefik off every site. On a fake docker, since a real one fails on no
+// and take Traefik off every site. Whichever read fails, and with none failing,
+// which shows the fake can tell. On a fake docker, since a real one fails on no
 // command.
 func TestFailedReadCutsNoSite(t *testing.T) {
 	h, dir := project(t, "traefik", nil)
-	fake := `mkdir /fake && cat >/fake/docker <<'EOF'
+	run := func(fails string) string {
+		fake := `mkdir /fake && cat >/fake/docker <<'EOF'
 #!/bin/sh
 case "$1 $2" in
-  "ps -aq") case "$*" in *role=proxy*) echo proxy ;; *) echo site ;; esac ;;
-  "network ls") echo 'site_proxy="site"' ;;
-  "network disconnect") echo DISCONNECTED ;;
-  "inspect -f") case "$3" in *Config.Labels*) echo failed >&2; exit 1 ;; *) echo ',site_proxy,' ;; esac ;;
+  "ps -aq") case "$*" in *role=proxy*) echo proxy ;; *) [ "$FAILS" = none ] || echo site ;; esac ;;
+  "network ls") [ "$FAILS" != networks ] || { echo failed >&2; exit 1; }; echo 'site_proxy=abc="site"' ;;
+  "network disconnect") : ;;
+  "inspect -f") case "$3" in
+    *Config.Labels*) [ "$FAILS" != labels ] || { echo failed >&2; exit 1; }; echo '"site_proxy"|"site"|,site_proxy,' ;;
+    *) echo 'site_proxy=abc ' ;;
+    esac ;;
   *) sleep 100 ;;
 esac
 EOF
 chmod +x /fake/docker
-PATH=/fake:$PATH ATTACH_PROJECT=self timeout 3 sh /attach
+FAILS=$1 PATH=/fake:$PATH ATTACH_PROJECT=self timeout 3 sh /attach
 true`
-	out := h.sh(dir, nil, `docker run --rm -v "$PWD/.devopsy/lib/attach:/attach:ro" busybox:1.37 sh -c "$1"`, fake)
-	if strings.Contains(out, "disconnected") {
-		t.Errorf("a failed read took Traefik off a site:\n%s", out)
+		return h.sh(dir, nil, `docker run --rm -v "$PWD/.devopsy/lib/attach:/attach:ro" busybox:1.37 sh -c "$1" sh "$2"`, fake, fails)
+	}
+	for _, fails := range []string{"networks", "labels"} {
+		if out := run(fails); strings.Contains(out, "disconnected") {
+			t.Errorf("a failed read of %s took Traefik off a site:\n%s", fails, out)
+		}
+	}
+	if out := run("none"); !strings.Contains(out, "disconnected site_proxy") {
+		t.Errorf("nothing wanted, and Traefik stayed on the network:\n%s", out)
 	}
 }
