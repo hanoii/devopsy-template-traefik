@@ -23,8 +23,9 @@ Upgrading is a release from a newer checkout, and `devopsy @vm1-traefik
 --rollback` goes back. Routed sites are without Traefik for a few seconds
 while its container is recreated, and longer on a server with many sites,
 since Docker takes a network at a time to stop and start a container (about
-12 seconds at 100 sites on the machine this was measured on, and more in
-some earlier runs). A site's own release costs the others nothing.
+13 to 15 seconds at 100 sites on the machine this was measured on, and
+about 30 while that machine was busy). A site's own release costs the others
+nothing.
 
 Rolling Traefik back to a release without `attach` leaves it off the
 projects' own networks, so the sites on them answer 504 until Traefik is
