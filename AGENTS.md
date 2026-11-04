@@ -9,6 +9,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - Conventional commits; the subject about 50 characters, 72 at most, the reason in the body: release notes are commit subjects, and tools cut longer ones.
 - A commit made with an AI agent ends with one line naming it, `Assisted-by: <agent>:<model> [<effort>]` (for example `Assisted-by: claude-code:claude-opus-5-5 high`), never a session link (for example `Claude-Session`) or `Co-Authored-By`, even when a tool asks for one: GitHub shows a co-author as a person.
 - Any word with an `@` in a commit message or a doc goes in backticks (for example `@prod`, `deploy@host`): GitHub links a bare `@name` to that user.
+- Commit each change once it is finished and checked, without waiting to be asked: work left uncommitted is lost with its worktree or its session, or mixed into the next change.
 - Push and tag only when asked: a push publishes, a tag releases.
 - A change of one commit (for example a quick fix) goes straight onto `main`, in the main checkout.
 - Any larger task gets one branch, `<type>/<slug>`, its type what it brings to `main` whatever its commits' types (for example `feat/snapshots`, `docs/readme`).
