@@ -324,6 +324,19 @@ func TestProjectNetworksLifecycle(t *testing.T) {
 	if a := h.request("https://kk-iso.example.com/"); a.Code != 200 {
 		t.Errorf("the other project after the down: %+v", a)
 	}
+	// A network made again under its name while its removal waited is another's,
+	// as when compose is between making it and starting a container on it. No
+	// event says the wait is over, hence the sleep.
+	h.sh("/", nil, `docker network create --label com.docker.compose.project=again again_proxy >/dev/null &&
+		docker run -d --name again --network again_proxy -l traefik.docker.network=again_proxy -l com.docker.compose.project=again busybox:1.37 sleep 100000 >/dev/null`)
+	t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f again; docker network rm again_proxy`) })
+	h.waitFor("Traefik on the network", func() bool { return joined(h.proxyNetworks(), "again_proxy") })
+	h.sh("/", nil, `docker rm -f again >/dev/null`)
+	h.waitFor("Traefik off the network", func() bool { return !joined(h.proxyNetworks(), "again_proxy") })
+	h.sh("/", nil, `docker network rm again_proxy >/dev/null && docker network create --label com.docker.compose.project=again again_proxy >/dev/null && sleep 11`)
+	if networks("again") == "" {
+		t.Error("attach removed a network made again while its removal waited")
+	}
 	// Down and up at once: the removal waits, so it does not beat the next up.
 	h.sh(dir, nil, "docker compose -p ll-iso up -d --wait")
 	h.waitFor("up again", func() bool { return h.request("https://ll-iso.example.com/").Code == 200 })

@@ -14,6 +14,7 @@ The `traefik` network, projects' own networks and `attach`, the socket proxies, 
 - `attach` retries a pass when a read fails, and is healthy only after one worked: an empty answer would read as nothing wanted, and cut every site.
 - `attach` trusts labels only as far as a compromised container goes: `docker run` can claim Traefik's project and role, or a project's, and that takes the Docker API, which is root until a broker polices it.
 - `attach` removes a project's network 10 seconds after Traefik left it, unless a container is on it, stopped ones included: `down` gives up on it while Traefik holds it, a `down` then an `up` would otherwise lose it between compose finding it and creating a container, and a stopped container cannot start without it.
+- `attach` removes only the network Traefik left, by id: one made again under its name is a compose about to create a container on it.
 - `attach` leaves networks of no compose project alone, so one connected by hand stays.
 - `attach` compares Traefik's networks by id, and Traefik waits for its first pass (`depends_on`): Docker removes a network a stopped container names, compose may make it again under the name, and that container cannot start on either; compose's own `restart` skips the wait, and a later `up` recovers.
 - `sysctls` turns IP forwarding off on Traefik, the one container on every project's network.

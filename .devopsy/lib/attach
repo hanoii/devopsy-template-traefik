@@ -161,7 +161,8 @@ pass() {
     case $wanted in *",$n,"*) continue ;; esac
     if network disconnect "$n" "$proxy"; then
       echo "attach: disconnected $n"
-      leaving="$leaving $n@$(($(date +%s) + empty_for))"
+      left=${ids#*"|$n="}
+      leaving="$leaving $n@${left%%|*}@$(($(date +%s) + empty_for))"
     fi
   done
 }
@@ -169,16 +170,19 @@ pass() {
 # Removes what the proxy left once it has stayed empty, which compose's down gave
 # up on while the proxy held it. Not at once: a down then an up would lose the
 # network between compose finding it and creating a container on it. A stopped
-# container still needs it.
+# container still needs it, and one made again under the name is not the one left,
+# since compose can be about to create a container on it.
 sweep() {
   [ -n "$leaving" ] || return 0
   now=$(date +%s)
   keep=
   for e in $leaving; do
-    n=${e%@*}
+    n=${e%%@*}
+    left=${e#*@}
     if [ "$now" -lt "${e##*@}" ]; then
       keep="$keep $e"
-    elif c=$(docker ps -aq --filter "network=$n") && [ -z "$c" ]; then
+    elif network inspect -f '{{.Id}}' "$n" && [ "$out" = "${left%@*}" ] &&
+      c=$(docker ps -aq --filter "network=$n") && [ -z "$c" ]; then
       network rm "$n" && echo "attach: removed $n"
     fi
   done
