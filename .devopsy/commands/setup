@@ -495,5 +495,5 @@ if [ -n "$alias" ]; then
   [ -z "$alias" ] || echo "${green}Added.$reset devopsy @$alias domains"
 fi
 
-say "${green}Done.$reset$bold Sites route through this Traefik by joining the \`traefik\` network;
-devopsy-template-whoami is the smallest example."
+say "${green}Done.$reset$bold Sites route through this Traefik on a network of their own, named in the
+\`traefik.docker.network\` label; devopsy-template-whoami is the smallest example."

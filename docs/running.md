@@ -26,9 +26,9 @@ since Docker takes longer to stop a container on many networks (about 30
 seconds at 100 sites on the machine this was measured on). A site's own
 release costs the others nothing.
 
-Rolling Traefik back to a release without `attach` drops the projects'
-own networks, so the sites on them answer 504 until Traefik is released
-forward again. Release Traefik before moving a project to its own network.
+Rolling Traefik back to a release without `attach` leaves it off the
+projects' own networks, so the sites on them answer 504 until Traefik is
+released forward again. Release Traefik before moving a project to its own network.
 
 The Traefik image tracks its minor version (`traefik:v3.7`), and every
 release pulls it again, so patches arrive with your next release. A new

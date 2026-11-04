@@ -7,25 +7,27 @@ self=${ATTACH_PROJECT:?}
 dirty=/tmp/attach.dirty ended=/tmp/attach.ended ready=/tmp/attach.ready
 nl='
 '
+said=
 
 # docker network ...: what compose's down or a pass before this got to first is
 # no failure, and says nothing.
 network() {
   out=$(docker network "$@" 2>&1) && return 0
   case $out in
-    *"already exists"* | *"not found"*) ;;
+    *"already exists in network"* | *"network "*" not found"*) ;;
     *) printf 'attach: %s\n' "$out" ;;
   esac
   return 1
 }
 
-# A compose project's label on network $1, into np. networks is |name=project|...
-project_of() {
-  np=
-  case $networks in *"|$1="*)
-    np=${networks#*"|$1="}
-    np=${np%%|*}
-    ;;
+# Says $1 once per run: a pass runs at every container event on the host.
+say_once() {
+  case $said in
+    *"[$1]"*) ;;
+    *)
+      said="${said}[$1]"
+      printf 'attach: %s\n' "$1"
+      ;;
   esac
 }
 
@@ -37,16 +39,40 @@ plain() {
   case $v in *[!a-zA-Z0-9_.-]*) v= ;; esac
 }
 
+# The networks there are, into networks (|name=project|...).
+read_networks() {
+  lines=$(docker network ls --format '{{.Name}}={{json (.Label "com.docker.compose.project")}}') || return 1
+  networks='|'
+  ifs=$IFS IFS=$nl
+  set -f
+  for line in $lines; do
+    plain "${line#*=}"
+    networks="$networks${line%%=*}=$v|"
+  done
+  set +f
+  IFS=$ifs
+}
+
+# A compose project's label on network $1, into np.
+project_of() {
+  np=
+  case $networks in *"|$1="*)
+    np=${networks#*"|$1="}
+    np=${np%%|*}
+    ;;
+  esac
+}
+
 # The networks routed containers name, into wanted (,name,name,): only one its
 # container is on, of that container's compose project, never the proxy's own.
 wanted_networks() {
   wanted=,
   # shellcheck disable=SC2016
   format='{{json (index .Config.Labels "traefik.docker.network")}}|{{json (index .Config.Labels "com.docker.compose.project")}}|{{range $k,$v := .NetworkSettings.Networks}},{{$k}},{{end}}'
-  labeled=$(docker ps -aq --filter label=traefik.enable=true --filter label=traefik.docker.network) || return 1
+  labeled=$(docker ps -aq --filter label=traefik.docker.network) || return 1
   [ -n "$labeled" ] || return 0
   # shellcheck disable=SC2086
-  lines=$(docker inspect -f "$format" $labeled 2>/dev/null)
+  lines=$(docker inspect -f "$format" $labeled 2>/dev/null) || return 1
   ifs=$IFS IFS=$nl
   set -f
   for line in $lines; do
@@ -58,7 +84,7 @@ wanted_networks() {
     plain "$p"
     p=$v
     if [ -z "$n" ] || [ -z "$p" ]; then
-      echo "attach: refused a label: $line"
+      say_once "refused a label: $line"
       continue
     fi
     project_of "$n"
@@ -68,12 +94,12 @@ wanted_networks() {
     case $on in
       *",$n,"*) ;;
       *)
-        echo "attach: $n: its container is not on it"
+        say_once "$n: its container is not on it"
         continue
         ;;
     esac
     if [ "$np" != "$p" ]; then
-      echo "attach: $n: of project '$np', its container's is '$p'"
+      say_once "$n: of project '$np', its container's is '$p'"
       continue
     fi
     wanted="$wanted$n,"
@@ -82,11 +108,11 @@ wanted_networks() {
   IFS=$ifs
 }
 
+# A one-off of the proxy's service (a command's) carries its labels too.
 pass() {
-  proxy=$(docker ps -aq --filter "label=com.docker.compose.project=$self" --filter label=devopsy.role=proxy | head -n 1)
+  proxy=$(docker ps -aq --filter "label=com.docker.compose.project=$self" --filter label=devopsy.role=proxy --filter label=com.docker.compose.oneoff=False | head -n 1)
   [ -n "$proxy" ] || return 0
-  networks=$(docker network ls --format '|{{.Name}}={{.Label "com.docker.compose.project"}}' | tr -d '\n') || return 0
-  networks="$networks|"
+  read_networks || return 0
   wanted_networks || return 0
   # shellcheck disable=SC2016
   have=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}},{{$k}},{{end}}' "$proxy" 2>/dev/null) || return 0
@@ -97,6 +123,14 @@ pass() {
     esac
   done
   for n in $(printf '%s' "$have" | tr ',' ' '); do
+    case $networks in
+      *"|$n="*) ;;
+      *)
+        # Removed while the proxy was stopped, which could not start on it.
+        network disconnect "$n" "$proxy" && echo "attach: dropped $n, which is gone"
+        continue
+        ;;
+    esac
     project_of "$n"
     case $np in '' | "$self") continue ;; esac
     case $wanted in *",$n,"*) continue ;; esac

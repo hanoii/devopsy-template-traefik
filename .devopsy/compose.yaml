@@ -1,3 +1,27 @@
+x-socket-proxy: &socket-proxy
+  restart: unless-stopped
+  image: wollomatic/socket-proxy:1
+  healthcheck:
+    test: ['CMD', './healthcheck']
+    interval: 10s
+    timeout: 5s
+    retries: 2
+    # Every second while it starts, so `up --wait` (deploy, restart)
+    # goes on once it is healthy, not a whole interval later.
+    start_period: 30s
+    start_interval: 1s
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges
+  # nobody, in the group that owns the Docker socket on the host
+  # (`stat -c %g /var/run/docker.sock`). On macOS with OrbStack the socket
+  # is always mounted as root, so the default of 0 works there.
+  user: 65534:${PROXY_DOCKER_GID-0}
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+
 services:
   # Read-only, filtered access to the Docker API for Traefik, so Traefik never
   # mounts the Docker socket itself.
@@ -5,8 +29,7 @@ services:
   # Pinned exactly: it publishes no minor tag, and its allow-list flags are
   # security settings, so a bump is read in its release notes first.
   dockerproxy:
-    restart: unless-stopped
-    image: wollomatic/socket-proxy:1
+    <<: *socket-proxy
     command:
       - '-loglevel=info' # debug for far more logging
       - '-listenip=0.0.0.0'
@@ -23,26 +46,6 @@ services:
       - '-watchdoginterval=3600'
       - '-stoponwatchdog'
       - '-allowhealthcheck'
-    healthcheck:
-      test: ['CMD', './healthcheck']
-      interval: 10s
-      timeout: 5s
-      retries: 2
-      # Every second while it starts, so `up --wait` (deploy, restart)
-      # goes on once it is healthy, not a whole interval later.
-      start_period: 30s
-      start_interval: 1s
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges
-    # nobody, in the group that owns the Docker socket on the host
-    # (`stat -c %g /var/run/docker.sock`). On macOS with OrbStack the socket
-    # is always mounted as root, so the default of 0 works there.
-    user: 65534:${PROXY_DOCKER_GID-0}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - dockerproxy
 
@@ -51,8 +54,7 @@ services:
   # anything running on it. It filters by URL, so it cannot tell which network or
   # container: what compromises attach can connect or cut any of them.
   netproxy:
-    restart: unless-stopped
-    image: wollomatic/socket-proxy:1.13.1
+    <<: *socket-proxy
     command:
       - '-loglevel=info'
       - '-listenip=0.0.0.0'
@@ -65,21 +67,6 @@ services:
       - '-watchdoginterval=3600'
       - '-stoponwatchdog'
       - '-allowhealthcheck'
-    healthcheck:
-      test: ['CMD', './healthcheck']
-      interval: 10s
-      timeout: 5s
-      retries: 2
-      start_period: 30s
-      start_interval: 1s
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges
-    user: 65534:${PROXY_DOCKER_GID-0}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - netproxy
 
@@ -143,6 +130,10 @@ services:
     depends_on:
       dockerproxy:
         condition: service_healthy
+      # Its first pass drops a network removed while Traefik was stopped, which
+      # Traefik could not start on.
+      attach:
+        condition: service_healthy
     environment:
       # Dashboard and API on port 8080, published on localhost only (see
       # ports). Reach it with an SSH tunnel. Not insecure: its router
@@ -198,9 +189,12 @@ services:
       - TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_ALIASHEADERSSTRATEGY=delete
       - TRAEFIK_ENTRYPOINTS_TUNNEL_TRANSPORT_RESPONDINGTIMEOUTS_READTIMEOUT=${PROXY_READ_TIMEOUT-60s}
 
-      # Containers opt in with traefik.enable=true and must join this network.
+      # Containers opt in with traefik.enable=true, and name a network of their
+      # project's in traefik.docker.network; without one, this network.
       - TRAEFIK_PROVIDERS_DOCKER=true
-      - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy:2375
+      # Scoped to the network, as for acme-dns: on a project's network, a plain
+      # name also answers with a service of that name there.
+      - TRAEFIK_PROVIDERS_DOCKER_ENDPOINT=tcp://dockerproxy.${COMPOSE_PROJECT_NAME}_dockerproxy:2375
       - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
       - TRAEFIK_PROVIDERS_DOCKER_NETWORK=traefik
       # A plugin that fails to load stops Traefik instead of being skipped:
@@ -235,7 +229,7 @@ services:
       - TRAEFIK_CERTIFICATESRESOLVERS_LE-DNS01-SELFHOSTED_ACME_STORAGE=/letsencrypt/acme-le-dns01-selfhosted.json
       - TRAEFIK_CERTIFICATESRESOLVERS_LE-DNS01-SELFHOSTED_ACME_DNSCHALLENGE_PROVIDER=acmedns
       - TRAEFIK_CERTIFICATESRESOLVERS_LE-DNS01-SELFHOSTED_ACME_DNSCHALLENGE_PROPAGATION_DISABLECHECKS=true
-      - ACME_DNS_API_BASE=http://acmedns
+      - ACME_DNS_API_BASE=http://acmedns.${COMPOSE_PROJECT_NAME}_acmedns
       # Per-domain acme-dns accounts. `devopsy acmedns` reads it to list the
       # CNAME records to create.
       - ACME_DNS_STORAGE_PATH=/letsencrypt/acme-dns-accounts.json
@@ -425,7 +419,8 @@ services:
       - no-new-privileges
 
 networks:
-  # The network every routed container joins, as an external network.
+  # What a project that has not moved to a network of its own joins, as an
+  # external network.
   default:
     name: traefik
   dockerproxy:

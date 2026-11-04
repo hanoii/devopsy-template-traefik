@@ -134,8 +134,13 @@ is not restarted, so a project's release never interrupts the others.
 network, since Traefik is on it at that moment, and exits 0.
 
 A project's containers reach another project's only through Traefik's
-routers, as any visitor does. Only the services you put on `proxy` share a network with Traefik, so
-keep databases, caches and workers off it.
+routers, as any visitor does. Only the services you put on `proxy` share
+a network with Traefik, so keep databases, caches and workers off it.
+
+A change to the `proxy` network's own settings, such as a driver option,
+fails its release, since Compose cannot recreate a network Traefik is on,
+and the previous release comes back. Take the project down first
+(`devopsy @prod down`), and Traefik lets the network go.
 
 While `attach` is down, sites already connected keep working. A new one
 is not connected: a release succeeds, its visitors wait 30 seconds and get

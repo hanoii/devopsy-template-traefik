@@ -77,40 +77,45 @@ func (h host) site(name, hostname string, labels []string, image string, args ..
 	h.routed(name + "@docker")
 }
 
+// waitFor polls cond until it holds, for what Traefik or attach does a moment
+// after what it reacts to.
+func (h host) waitFor(what string, cond func() bool) {
+	h.t.Helper()
+	for end := time.Now().Add(30 * time.Second); !cond(); time.Sleep(250 * time.Millisecond) {
+		if time.Now().After(end) {
+			h.t.Fatalf("never: %s", what)
+		}
+	}
+}
+
 // routed waits for router to be in Traefik's API (it reads the
 // containers a moment after they start).
 func (h host) routed(router string) {
 	h.t.Helper()
-	for end := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+	h.waitFor("router "+router+" in Traefik's API", func() bool {
 		var routers []struct{ Name, Status string }
 		// The API may not answer yet: deploy opens it to the host once
 		// Traefik runs (api_access).
 		out, err := h.shErr("/", nil, `curl -sf "http://127.0.0.1:8080/api/http/routers?per_page=1000"`)
-		if err == nil && json.Unmarshal([]byte(out), &routers) == nil {
-			for _, r := range routers {
-				if r.Name == router {
-					return
-				}
+		if err != nil || json.Unmarshal([]byte(out), &routers) != nil {
+			return false
+		}
+		for _, r := range routers {
+			if r.Name == router {
+				return true
 			}
 		}
-		if time.Now().After(end) {
-			h.t.Fatalf("no router %s in Traefik's API", router)
-		}
-	}
+		return false
+	})
 }
 
 // unrouted waits for router to leave Traefik's API (a container stopped).
 func (h host) unrouted(router string) {
 	h.t.Helper()
-	for end := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+	h.waitFor("router "+router+" out of Traefik's API", func() bool {
 		out, err := h.shErr("/", nil, `curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/http/routers/$1"`, router)
-		if err == nil && out == "404" {
-			return
-		}
-		if time.Now().After(end) {
-			h.t.Fatalf("router %s still in Traefik's API", router)
-		}
-	}
+		return err == nil && out == "404"
+	})
 }
 
 // api is Traefik's API at path, from the host.
