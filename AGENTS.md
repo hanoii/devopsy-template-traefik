@@ -16,6 +16,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - All of a task's work goes on its branch, reviews' failing tests and their fixes included; never a branch off a task's branch.
 - A finished branch is rebased onto `main`, merged with `--no-ff` and deleted.
 - A partial merge, only when asked, is rebased and merged the same way and keeps the branch and its worktree, rebased at once onto the merge for the rest of the task.
+- A merge commit keeps git's default subject (for example `Merge branch 'feat/x'`), anything more in its body: a conventional subject would repeat its branch's commits in the release notes.
 - A branch is worked in a worktree of its own, `.worktrees/<slug>` (`git worktree add .worktrees/<slug> -b <type>/<slug>`), removed once merged: inside the repository, a worktree is within the directories the agent may use.
 - The main checkout stays on `main`.
 - A worktree of a devopsy project run beside its main checkout gets its own `project:` (for example `whoami-<slug>`) in `.devopsy/config.local.yaml`: otherwise both are one local compose project, sharing containers and volumes.
