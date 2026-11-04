@@ -153,3 +153,57 @@ func TestHoldPassesThrough(t *testing.T) {
 		t.Errorf("the WebSocket's upgrade:\n%s", out)
 	}
 }
+
+// holdingCompose is isolatedCompose with an app that closes its port on SIGTERM
+// and exits four seconds later, held through its stop (hold@file), as the
+// templates' apps are.
+func holdingCompose(name, hostname string) string {
+	return fmt.Sprintf(`services:
+  web:
+    image: busybox:1.37
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www && echo ok >/www/index.html && httpd -f -p 80 -h /www & pid=$$!
+        trap 'kill $$pid; sleep 4; exit 0' TERM
+        wait $$pid; wait $$pid
+    stop_grace_period: 15s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.%[1]s.rule=Host(%[2]s)
+      - traefik.http.routers.%[1]s.middlewares=hold@file
+      - traefik.http.services.%[1]s.loadbalancer.server.port=80
+      - traefik.docker.network=%[1]s_proxy
+    networks: [private, proxy]
+networks:
+  private: {internal: true}
+  proxy: {name: %[1]s_proxy}
+`, name, "`"+hostname+"`")
+}
+
+// A site on its own network is held through its recreate, as a release does it:
+// its port closed, then its router gone, then a new container with a new address.
+// Traefik stays on the network throughout, since a container naming it is always
+// on it, so attach never disconnects it.
+func TestHoldThroughRecreateOnOwnNetwork(t *testing.T) {
+	h := traefik(t)
+	h.compose("hr-iso", holdingCompose("hr-iso", "hr-iso.example.com"))
+	h.routed("hr-iso@docker")
+	h.waitFor("Traefik on the site", func() bool { return joined(h.proxyNetworks(), "hr-iso_proxy") })
+	h.waitFor("the site answers", func() bool { return h.request("https://hr-iso.example.com/").Code == 200 })
+
+	id := func() string { return strings.TrimSpace(h.sh("/", nil, `docker inspect -f '{{.Id}}' hr-iso-web-1`)) }
+	before := id()
+	heldThrough(t, "https://hr-iso.example.com/", h.during("https://hr-iso.example.com/",
+		"cd /home/devopsy/sites/hr-iso && docker compose -p hr-iso up -d --force-recreate web && sleep 2"))
+	if id() == before {
+		t.Errorf("the same container %s: nothing was recreated", before)
+	}
+	if !joined(h.proxyNetworks(), "hr-iso_proxy") {
+		t.Errorf("Traefik off the site's network after its recreate: %s", h.proxyNetworks())
+	}
+	if logs := h.sh("/", nil, "docker logs traefik-attach-1 2>&1"); strings.Contains(logs, "disconnected hr-iso_proxy") {
+		t.Errorf("attach left the network during the site's recreate:\n%s", logs)
+	}
+}

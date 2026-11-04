@@ -10,6 +10,8 @@ nl='
 said=
 leaving=
 empty_for=10
+retry_at=
+retry_every=5
 
 # docker network ...: what compose's down or a pass before this got to first is
 # no failure, and says nothing.
@@ -140,6 +142,21 @@ read_have() {
   done
 }
 
+# A connect or a disconnect failed: no event may come to try it again.
+retry_later() {
+  retry_at=$(($(date +%s) + retry_every))
+}
+
+# Remembers that the proxy left network $1, with id $2, replacing what an earlier
+# leave remembered: the wait runs from the last one.
+remember_left() {
+  keep=
+  for e in $leaving; do
+    case $e in "$1@"*) ;; *) keep="$keep $e" ;; esac
+  done
+  leaving="$keep $1@$2@$(($(date +%s) + empty_for))"
+}
+
 # One pass, failing when a read does: an answer it did not get must not read as
 # nothing wanted. A one-off of the proxy's service carries its labels too.
 pass() {
@@ -152,7 +169,13 @@ pass() {
   for n in $(printf '%s' "$wanted" | tr ',' ' '); do
     case $have in
       *",$n,"*) ;;
-      *) network connect "$n" "$proxy" && echo "attach: connected $n" ;;
+      *)
+        if network connect "$n" "$proxy"; then
+          echo "attach: connected $n"
+        else
+          retry_later
+        fi
+        ;;
     esac
   done
   for n in $(printf '%s' "$have" | tr ',' ' '); do
@@ -162,7 +185,9 @@ pass() {
     if network disconnect "$n" "$proxy"; then
       echo "attach: disconnected $n"
       left=${ids#*"|$n="}
-      leaving="$leaving $n@${left%%|*}@$(($(date +%s) + empty_for))"
+      remember_left "$n" "${left%%|*}"
+    else
+      retry_later
     fi
   done
 }
@@ -171,7 +196,8 @@ pass() {
 # up on while the proxy held it. Not at once: a down then an up would lose the
 # network between compose finding it and creating a container on it. A stopped
 # container still needs it, and one made again under the name is not the one left,
-# since compose can be about to create a container on it.
+# since compose can be about to create a container on it. A read that failed
+# says nothing, so it stays for the next sweep.
 sweep() {
   [ -n "$leaving" ] || return 0
   now=$(date +%s)
@@ -181,9 +207,14 @@ sweep() {
     left=${e#*@}
     if [ "$now" -lt "${e##*@}" ]; then
       keep="$keep $e"
-    elif network inspect -f '{{.Id}}' "$n" && [ "$out" = "${left%@*}" ] &&
-      c=$(docker ps -aq --filter "network=$n") && [ -z "$c" ]; then
-      network rm "$n" && echo "attach: removed $n"
+    elif ! network inspect -f '{{.Id}}' "$n"; then
+      case $out in *"not found"*) ;; *) keep="$keep $e" ;; esac
+    elif [ "$out" = "${left%@*}" ]; then
+      if ! c=$(docker ps -aq --filter "network=$n"); then
+        keep="$keep $e"
+      elif [ -z "$c" ]; then
+        network rm "$n" && echo "attach: removed $n"
+      fi
     fi
   done
   leaving=$keep
@@ -212,6 +243,10 @@ while :; do
   if [ -e "$ended" ]; then
     echo "attach: the event stream ended"
     exit 1
+  fi
+  if [ -n "$retry_at" ] && [ "$(date +%s)" -ge "$retry_at" ]; then
+    retry_at=
+    : >"$dirty"
   fi
   if [ -e "$dirty" ]; then
     rm -f "$dirty"

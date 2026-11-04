@@ -85,3 +85,46 @@ func project2(t *testing.T, h host, name string) string {
 	}
 	return dir
 }
+
+// Traefik released as to a server, so under its compose project there, traefik-prod,
+// not the tests' traefik: the network-scoped names, attach's project and its script
+// through current. A site routes and Traefik joins its network, a connector gets
+// through the tunnel's entrypoint, a release changing lib/attach reaches attach, and
+// a rollback brings back the script and goes on working.
+func TestReleasedTraefikRoutes(t *testing.T) {
+	h, dir := project(t, "traefik", nil)
+	const target = "@devopsy@localhost:prod"
+	t.Cleanup(func() { _, _ = h.shErr(dir, nil, "devopsy "+target+" --destroy --yes") })
+	vars := map[string]string{"PROXY_LE_ACME_EMAIL": "admin@example.com", "PROXY_PUBLIC_IP": "203.0.113.10"}
+	h.sh(dir, vars, "devopsy "+target+" --vars set PROXY_LE_ACME_EMAIL PROXY_PUBLIC_IP")
+	h.sh(dir, nil, "devopsy "+target+" --release --yes")
+	h.routed("devopsy-api@file")
+	onSite := func(network string) bool {
+		return joined(h.networksOf("traefik-prod-traefik-1"), network)
+	}
+	h.isolated("rl-iso", "rl-iso.example.com")
+	h.waitFor("Traefik on the site", func() bool { return onSite("rl-iso_proxy") })
+	h.waitFor("the site", func() bool { return h.request("https://rl-iso.example.com/").Code == 200 })
+	if code := h.from("tunnel", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: nothing.example.com", "http://traefik.tunnel:8081/"); code != "404" {
+		t.Errorf("a connector on the tunnel's entrypoint: %s, want 404", code)
+	}
+
+	script := func() string { return h.sh("/", nil, `docker exec traefik-prod-attach-1 tail -n 1 /attach`) }
+	h.sh(dir, nil, `printf '# changed\n' >>.devopsy/lib/attach`)
+	h.sh(dir, nil, "devopsy "+target+" --release --yes")
+	if got := script(); !strings.Contains(got, "# changed") {
+		t.Errorf("attach after a release changing its script: %s", got)
+	}
+	h.isolated("rm-iso", "rm-iso.example.com")
+	h.waitFor("Traefik on a site after the release", func() bool { return onSite("rm-iso_proxy") })
+
+	h.sh(dir, nil, "devopsy "+target+" --rollback --yes")
+	if got := script(); strings.Contains(got, "# changed") {
+		t.Errorf("attach after the rollback: %s", got)
+	}
+	h.isolated("rn-iso", "rn-iso.example.com")
+	h.waitFor("Traefik on a site after the rollback", func() bool { return onSite("rn-iso_proxy") })
+	h.waitFor("every site after the rollback", func() bool {
+		return h.request("https://rl-iso.example.com/").Code == 200 && h.request("https://rn-iso.example.com/").Code == 200
+	})
+}

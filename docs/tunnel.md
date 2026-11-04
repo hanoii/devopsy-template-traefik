@@ -19,7 +19,7 @@ released after this one. Traefik's side is always part of this template:
 
 - the `tunnel` entrypoint (`:8081`, plain HTTP, unpublished) and the
   `tunnel` network, which only Traefik and the connectors join;
-- trust of that network's subnet, which every `deploy` reads from Docker.
+- trust of that network's subnet, which `deploy` and `restart` read from Docker.
   For requests from that subnet, Traefik takes the visitor's IP from
   `CF-Connecting-IP` (through the proxies plugin, built in: `devopsy
   proxies` lists it) and keeps the connector's `X-Forwarded-Proto:

@@ -518,3 +518,206 @@ true`
 		t.Errorf("nothing wanted, and Traefik stayed on the network:\n%s", out)
 	}
 }
+
+// joinAndLeave runs a container on a compose-labeled network of its own until Traefik
+// joins it, and removes it until Traefik leaves: a project's down, as attach sees it.
+func (h host) joinAndLeave(project string) {
+	h.t.Helper()
+	h.sh("/", nil, `docker network inspect "$1_proxy" >/dev/null 2>&1 || docker network create --label "com.docker.compose.project=$1" "$1_proxy" >/dev/null
+		docker run -d --name "$1" --network "$1_proxy" -l "traefik.docker.network=$1_proxy" -l "com.docker.compose.project=$1" busybox:1.37 sleep 100000 >/dev/null`, project)
+	h.waitFor("Traefik on "+project, func() bool { return joined(h.proxyNetworks(), project+"_proxy") })
+	h.sh("/", nil, `docker rm -f "$1" >/dev/null`, project)
+	h.waitFor("Traefik off "+project, func() bool { return !joined(h.proxyNetworks(), project+"_proxy") })
+}
+
+func (h host) networkExists(name string) bool {
+	h.t.Helper()
+	_, err := h.shErr("/", nil, `docker network inspect "$1" >/dev/null 2>&1`, name)
+	return err == nil
+}
+
+// The 10 seconds run from the last time Traefik left a network: a down, an up and a
+// second down inside them still give the next up its wait.
+func TestAttachWaitsFromTheLastLeave(t *testing.T) {
+	h := traefik(t)
+	t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f twice; docker network rm twice_proxy`) })
+	h.joinAndLeave("twice")
+	time.Sleep(6 * time.Second)
+	h.joinAndLeave("twice")
+	last := time.Now()
+	// No event says the wait is over, hence the sleep.
+	time.Sleep(7 * time.Second)
+	if !h.networkExists("twice_proxy") {
+		t.Errorf("removed %s after Traefik last left it, wanted 10 s", time.Since(last).Round(time.Second))
+	}
+	h.waitFor("the network removed in the end", func() bool { return !h.networkExists("twice_proxy") })
+}
+
+// attachOnFake runs lib/attach for the given seconds on a fake docker, the shell
+// cases given, for what a real Docker does not fail at when asked, and returns what
+// it said.
+func attachOnFake(t *testing.T, cases string, seconds int) string {
+	t.Helper()
+	h, dir := project(t, "traefik", nil)
+	script := fmt.Sprintf(`mkdir /fake && cat >/fake/docker <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+%s
+  *) sleep 100 ;;
+esac
+EOF
+chmod +x /fake/docker
+PATH=/fake:$PATH ATTACH_PROJECT=self timeout %d sh /attach
+true`, cases, seconds)
+	return h.sh(dir, nil, `docker run --rm -v "$PWD/.devopsy/lib/attach:/attach:ro" busybox:1.37 sh -c "$1"`, script)
+}
+
+// A connect that fails is tried again with no event to prompt it, or a site hangs and
+// answers 504 until another container on the host happens to make one. The fake fails
+// the first pass's and the catch-up's, and no event comes after them.
+func TestAttachRetriesAFailedConnect(t *testing.T) {
+	out := attachOnFake(t, `  "ps -aq") case "$*" in *role=proxy*) echo proxy ;; *) echo site ;; esac ;;
+  "network ls") echo 'site_proxy=abc="site"' ;;
+  "network connect")
+    echo x >>/tmp/connects
+    [ "$(wc -l </tmp/connects)" -gt 2 ] || { echo 'failed to add interface' >&2; exit 1; }
+    ;;
+  "inspect -f") case "$3" in
+    *Config.Labels*) echo '"site_proxy"|"site"|,site_proxy,' ;;
+    *) echo ' ' ;;
+    esac ;;`, 12)
+	if !strings.Contains(out, "connected site_proxy") {
+		t.Errorf("a connect that failed was not tried again:\n%s", out)
+	}
+}
+
+// A read that fails when the wait is over says nothing about the network, so its
+// removal stays for the next sweep rather than leaving the network for good.
+func TestAttachKeepsARemovalThroughAFailedRead(t *testing.T) {
+	out := attachOnFake(t, `  "ps -aq") case "$*" in
+    *role=proxy*) echo proxy ;;
+    *network=*)
+      echo x >>/tmp/reads
+      [ "$(wc -l </tmp/reads)" -gt 1 ] || { echo 'connection refused' >&2; exit 1; }
+      ;;
+    esac ;;
+  "network ls") echo 'site_proxy=abc="site"' ;;
+  "network disconnect") : >/tmp/off ;;
+  "network inspect") echo abc ;;
+  "network rm") : ;;
+  "inspect -f") [ -e /tmp/off ] && echo ' ' || echo 'site_proxy=abc ' ;;`, 13)
+	if !strings.Contains(out, "removed site_proxy") {
+		t.Errorf("a failed read lost the removal:\n%s", out)
+	}
+}
+
+// A running project with a database moves by a real release, is rolled back and
+// released forward, and a failed release brings the moved one back: what README's
+// "Moving a running project works by a release" promises, through devopsy rather
+// than plain compose. The site answers and the database keeps its name each time.
+func TestProjectMovesByRelease(t *testing.T) {
+	h := traefik(t)
+	dir := "/home/devopsy/moving"
+	const target = "@devopsy@localhost:prod"
+	t.Cleanup(func() { _, _ = h.shErr(dir, nil, "devopsy "+target+" --destroy --yes") })
+	shared := `services:
+  web:
+    image: traefik/whoami:v1.11
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.moving.rule=Host(` + "`moving.example.com`" + `)
+    networks: [default, traefik]
+  db:
+    image: busybox:1.37
+    command: [sleep, "100000"]
+networks:
+  traefik: {name: traefik, external: true}
+`
+	moved := `services:
+  web:
+    image: traefik/whoami:v1.11
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.moving.rule=Host(` + "`moving.example.com`" + `)
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}_proxy
+    networks: [private, proxy]
+  db:
+    image: busybox:1.37
+    command: [sleep, "100000"]
+    networks: [private]
+networks:
+  private: {internal: true}
+  proxy: {name: "${COMPOSE_PROJECT_NAME}_proxy"}
+`
+	h.sh("/", nil, `mkdir -p "$1/.devopsy" && printf '%s\n' 'project: moving' 'defaults:' '  mode: image' '  release: up -d --wait' '  rollback: up -d --wait' 'environments:' '  prod: {}' >"$1/.devopsy/config.yaml"`, dir)
+	check := func(step string) {
+		t.Helper()
+		h.waitFor(step+": the site", func() bool { return h.request("https://moving.example.com/").Code == 200 })
+		if out, err := h.inside("moving-prod-web-1", "nslookup -type=A db 127.0.0.11"); err != nil || !strings.Contains(out, "Name:") {
+			t.Errorf("%s: db has no name: %v\n%s", step, err, out)
+		}
+	}
+	release := func(file string) (string, error) {
+		h.sh("/", nil, `printf '%s' "$2" >"$1/.devopsy/compose.yaml"`, dir, file)
+		return h.shErr(dir, nil, "devopsy "+target+" --release --yes 2>&1")
+	}
+	for _, step := range []struct {
+		name, file string
+		roll       bool
+	}{
+		{"on the shared network", shared, false},
+		{"released onto its own", moved, false},
+		{"rolled back", "", true},
+		{"released forward", moved, false},
+	} {
+		var out string
+		var err error
+		if step.roll {
+			out, err = h.shErr(dir, nil, "devopsy "+target+" --rollback --yes 2>&1")
+		} else {
+			out, err = release(step.file)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", step.name, err, out)
+		}
+		check(step.name)
+	}
+
+	// A release that fails, on an image with no such tag: the previous one, on its
+	// own network, comes back with Traefik on that network.
+	broken := strings.Replace(moved, "traefik/whoami:v1.11", "busybox:no-such-tag", 1)
+	if out, err := release(broken); err == nil {
+		t.Errorf("the broken release passed:\n%s", out)
+	}
+	check("after a failed release")
+}
+
+// sysctls turns IPv4 forwarding off on Traefik, the one container on every project's
+// network. With two projects on IPv6 networks, IPv6 is off there too: a route through
+// Traefik (NET_ADMIN only to add it) reaches nothing of the other's.
+func TestNoIPv6ThroughTraefik(t *testing.T) {
+	h, dir := ownTraefik(t)
+	t.Cleanup(func() {
+		_, _ = h.shErr("/", nil, `docker rm -f six-a six-b; docker network rm six-a_proxy six-b_proxy`)
+	})
+	for i, n := range []string{"six-a", "six-b"} {
+		h.sh("/", nil, `docker network create --ipv6 --subnet "fd00:$2::/64" --label "com.docker.compose.project=$1" "$1_proxy" >/dev/null
+			docker run -d --name "$1" --cap-add NET_ADMIN --network "$1_proxy" -l "traefik.docker.network=$1_proxy" -l "com.docker.compose.project=$1" traefik/whoami:v1.11 >/dev/null`, n, fmt.Sprintf("%d", 100+i))
+	}
+	h.sh(dir, nil, "devopsy up -d --wait --force-recreate --no-deps traefik")
+	h.waitFor("Traefik on both", func() bool {
+		n := h.proxyNetworks()
+		return joined(n, "six-a_proxy") && joined(n, "six-b_proxy")
+	})
+	if out := strings.TrimSpace(h.sh("/", nil, `docker exec traefik-traefik-1 cat /proc/sys/net/ipv6/conf/all/forwarding`)); out != "0" {
+		t.Errorf("Traefik forwards IPv6: %s", out)
+	}
+	six := func(c, network string) string {
+		return strings.TrimSpace(h.sh("/", nil, `docker inspect -f "{{(index .NetworkSettings.Networks \"$2\").GlobalIPv6Address}}" "$1"`, c, network))
+	}
+	b, via := six("six-b", "six-b_proxy"), six("traefik-traefik-1", "six-a_proxy")
+	script := "ip -6 route add " + b + "/128 via " + via + " && wget -q -T 5 -O /dev/null http://[" + b + "]/"
+	if out, err := h.inside("six-a", script); err == nil {
+		t.Errorf("reached the other project's %s through Traefik: %s", b, out)
+	}
+}

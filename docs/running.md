@@ -15,7 +15,10 @@ that nothing answers. Then each release runs `deploy`, which prepares
 `mnt/`, writes the public wildcard certificate, refreshes the trusted
 proxies' ranges and starts or updates every service.
 
-`devopsy restart` pulls newer images and recreates what changed.
+`devopsy restart` pulls newer images and recreates what changed. After a
+`devopsy down`, start Traefik with it or with `deploy`, not a plain `up`: the
+`tunnel` network can come back on another subnet, only those two read it, and
+until one runs the connectors get a 403.
 
 ## Upgrades
 
@@ -38,6 +41,19 @@ and a new Yaegi for the plugins. To move to it, edit the tag in
 `.devopsy/compose.yaml`. So does `attach`'s `docker` image. socket-proxy,
 acme-dns and the tools (jq, curl) publish no minor tag, so they stay pinned
 exactly.
+
+## Behind an HTTP proxy
+
+Docker gives every container the proxy settings in the deploy user's
+`~/.docker/config.json`. Traefik needs these listed in its `noProxy`, with what
+your proxy already leaves out:
+
+- `dockerproxy.<compose project>_dockerproxy` (for example
+  `dockerproxy.traefik-prod_dockerproxy`), or Traefik sees no containers and
+  every site answers 404;
+- Docker's address pools (for example `172.16.0.0/12`), or Traefik sends its
+  requests for sites to the proxy;
+- `acmedns.<compose project>_acmedns`, when acme-dns runs.
 
 ## Dashboard
 

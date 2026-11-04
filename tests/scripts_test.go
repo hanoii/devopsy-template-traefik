@@ -109,6 +109,11 @@ func TestStaticEnv(t *testing.T) {
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.98.0.0/24\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
+		// A connector may reach Traefik over IPv6: the allow list and the trust have it too.
+		{"tunnel on IPv6", "docker network rm tunnel >/dev/null && docker network create --ipv6 --subnet 10.97.0.0/24 --subnet fd00:97::/64 tunnel >/dev/null", nil, head +
+			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.97.0.0/24,fd00:97::/64\n" +
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
 	} {
 		h.sh(dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
 		if c.setup != "" {

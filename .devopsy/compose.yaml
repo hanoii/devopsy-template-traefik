@@ -92,6 +92,8 @@ services:
       - devopsy.attach=${PROXY_ATTACH_SUM:-}
     environment:
       - DOCKER_HOST=tcp://netproxy:2375
+      # Behind an HTTP proxy, Docker hands every container its settings.
+      - NO_PROXY=netproxy
       - DOCKER_CONFIG=/tmp
       - ATTACH_PROJECT=${COMPOSE_PROJECT_NAME}
     user: "10001:10001"

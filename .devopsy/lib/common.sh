@@ -126,15 +126,12 @@ api_access() {
   }
   # Docker 29 prints a missing gateway as "invalid IP", older ones as "":
   # keep addresses only. One bad range would make the router invalid.
-  _list="          - 127.0.0.1/32
-          - ::1/128"
+  _list=127.0.0.1/32,::1/128
   for _gw in $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}},{{.IPv6Gateway}},{{end}}' "$_id" | tr ',' '\n' | tr -d ' '); do
     case $_gw in
       *[!0-9a-f.:]* | '') ;;
-      *:*) _list="$_list
-          - $_gw/128" ;;
-      *.*) _list="$_list
-          - $_gw/32" ;;
+      *:*) _list="$_list,$_gw/128" ;;
+      *.*) _list="$_list,$_gw/32" ;;
     esac
   done
   if write_if_changed "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
@@ -154,13 +151,13 @@ http:
     devopsy-api-local:
       ipAllowList:
         sourceRange:
-$_list
+$(subnet_list "$_list" '          ')
 "; then
     echo "$(basename "$0"): API open to Traefik and the host only"
   fi
 }
 
-# The tunnel network's IPv4 subnets, comma separated: what its connectors'
+# The tunnel network's subnets, comma separated: what its connectors'
 # requests come from. Empty until the network exists (a first `up`
 # creates it); any other failure of Docker's fails, or Traefik would lose
 # the tunnel's trust over a daemon restarting.
@@ -171,7 +168,7 @@ tunnel_subnet() {
       *) die "could not read the tunnel network: $_out" ;;
     esac
   fi
-  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
+  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9a-f.:]+/[0-9]+$' | paste -sd, - || true
 }
 
 # Comma-separated subnets ($1) as YAML list items, indented by $2.

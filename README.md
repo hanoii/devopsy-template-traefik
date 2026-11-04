@@ -147,8 +147,13 @@ as its private network is a new one like `private` above. Do not set
 network, and a service it does not recreate at the same time, usually the
 database, comes back without its name, so the release fails and so does
 bringing the previous one back. `up -d --wait --force-recreate` recovers it.
-The old `<project>_default` network stays, unused, for a rollback. Remove it
-with `docker network rm` once you no longer need that.
+The old `<project>_default` network stays, unused, for a rollback, as
+`<project>_private` does after one. Remove it with `docker network rm` once you
+no longer need that.
+
+A site on its own network takes two of Docker's networks. Docker's default
+address pools hold about 30, so a server not set up by devopsy-server needs a
+larger `default-address-pools` in `daemon.json` beyond about a dozen sites.
 
 A change to the `proxy` network's own settings, such as a driver option,
 needs the project down first (`devopsy @prod down`), so Traefik lets the

@@ -4,6 +4,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -265,4 +266,91 @@ func TestReadTimeout(t *testing.T) {
 	if code := upload("10M"); code != "200" {
 		t.Errorf("a quick upload: %s", code)
 	}
+}
+
+// The tunnel entrypoint lets a request in by the address it comes from, never a
+// header: forged X-Forwarded-For, X-Real-Ip and CF-Connecting-IP naming the
+// tunnel's gateway or Traefik's loopback get a 403 from the shared network and
+// from a project's own; from the tunnel network a routed host answers and an
+// unknown one gets Traefik's 404, not the allow list's 403.
+func TestTunnelAllowsByAddress(t *testing.T) {
+	h := traefik(t)
+	h.site("tunb", "tunb.example.com", []string{"routers.<name>.entrypoints=tunnel"}, "")
+	h.isolated("tb-iso", "tb-iso.example.com")
+	gw := strings.TrimSpace(h.sh("/", nil, `docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' tunnel`))
+	if gw == "" {
+		t.Fatal("no gateway on the tunnel network")
+	}
+
+	for host, want := range map[string]string{"tunb.example.com": "200", "nothing.example.com": "404"} {
+		if out := h.from("tunnel", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: "+host, "http://traefik.tunnel:8081/"); out != want {
+			t.Errorf("%s from the tunnel network: %s, want %s", host, out, want)
+		}
+	}
+	for _, forged := range []string{gw, "127.0.0.1"} {
+		headers := []string{"-H", "Host: tunb.example.com", "-H", "X-Forwarded-For: " + forged, "-H", "X-Real-Ip: " + forged, "-H", "CF-Connecting-IP: " + forged}
+		if out := h.from("traefik", append([]string{"-o", "/dev/null", "-w", "%{http_code}"}, append(headers, "http://traefik:8081/")...)...); out != "403" {
+			t.Errorf("forged %s from the shared network: %s, want 403", forged, out)
+		}
+		url := "http://" + h.address("traefik-traefik-1", "tb-iso_proxy") + ":8081/"
+		wget := "wget -S -q -T 3 -O /dev/null --header 'Host: tunb.example.com' --header 'X-Forwarded-For: " + forged +
+			"' --header 'X-Real-Ip: " + forged + "' --header 'CF-Connecting-IP: " + forged + "' " + url + " 2>&1 || true"
+		if out, err := h.inside("tb-iso-web-1", wget); err != nil || !strings.Contains(out, "403") {
+			t.Errorf("forged %s from a project's own network: %v\n%s", forged, err, out)
+		}
+	}
+}
+
+// After a down, `devopsy restart` follows the tunnel network onto whatever subnet is
+// free, while another project may hold its old one: that project's containers get the
+// allow list's 403 and no trust, and a connector gets through.
+func TestTunnelSubnetMadeAgain(t *testing.T) {
+	h, dir := ownTraefik(t)
+	subnet := func() string {
+		return strings.TrimSpace(h.sh("/", nil, `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' tunnel`))
+	}
+	old := subnet()
+	h.sh(dir, nil, "devopsy down")
+	var taken string
+	t.Cleanup(func() {
+		_, _ = h.shErr("/", nil, `docker rm -f stale; for n in $(docker network ls -q --filter name=^stale); do docker network rm "$n"; done`)
+	})
+	for i := 0; i < 20 && taken == ""; i++ {
+		n := fmt.Sprintf("stale%d", i)
+		h.sh("/", nil, `docker network create --label "com.docker.compose.project=$1" "$1_proxy" >/dev/null`, n)
+		if strings.TrimSpace(h.sh("/", nil, `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$1_proxy"`, n)) == old {
+			taken = n
+		}
+	}
+	if taken == "" {
+		t.Fatalf("no new network took %s", old)
+	}
+	h.sh("/", nil, `docker run -d --name stale --network "$1_proxy" -l "traefik.docker.network=$1_proxy" -l "com.docker.compose.project=$1" traefik/whoami:v1.11 >/dev/null`, taken)
+	h.sh(dir, nil, "devopsy restart")
+	h.routed("devopsy-api@file")
+	h.waitFor("Traefik on the project's network", func() bool { return joined(h.proxyNetworks(), taken+"_proxy") })
+	if subnet() == old {
+		t.Fatalf("the tunnel network is on %s again", old)
+	}
+	code := h.from(taken+"_proxy", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: nothing.example.com", "http://"+h.address("traefik-traefik-1", taken+"_proxy")+":8081/")
+	if code != "403" {
+		t.Errorf("a project's container on the tunnel's old subnet got %s on the tunnel's entrypoint, want 403", code)
+	}
+	if code := h.from("tunnel", "-o", "/dev/null", "-w", "%{http_code}", "-H", "Host: nothing.example.com", "http://traefik.tunnel:8081/"); code == "403" {
+		t.Errorf("a connector on the tunnel network gets a 403")
+	}
+}
+
+// Behind an HTTP proxy Docker hands every container the client's settings, and what
+// docs/running.md says to list is all it takes: attach needs nothing listed, and with
+// the socket proxy's name and Docker's address pools in noProxy Traefik sees a site
+// and reaches it.
+func TestBehindAProxy(t *testing.T) {
+	h, dir := ownTraefik(t)
+	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":"dockerproxy.traefik_dockerproxy,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"}}}' >/tmp/proxied/config.json`)
+	proxied := map[string]string{"DOCKER_CONFIG": "/tmp/proxied"}
+	h.sh(dir, proxied, "devopsy up -d --wait --force-recreate --no-deps attach")
+	h.sh(dir, proxied, "devopsy up -d --wait --force-recreate --no-deps traefik")
+	h.isolated("px-iso", "px-iso.example.com")
+	h.waitFor("the site", func() bool { return h.request("https://px-iso.example.com/").Code == 200 })
 }
