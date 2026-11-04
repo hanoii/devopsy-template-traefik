@@ -71,6 +71,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - A README says at a glance what the repository is and how to start; anything longer is a doc of its own in `docs/` that it links to: a README that piles up docs gets skimmed past.
 - READMEs and docs are written plainly, with no selling words, no bold lead-in on every bullet, no closing summary, no emoji and no "Note" asides: they read as generated and bury the facts.
 - Each fact has one home, and other docs link to it rather than repeat it: two copies drift apart.
+- A README or doc rewritten (for example reworded, split or moved) gets a fact review against the old text and a separate tone review, told nothing of the changes and reading only for prose that sounds generated: a rewording changes facts its author misses.
 
 ## Layout
 
