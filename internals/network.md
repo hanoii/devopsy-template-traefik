@@ -5,7 +5,8 @@ The `traefik` network, projects' own networks and `attach`, the socket proxies, 
 - One Traefik runs per host (the `proxy` role refuses a second), so its network's name is fixed, `traefik` (AGENTS.md, Releases, for a rename).
 - A template's routed services join `<project>_proxy` and name it in `traefik.docker.network`, never `traefik`: a compromised container on `traefik` reaches every other there past Traefik's middlewares.
 - `traefik` stays for projects that have not moved, and `TRAEFIK_PROVIDERS_DOCKER_NETWORK` keeps naming it for them.
-- A template's `default` is `internal: true`, so what is only on it has no way out, and its routed services go out through `<project>_proxy`.
+- A template's private services are on a network of its own, `private`, with `internal: true`, so what is only on it has no way out, and its routed services go out through `<project>_proxy`.
+- A running project's network never changes settings (for example `internal: true` on its `default`), which applies to `default` too: compose recreates it, and a service compose does not recreate then comes back without its service name, which fails the release and the previous release's return.
 - `attach` connects Traefik to a network only when a container naming it is on it, of that container's compose project, never one of Traefik's own project.
 - `attach` filters on `traefik.docker.network` alone, since Traefik takes other spellings of `traefik.enable=true`, and joining a network its own project names for nothing costs nothing.
 - `attach` takes Traefik by project, role and not one-off: a one-off of the service (`in_traefik`) carries its labels, and is newer.

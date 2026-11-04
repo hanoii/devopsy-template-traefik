@@ -111,13 +111,14 @@ services:
       - traefik.http.routers.myapp.middlewares=hold@file
       # Only needed when the container exposes several ports.
       - traefik.http.services.myapp.loadbalancer.server.port=80
-    networks: [default, proxy]
+    networks: [private, proxy]
   database:
     image: mariadb:11.8
+    networks: [private]
 
 networks:
   # What is only here, like the database, has no way out.
-  default:
+  private:
     internal: true
   proxy:
     name: ${COMPOSE_PROJECT_NAME:-myapp}_proxy
@@ -139,6 +140,15 @@ A project's containers reach another project's only through Traefik's
 through a tunnel is out of their reach (docs/tunnel.md). Only the services
 you put on `proxy` share a network with Traefik, so keep databases, caches
 and workers off it.
+
+Moving a running project works by a release, and back by a rollback, as long
+as its private network is a new one like `private` above. Do not set
+`internal: true` on its existing `default` instead: Compose recreates that
+network, and a service it does not recreate at the same time, usually the
+database, comes back without its name, so the release fails and so does
+bringing the previous one back. `up -d --wait --force-recreate` recovers it.
+The old `<project>_default` network stays, unused, for a rollback. Remove it
+with `docker network rm` once you no longer need that.
 
 A change to the `proxy` network's own settings, such as a driver option,
 needs the project down first (`devopsy @prod down`), so Traefik lets the

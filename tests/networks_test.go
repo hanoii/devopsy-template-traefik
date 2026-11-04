@@ -10,8 +10,8 @@ import (
 )
 
 // isolatedCompose is the compose file of a project routed through Traefik for
-// hostname, as the templates are: web on default and on a network of its own that
-// Traefik is asked to join, db on default, which is internal.
+// hostname, as the templates are: web on private and on a network of its own that
+// Traefik is asked to join, db on private, which is internal.
 func isolatedCompose(name, hostname string) string {
 	return fmt.Sprintf(`services:
   web:
@@ -20,12 +20,13 @@ func isolatedCompose(name, hostname string) string {
       - traefik.enable=true
       - traefik.http.routers.%[1]s.rule=Host(%[2]s)
       - traefik.docker.network=%[1]s_proxy
-    networks: [default, proxy]
+    networks: [private, proxy]
   db:
     image: busybox:1.37
     command: [sleep, "100000"]
+    networks: [private]
 networks:
-  default: {internal: true}
+  private: {internal: true}
   proxy: {name: %[1]s_proxy}
 `, name, "`"+hostname+"`")
 }
@@ -121,23 +122,23 @@ func TestProjectIsolation(t *testing.T) {
 
 	web := "aa-iso-web-1"
 	// The same way in reaches this project's own, or the refusals below prove nothing.
-	for _, target := range []string{"web.aa-iso_proxy", h.address(web, "aa-iso_default")} {
+	for _, target := range []string{"web.aa-iso_proxy", h.address(web, "aa-iso_private")} {
 		if out, err := h.inside(web, "wget -q -T 3 -O /dev/null http://"+target+"/"); err != nil {
 			t.Errorf("did not reach %s in its own project: %v\n%s", target, err, out)
 		}
 	}
 	for _, target := range []string{
 		"web.bb-iso_proxy",
-		"web.bb-iso_default",
+		"web.bb-iso_private",
 		h.address("bb-iso-web-1", "bb-iso_proxy"),
-		h.address("bb-iso-web-1", "bb-iso_default"),
-		h.address("bb-iso-db-1", "bb-iso_default"),
+		h.address("bb-iso-web-1", "bb-iso_private"),
+		h.address("bb-iso-db-1", "bb-iso_private"),
 	} {
 		if out, err := h.inside(web, "wget -q -T 3 -O /dev/null http://"+target+"/"); err == nil {
 			t.Errorf("reached %s from the other project: %s", target, out)
 		}
 	}
-	mine := map[string]bool{h.address(web, "aa-iso_proxy"): true, h.address(web, "aa-iso_default"): true}
+	mine := map[string]bool{h.address(web, "aa-iso_proxy"): true, h.address(web, "aa-iso_private"): true}
 	out, err := h.inside(web, "nslookup -type=A web 127.0.0.11 | sed -n 's/^Address: //p'")
 	if err != nil || strings.TrimSpace(out) == "" {
 		t.Errorf("the alias web: %v\n%s", err, out)
@@ -169,6 +170,45 @@ func TestProjectIsolation(t *testing.T) {
 	}
 	if out := h.api("/api/version"); !strings.Contains(out, "Version") {
 		t.Errorf("the API from the host: %s", out)
+	}
+}
+
+// A running project with a database moves off the shared network and back, as a
+// release and a rollback do: the site answers each time, and the database, which
+// nothing else changes, keeps its name, or the app cannot find it.
+func TestProjectMoves(t *testing.T) {
+	h := traefik(t)
+	shared := fmt.Sprintf(`services:
+  web:
+    image: traefik/whoami:v1.11
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.move.rule=Host(%s)
+    networks: [default, traefik]
+  db:
+    image: busybox:1.37
+    command: [sleep, "100000"]
+networks:
+  traefik: {name: traefik, external: true}
+`, "`move.example.com`")
+	for _, step := range []struct{ name, file string }{
+		{"on the shared network", shared},
+		{"moved", isolatedCompose("move", "move.example.com")},
+		{"moved back", shared},
+		{"moved again", isolatedCompose("move", "move.example.com")},
+	} {
+		h.compose("move", step.file)
+		h.routed("move@docker")
+		if step.file == shared {
+			// As long as a release takes: attach has removed the network it left.
+			h.waitFor(step.name+": attach to remove move_proxy", func() bool {
+				return strings.TrimSpace(h.sh("/", nil, `docker network ls -q --filter name=^move_proxy$`)) == ""
+			})
+		}
+		h.waitFor(step.name+": the site", func() bool { return h.request("https://move.example.com/").Code == 200 })
+		if out, err := h.inside("move-web-1", "nslookup -type=A db 127.0.0.11"); err != nil || !strings.Contains(out, "Name:") {
+			t.Errorf("%s: db has no name: %v\n%s", step.name, err, out)
+		}
 	}
 }
 
@@ -208,10 +248,10 @@ func TestHostileLabels(t *testing.T) {
 	nl := "\n"
 	for i, label := range []string{
 		"traefik_dockerproxy", "traefik_netproxy", "traefik_acmedns", "tunnel", "traefik",
-		"vv-iso_proxy", "vv-iso_default",
-		"vv-iso_default|\"hh-iso\"|,vv-iso_default,|",
-		"\"vv-iso_default\"|\"hh-iso\"|,vv-iso_default,",
-		"x" + nl + "\"vv-iso_default\"|\"hh-iso\"|,vv-iso_default,",
+		"vv-iso_proxy", "vv-iso_private",
+		"vv-iso_private|\"hh-iso\"|,vv-iso_private,|",
+		"\"vv-iso_private\"|\"hh-iso\"|,vv-iso_private,",
+		"x" + nl + "\"vv-iso_private\"|\"hh-iso\"|,vv-iso_private,",
 		"no-such-network",
 	} {
 		name := fmt.Sprintf("hostile-%d", i)
@@ -219,7 +259,7 @@ func TestHostileLabels(t *testing.T) {
 		t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f "$1" >/dev/null`, name) })
 	}
 	// A container that joined the other project's network itself.
-	h.sh("/", nil, `docker run -d --name hostile-joined --network vv-iso_default -l traefik.enable=true -l traefik.docker.network=vv-iso_default -l com.docker.compose.project=hh-iso busybox:1.37 sleep 100000 >/dev/null`)
+	h.sh("/", nil, `docker run -d --name hostile-joined --network vv-iso_private -l traefik.enable=true -l traefik.docker.network=vv-iso_private -l com.docker.compose.project=hh-iso busybox:1.37 sleep 100000 >/dev/null`)
 	t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f hostile-joined >/dev/null`) })
 
 	// A project connected after them: its pass has read every label above.
@@ -230,8 +270,8 @@ func TestHostileLabels(t *testing.T) {
 			t.Errorf("Traefik left %s: %s", n, h.proxyNetworks())
 		}
 	}
-	if joined(h.proxyNetworks(), "vv-iso_default") {
-		t.Errorf("Traefik joined another project's default: %s", h.proxyNetworks())
+	if joined(h.proxyNetworks(), "vv-iso_private") {
+		t.Errorf("Traefik joined another project's private network: %s", h.proxyNetworks())
 	}
 	if !joined(h.proxyNetworks(), "vv-iso_proxy") || h.request("https://vv-iso.example.com/").Code != 200 {
 		t.Errorf("the other project lost its route: %s", h.proxyNetworks())
