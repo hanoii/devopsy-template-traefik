@@ -30,12 +30,20 @@ func TestHoldRouterGone(t *testing.T) {
 }
 
 // Stops right after starts: every request held, never a 404 (a stop
-// while the reader slept, Traefik's API a moment behind).
+// while the reader slept, Traefik's API a moment behind). Overlapping
+// requests of one visitor, in rounds this quick, can use up its one redirect
+// for a 502 no probe meets, so the page, a 307 with no Location, is allowed.
 func TestHoldQuickRounds(t *testing.T) {
 	h := traefik(t)
 	h.site("rounds", "rounds.example.com", hold, "")
-	heldThrough(t, "https://rounds.example.com/", h.during("https://rounds.example.com/",
-		"for i in 1 2 3 4 5 6; do docker stop rounds; sleep 0.$i; docker start rounds; sleep $((i % 3)); done; sleep 2"))
+	var answers []answer
+	for _, a := range h.during("https://rounds.example.com/",
+		"for i in 1 2 3 4 5 6; do docker stop rounds; sleep 0.$i; docker start rounds; sleep $((i % 3)); done; sleep 2") {
+		if a.Code != 307 || a.Location != "" {
+			answers = append(answers, a)
+		}
+	}
+	heldThrough(t, "https://rounds.example.com/", answers)
 }
 
 // The 502 at the stop: the router still there, its port closed.
@@ -67,11 +75,20 @@ func TestHoldThroughTunnel(t *testing.T) {
 	tunneled := []string{"routers.<name>.entrypoints=tunnel", "services.<name>.loadbalancer.server.port=80"}
 	h.site("tunclosing", "tunclosing.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
 	h.site("tungone", "tungone.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
-	for _, c := range []struct{ name, stop string }{
-		{"tunclosing", `docker kill -s TERM "$1" >/dev/null && sleep 0.5`},
-		{"tungone", `docker stop "$1" >/dev/null`},
+	for _, c := range []struct {
+		name, stop string
+		gone       bool
+	}{
+		{"tunclosing", `docker kill -s TERM "$1" >/dev/null && sleep 0.5`, false},
+		{"tungone", `docker stop "$1" >/dev/null`, true},
 	} {
-		out := h.sh("/", nil, c.stop+`
+		h.sh("/", nil, c.stop, c.name)
+		// Traefik drops a stopped site's router a moment later: until then a
+		// request goes to its address, unheld.
+		if c.gone {
+			h.unrouted(c.name + "@docker")
+		}
+		out := h.sh("/", nil, `
 			docker run --rm -q --network tunnel curlimages/curl:8.15.0 -s -o /dev/null --max-time 60 -H "Host: $1.example.com" \
 				-w '%{http_code} %{time_total} %{redirect_url}' http://traefik.tunnel:8081/ >/tmp/through &
 			docker wait "$1" >/dev/null; sleep 4; docker start "$1" >/dev/null; wait; cat /tmp/through`, c.name)
