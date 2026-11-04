@@ -22,9 +22,9 @@ proxies' ranges and starts or updates every service.
 Upgrading is a release from a newer checkout, and `devopsy @vm1-traefik
 --rollback` goes back. Routed sites are without Traefik for a few seconds
 while its container is recreated, and longer on a server with many sites,
-since Docker takes longer to stop a container on many networks (about 30
-seconds at 100 sites on the machine this was measured on). A site's own
-release costs the others nothing.
+since Docker takes a network at a time to stop and start a container (about
+12 seconds at 100 sites on the machine this was measured on, and more in
+some earlier runs). A site's own release costs the others nothing.
 
 Rolling Traefik back to a release without `attach` leaves it off the
 projects' own networks, so the sites on them answer 504 until Traefik is
