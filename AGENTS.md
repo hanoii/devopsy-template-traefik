@@ -133,7 +133,7 @@ GOPATH=$PWD GO111MODULE=off yaegi test github.com/hanoii/devopsy-traefik/hold
 The tests (`tests/`, behind the `e2e` tag, since every one needs Docker):
 
 ```sh
-go test -tags e2e -count=1 -v ./tests                      # under 5 minutes
+go test -tags e2e -count=1 -v ./tests                      # about 5 minutes
 go test -tags e2e -count=1 -v -run '^TestHoldNot$' ./tests # one test
 DEVOPSY_BIN=/tmp/devopsy-linux go test -tags e2e ./tests   # another devopsy
 go test -count=1 ./tests                                   # the agents' names alone
