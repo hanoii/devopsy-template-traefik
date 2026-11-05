@@ -66,12 +66,16 @@ func TestWriteIfChanged(t *testing.T) {
 	if out != "wrote\nsame\nwrote\nb" {
 		t.Fatalf("got %q", out)
 	}
-	// Written outside the folder Traefik watches and renamed in: at the rename
-	// the folder holds nothing but what it held.
-	out = h.sh(dir, nil, `devopsy t 'mkdir -p "$dir/mnt/dynamic"; mv() { ls -A "$dir/mnt/dynamic"; command mv "$@"; }
-		write_if_changed "$dir/mnt/dynamic/y.yaml" a; cat "$dir/mnt/dynamic/y.yaml"'`)
-	if out != "a" {
-		t.Errorf("the folder at the rename, then the file: %q", out)
+	// A dynamic file's name is a link that stays put through a rewrite, since a
+	// listing during a rename over a name can miss it; a regular file left
+	// there becomes the link, and nothing stays after its removal.
+	out = h.sh(dir, nil, `devopsy t 'd=$dir/mnt/dynamic; mkdir -p "$d"; f=$d/y.yaml; echo old >"$f"
+		write_dynamic "$f" a && echo wrote; readlink "$f"; i=$(stat -c %i "$f")
+		write_dynamic "$f" a || echo same
+		write_dynamic "$f" b && echo wrote; [ "$(stat -c %i "$f")" = "$i" ] && echo kept; cat "$f"
+		remove_dynamic "$f"; ls -A "$d"'`)
+	if out != "wrote\ny.live\nsame\nwrote\nkept\nb" {
+		t.Errorf("a dynamic file: %q", out)
 	}
 }
 

@@ -98,7 +98,9 @@ services:
 ```
 
 Files in `mnt/dynamic/` are Traefik's dynamic configuration (its file
-provider), for anything else that does not belong to a project.
+provider), for anything else that does not belong to a project. `deploy` and
+the commands write their own there as a link to a `.live` file, which Traefik
+skips; change those through the settings, not by hand.
 
 There is one Traefik per host. It holds the `proxy` role, so a release of
 a second one on the same server is refused, and its network is always

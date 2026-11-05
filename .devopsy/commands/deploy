@@ -70,10 +70,10 @@ if [ "$resolver" = auto ]; then
 fi
 if [ -z "$domain" ] || [ "$resolver" = none ]; then
   if [ -f "$wildcard" ]; then
-    rm -f "$wildcard"
+    remove_dynamic "$wildcard"
     echo "deploy: no public wildcard certificate"
   fi
-elif write_if_changed "$wildcard" "# Written by 'devopsy deploy' from PROXY_BASE_DOMAIN.
+elif write_dynamic "$wildcard" "# Written by 'devopsy deploy' from PROXY_BASE_DOMAIN.
 http:
   routers:
     devopsy-public-wildcard:

@@ -84,16 +84,39 @@ jq() {
   quiet run --rm --no-deps -T jq "$@"
 }
 
-# Writes $2 to $1, a file under mnt, when different; returns 1 when unchanged.
-# The temporary file goes in mnt itself, outside the folder Traefik watches, so
-# Traefik's read never meets the rename.
+# Writes $2 to $1 when different; returns 1 when unchanged.
 write_if_changed() {
   if [ -f "$1" ] && printf '%s' "$2" | cmp -s - "$1"; then
     return 1
   fi
-  _tmp=$dir/mnt/.$(basename "$1").tmp
-  printf '%s' "$2" >"$_tmp"
-  mv "$_tmp" "$1"
+  printf '%s' "$2" >"$1.tmp"
+  mv "$1.tmp" "$1"
+}
+
+# Writes $2 to $1, a <name>.yaml in mnt/dynamic, when different; returns 1 when
+# unchanged. $1 is a link, made once, to <name>.live, the file renamed over:
+# Traefik reads the folder on every change, a listing during a rename over a
+# name can miss that name (btrfs), and a file missed takes its routers and
+# middlewares with it until the next read. It skips .live, and never misses
+# what stays put.
+write_dynamic() {
+  _live=${1%.yaml}.live
+  _dynamic_changed=1
+  if write_if_changed "$_live" "$2"; then
+    _dynamic_changed=0
+  fi
+  if [ ! -L "$1" ]; then
+    ln -sf "$(basename "$_live")" "$1.tmp"
+    mv -f "$1.tmp" "$1"
+  fi
+  return "$_dynamic_changed"
+}
+
+# Removes $1, written by write_dynamic, the link first: a link left to nothing
+# would fail Traefik's every read of the folder.
+remove_dynamic() {
+  rm -f "$1"
+  rm -f "${1%.yaml}.live"
 }
 
 # Replaces KEY=value in .env, or appends it. Writes through the file, never
@@ -137,7 +160,7 @@ api_access() {
       *.*) _list="$_list,$_gw/32" ;;
     esac
   done
-  if write_if_changed "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
+  if write_dynamic "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
 http:
   routers:
     devopsy-api:
@@ -216,7 +239,7 @@ $_probes"
       service: noop@internal
       middlewares: [hold-$_ep]"
   done
-  write_if_changed "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy': holding visitors through an app's stop.
+  write_dynamic "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy': holding visitors through an app's stop.
 http:
   middlewares:
     # What a site's router names: traefik.http.routers.<name>.middlewares=hold@file
@@ -284,7 +307,7 @@ static_env() {
   # Traefik would take its host and proto. Not web, which only redirects:
   # its internal routers are built before the file provider loads, so
   # each start would log them failing.
-  write_if_changed "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': a visitor's Forwarded removed.
+  write_dynamic "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': a visitor's Forwarded removed.
 http:
   middlewares:
     forwarded:
@@ -313,7 +336,7 @@ http:
   # The tunnel: once its network exists.
   _tunnel=false
   _subnet=$(tunnel_subnet) || exit 1
-  write_if_changed "$dir/mnt/dynamic/tunnel-allow.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': who may use the tunnel entrypoint.
+  write_dynamic "$dir/mnt/dynamic/tunnel-allow.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': who may use the tunnel entrypoint.
 http:
   middlewares:
     tunnel-allow:
@@ -325,7 +348,7 @@ $(subnet_list "$_subnet" '          ')
   if [ -n "$_subnet" ]; then
     _tunnel=true
     _plugin=true
-    write_if_changed "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies' from the tunnel network's subnet.
+    write_dynamic "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies' from the tunnel network's subnet.
 http:
   middlewares:
     tunnel:
@@ -377,10 +400,10 @@ TRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true
         sed -n 's/^TRAEFIK_ENTRYPOINTS_[A-Z]*_HTTP_MIDDLEWARES=//p' | paste -sd, -)
     fi
     if [ "$_proxies" = false ]; then
-      case ",$_running," in *,proxies@file,*) ;; *) rm -f "$dir/mnt/dynamic/proxies.yaml" ;; esac
+      case ",$_running," in *,proxies@file,*) ;; *) remove_dynamic "$dir/mnt/dynamic/proxies.yaml" ;; esac
     fi
     if [ "$_tunnel" = false ]; then
-      case ",$_running," in *,tunnel@file,*) ;; *) rm -f "$dir/mnt/dynamic/tunnel.yaml" ;; esac
+      case ",$_running," in *,tunnel@file,*) ;; *) remove_dynamic "$dir/mnt/dynamic/tunnel.yaml" ;; esac
     fi
   fi
 }

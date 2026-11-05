@@ -201,6 +201,10 @@ func TestStart(t *testing.T) {
 	h := traefik(t)
 	h.site("start", "start.example.com", nil, "")
 
+	// Every file deploy wrote is a link Traefik lists, never renamed over (write_dynamic).
+	if out := h.sh(proxy, nil, `find .devopsy/mnt/dynamic -name '*.yaml' ! -type l`); out != "" {
+		t.Errorf("not written by write_dynamic: %s", out)
+	}
 	ps := h.sh(proxy, nil, `docker ps --filter label=com.docker.compose.project=traefik --format '{{.Names}} {{.Status}}'`)
 	for _, line := range strings.Split(strings.TrimSpace(ps), "\n") {
 		if !strings.Contains(line, "(healthy)") {
