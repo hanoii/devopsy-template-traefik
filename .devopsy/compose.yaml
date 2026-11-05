@@ -26,8 +26,8 @@ services:
   # Read-only, filtered access to the Docker API for Traefik, so Traefik never
   # mounts the Docker socket itself.
   # https://github.com/wollomatic/socket-proxy
-  # Pinned exactly: it publishes no minor tag, and its allow-list flags are
-  # security settings, so a bump is read in its release notes first.
+  # Floats on :1, which upstream keeps free of breaking changes to the
+  # deployment; it holds no data.
   dockerproxy:
     <<: *socket-proxy
     command:

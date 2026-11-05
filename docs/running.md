@@ -38,7 +38,8 @@ The Traefik image tracks its minor version (`traefik:v3.7`), and every
 release pulls it again, so patches arrive with your next release. A new
 minor brings [migration notes](https://doc.traefik.io/traefik/migrate/v3/)
 and a new Yaegi for the plugins. To move to it, edit the tag in
-`.devopsy/compose.yaml`. So does `attach`'s `docker` image. socket-proxy,
+`.devopsy/compose.yaml`. So does `attach`'s `docker` image. socket-proxy
+tracks `:1`, which upstream keeps free of breaking changes to the deployment.
 acme-dns and the tools (jq, curl) publish no minor tag, so they stay pinned
 exactly.
 

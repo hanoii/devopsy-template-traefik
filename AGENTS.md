@@ -105,7 +105,8 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - A new service gets all four.
 - An image built here has no setuid binaries or file capabilities it does not need.
 - Images float on the series upstream patches (for example `traefik:v3.7`), never `latest` or a major tag; a minor is bumped by hand, in a commit, after reading every migration note in between (`https://doc.traefik.io/traefik/migrate/v3/`): a minor brings migration notes and a new Yaegi for the plugins.
-- What publishes no minor tag is pinned exactly (socket-proxy, acme-dns, jq, curl), socket-proxy's release notes read on every upgrade: its allow-list flags are security settings.
+- What publishes no minor tag is pinned exactly (for example acme-dns, jq, curl).
+- socket-proxy floats on `:1`, the one major tag allowed: upstream keeps it free of breaking changes to the deployment, and it holds no data.
 - A pinned name changes with a bump, so a rollback across one goes back exactly, while a floating name goes forward on a rollback (devopsy-cli's docs, "Choosing tags").
 - `setup` keeps no state: it drives the other commands through its target and sets values with `--vars set` from its environment, never as arguments.
 - No migration code: a breaking change to `shared/` is moved by hand on each server.
