@@ -100,7 +100,7 @@ $(proxies)
 EOT
 
   # The middleware exists before the entrypoint references it.
-  if write_if_changed "$dynamic" "$yaml"; then
+  if write_dynamic "$dynamic" "$yaml"; then
     echo "proxies: wrote mnt/dynamic/proxies.yaml"
   fi
   if [ -n "$forwarded" ]; then

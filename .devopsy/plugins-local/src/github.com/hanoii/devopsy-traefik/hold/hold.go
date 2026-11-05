@@ -64,7 +64,7 @@ main { max-width: 32rem; padding: 2rem; text-align: center; }
 </style>
 <main>
 <h1>Back in a moment</h1>
-<p>This site is being updated. Please try again shortly.</p>
+<p>This site is temporarily unavailable. Please try again shortly.</p>
 </main>
 </html>
 `

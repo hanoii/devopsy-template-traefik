@@ -21,7 +21,7 @@ case $name in '' | *[!a-z0-9_-]*) die "name must use a-z, 0-9, '-' and '_': $nam
 file=$dir/mnt/dynamic/devopsy-retry-$name.yaml
 
 if [ "$*" = --done ]; then
-  rm -f "$file"
+  remove_dynamic "$file"
   exit 0
 fi
 
@@ -55,5 +55,4 @@ $groups
 EOF
 
 mkdir -p "$dir/mnt/dynamic"
-printf '%s' "$yaml" >"$file.tmp"
-mv "$file.tmp" "$file"
+write_dynamic "$file" "$yaml" || true

@@ -30,12 +30,20 @@ func TestHoldRouterGone(t *testing.T) {
 }
 
 // Stops right after starts: every request held, never a 404 (a stop
-// while the reader slept, Traefik's API a moment behind).
+// while the reader slept, Traefik's API a moment behind). Overlapping
+// requests of one visitor, in rounds this quick, can use up its one redirect
+// for a 502 no probe meets, so the page, a 307 with no Location, is allowed.
 func TestHoldQuickRounds(t *testing.T) {
 	h := traefik(t)
 	h.site("rounds", "rounds.example.com", hold, "")
-	heldThrough(t, "https://rounds.example.com/", h.during("https://rounds.example.com/",
-		"for i in 1 2 3 4 5 6; do docker stop rounds; sleep 0.$i; docker start rounds; sleep $((i % 3)); done; sleep 2"))
+	var answers []answer
+	for _, a := range h.during("https://rounds.example.com/",
+		"for i in 1 2 3 4 5 6; do docker stop rounds; sleep 0.$i; docker start rounds; sleep $((i % 3)); done; sleep 2") {
+		if a.Code != 307 || a.Location != "" {
+			answers = append(answers, a)
+		}
+	}
+	heldThrough(t, "https://rounds.example.com/", answers)
 }
 
 // The 502 at the stop: the router still there, its port closed.
@@ -56,6 +64,37 @@ func TestHoldHostRegexp(t *testing.T) {
 		docker wait regexp >/dev/null && docker start regexp >/dev/null && wait && cat /tmp/regexp`)
 	if a := parseAnswer(out); a.Code != 307 || a.Location != "https://regexp.example.com/" || a.Time < 2 {
 		t.Errorf("%+v, want held until the start, then a 307 to the same URL", a)
+	}
+}
+
+// A tunneled site's stop, its port closed and then its router gone: held
+// until the start. The probes come from Traefik's loopback, past the
+// entrypoint's allow list: refused, a 403 would read as the site being up.
+func TestHoldThroughTunnel(t *testing.T) {
+	h := traefik(t)
+	tunneled := []string{"routers.<name>.entrypoints=tunnel", "services.<name>.loadbalancer.server.port=80"}
+	h.site("tunclosing", "tunclosing.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
+	h.site("tungone", "tungone.example.com", append(tunneled, hold...), closing[0], closing[1:]...)
+	for _, c := range []struct {
+		name, stop string
+		gone       bool
+	}{
+		{"tunclosing", `docker kill -s TERM "$1" >/dev/null && sleep 0.5`, false},
+		{"tungone", `docker stop "$1" >/dev/null`, true},
+	} {
+		h.sh("/", nil, c.stop, c.name)
+		// Traefik drops a stopped site's router a moment later: until then a
+		// request goes to its address, unheld.
+		if c.gone {
+			h.unrouted(c.name + "@docker")
+		}
+		out := h.sh("/", nil, `
+			docker run --rm -q --network tunnel curlimages/curl:8.15.0 -s -o /dev/null --max-time 60 -H "Host: $1.example.com" \
+				-w '%{http_code} %{time_total} %{redirect_url}' http://traefik.tunnel:8081/ >/tmp/through &
+			docker wait "$1" >/dev/null; sleep 4; docker start "$1" >/dev/null; wait; cat /tmp/through`, c.name)
+		if a := parseAnswer(out); a.Code != 307 || a.Time < 2 || !strings.Contains(a.Location, c.name+".example.com") {
+			t.Errorf("%s: %+v, want held until the start, then a 307 to the same URL", c.name, a)
+		}
 	}
 }
 
@@ -129,5 +168,59 @@ func TestHoldPassesThrough(t *testing.T) {
 		-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://ws.example.com/echo`)
 	if !strings.HasPrefix(out, "HTTP/1.1 101") {
 		t.Errorf("the WebSocket's upgrade:\n%s", out)
+	}
+}
+
+// holdingCompose is isolatedCompose with an app that closes its port on SIGTERM
+// and exits four seconds later, held through its stop (hold@file), as the
+// templates' apps are.
+func holdingCompose(name, hostname string) string {
+	return fmt.Sprintf(`services:
+  web:
+    image: busybox:1.37
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www && echo ok >/www/index.html && httpd -f -p 80 -h /www & pid=$$!
+        trap 'kill $$pid; sleep 4; exit 0' TERM
+        wait $$pid; wait $$pid
+    stop_grace_period: 15s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.%[1]s.rule=Host(%[2]s)
+      - traefik.http.routers.%[1]s.middlewares=hold@file
+      - traefik.http.services.%[1]s.loadbalancer.server.port=80
+      - traefik.docker.network=%[1]s_proxy
+    networks: [private, proxy]
+networks:
+  private: {internal: true}
+  proxy: {name: %[1]s_proxy}
+`, name, "`"+hostname+"`")
+}
+
+// A site on its own network is held through its recreate, as a release does it:
+// its port closed, then its router gone, then a new container with a new address.
+// Traefik stays on the network throughout, since a container naming it is always
+// on it, so attach never disconnects it.
+func TestHoldThroughRecreateOnOwnNetwork(t *testing.T) {
+	h := traefik(t)
+	h.compose("hr-iso", holdingCompose("hr-iso", "hr-iso.example.com"))
+	h.routed("hr-iso@docker")
+	h.waitFor("Traefik on the site", func() bool { return joined(h.proxyNetworks(), "hr-iso_proxy") })
+	h.waitFor("the site answers", func() bool { return h.request("https://hr-iso.example.com/").Code == 200 })
+
+	id := func() string { return strings.TrimSpace(h.sh("/", nil, `docker inspect -f '{{.Id}}' hr-iso-web-1`)) }
+	before := id()
+	heldThrough(t, "https://hr-iso.example.com/", h.during("https://hr-iso.example.com/",
+		"cd /home/devopsy/sites/hr-iso && docker compose -p hr-iso up -d --force-recreate web && sleep 2"))
+	if id() == before {
+		t.Errorf("the same container %s: nothing was recreated", before)
+	}
+	if !joined(h.proxyNetworks(), "hr-iso_proxy") {
+		t.Errorf("Traefik off the site's network after its recreate: %s", h.proxyNetworks())
+	}
+	if logs := h.sh("/", nil, "docker logs traefik-attach-1 2>&1"); strings.Contains(logs, "disconnected hr-iso_proxy") {
+		t.Errorf("attach left the network during the site's recreate:\n%s", logs)
 	}
 }

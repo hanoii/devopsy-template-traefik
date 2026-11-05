@@ -15,20 +15,45 @@ that nothing answers. Then each release runs `deploy`, which prepares
 `mnt/`, writes the public wildcard certificate, refreshes the trusted
 proxies' ranges and starts or updates every service.
 
-`devopsy restart` pulls newer images and recreates what changed.
+`devopsy restart` pulls newer images and recreates what changed. After a
+`devopsy down`, start Traefik with it or with `deploy`, not a plain `up`: the
+`tunnel` network can come back on another subnet, only those two read it, and
+until one runs the connectors get a 403.
 
 ## Upgrades
 
 Upgrading is a release from a newer checkout, and `devopsy @vm1-traefik
 --rollback` goes back. Routed sites are without Traefik for a few seconds
-while its container is recreated.
+while its container is recreated, and longer on a server with many sites,
+since Docker takes a network at a time to stop and start a container (about
+13 to 15 seconds at 100 sites on the machine this was measured on, and
+about 30 while that machine was busy). A site's own release costs the others
+nothing.
+
+Rolling Traefik back to a release without `attach` leaves it off the
+projects' own networks, so the sites on them answer 504 until Traefik is
+released forward again. Release Traefik before moving a project to its own network.
 
 The Traefik image tracks its minor version (`traefik:v3.7`), and every
 release pulls it again, so patches arrive with your next release. A new
 minor brings [migration notes](https://doc.traefik.io/traefik/migrate/v3/)
 and a new Yaegi for the plugins. To move to it, edit the tag in
-`.devopsy/compose.yaml`. socket-proxy, acme-dns and the tools (jq, curl)
-publish no minor tag, so they stay pinned exactly.
+`.devopsy/compose.yaml`. So does `attach`'s `docker` image. socket-proxy,
+acme-dns and the tools (jq, curl) publish no minor tag, so they stay pinned
+exactly.
+
+## Behind an HTTP proxy
+
+Docker gives every container the proxy settings in the deploy user's
+`~/.docker/config.json`. Traefik needs these listed in its `noProxy`, with what
+your proxy already leaves out:
+
+- `dockerproxy.<compose project>_dockerproxy` (for example
+  `dockerproxy.traefik-prod_dockerproxy`), or Traefik sees no containers and
+  every site answers 404;
+- Docker's address pools (for example `172.16.0.0/12`), or Traefik sends its
+  requests for sites to the proxy;
+- `acmedns.<compose project>_acmedns`, when acme-dns runs.
 
 ## Dashboard
 
@@ -73,7 +98,9 @@ services:
 ```
 
 Files in `mnt/dynamic/` are Traefik's dynamic configuration (its file
-provider), for anything else that does not belong to a project.
+provider), for anything else that does not belong to a project. `deploy` and
+the commands write their own there as a link to a `.live` file, which Traefik
+skips; change those through the settings, not by hand.
 
 There is one Traefik per host. It holds the `proxy` role, so a release of
 a second one on the same server is refused, and its network is always

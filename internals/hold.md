@@ -20,6 +20,7 @@ Holding a site's visitors through its app's stop, rather than a 502 or a 404, fo
 - The middleware is per router, never on the entrypoints, since on an entrypoint the rewrite would turn every site's 502 into a 307 and a site could not opt out.
 - Only 502 is held: a site's own 503 is its answer.
 - A 307 for every method, never a 303 for a POST: a 502 does not tell a POST the closed port refused from one the app read and lost, so the 307 sends both again, as a reload would, where a 303 would turn a form posted during a stop into a GET, the form lost.
+- The page stays as given, with no reload of its own: a hold bounded at 90 s must end, and a visitor reloads as on any provider's timeout page.
 - `X-Devopsy-Hold: no` gets the hold's answer at once, with `X-Devopsy-Hold: down` (`domains`).
 
 ## The router gone

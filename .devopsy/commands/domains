@@ -178,6 +178,11 @@ show_connectors() {
   echo
 }
 
+# Without attach a new site is not connected, and its visitors hang until a 504.
+if [ -z "$(docker ps -q --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-}" --filter label=com.docker.compose.service=attach --filter status=running)" ]; then
+  warn "attach is not running: a site on its own network that Traefik has not joined hangs, then answers 504 (devopsy ps -a attach, devopsy logs attach)"
+fi
+
 r=$(reports)
 ip=$(printf '%s\n' "$r" | jq -r 'first(.[].ip) // empty')
 show "$r"

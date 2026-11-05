@@ -19,13 +19,13 @@ released after this one. Traefik's side is always part of this template:
 
 - the `tunnel` entrypoint (`:8081`, plain HTTP, unpublished) and the
   `tunnel` network, which only Traefik and the connectors join;
-- trust of that network's subnet, which every `deploy` reads from Docker.
+- trust of that network's subnet, which `deploy` and `restart` read from Docker.
   For requests from that subnet, Traefik takes the visitor's IP from
   `CF-Connecting-IP` (through the proxies plugin, built in: `devopsy
   proxies` lists it) and keeps the connector's `X-Forwarded-Proto:
   https`, so applications build `https://` URLs. Requests to port 8081
-  from anywhere else, such as another project on the `traefik` network,
-  are not trusted.
+  from anywhere else, such as another project's container, get a 403, so
+  they cannot get round Cloudflare's rules (Access, WAF).
 
 Since Traefik trusts the network's subnet rather than each connector,
 tunnels are added and removed by releases of their own, without

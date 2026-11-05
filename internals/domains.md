@@ -10,4 +10,5 @@
 - Cloudflare's proxy is recognized by `cf-ray` on the HTTPS answer, else on plain HTTP: its free edge certificate covers one level below the zone only, so a proxied `*.prod1.example.com` fails the handshake at the edge while HTTP answers.
 - A host whose routers are on `tunnel` only is tunneled (`method: tunnel` in `lib/facts`): no handshake with the server's IP, the request through Cloudflare with its error code read from the body (for example `error code: 1033`), and the connectors from `docker network inspect tunnel`, by their compose health.
 - A 1033 means either no connector or a record in another account than the tunnel's, so the next step tells them apart by whether this server's connectors are healthy.
+- `domains` warns when `attach` is not running: nothing else says why a new site hangs.
 - A held site is checked with `X-Devopsy-Hold: no` (`internals/hold.md`), so a site down reads as down.

@@ -93,6 +93,32 @@ write_if_changed() {
   mv "$1.tmp" "$1"
 }
 
+# Writes $2 to $1, a <name>.yaml in mnt/dynamic, when different; returns 1 when
+# unchanged. $1 is a link, made once, to <name>.live, the file renamed over:
+# Traefik reads the folder on every change, a listing during a rename over a
+# name can miss that name (btrfs), and a file missed takes its routers and
+# middlewares with it until the next read. It skips .live, and never misses
+# what stays put.
+write_dynamic() {
+  _live=${1%.yaml}.live
+  _dynamic_changed=1
+  if write_if_changed "$_live" "$2"; then
+    _dynamic_changed=0
+  fi
+  if [ ! -L "$1" ]; then
+    ln -sf "$(basename "$_live")" "$1.tmp"
+    mv -f "$1.tmp" "$1"
+  fi
+  return "$_dynamic_changed"
+}
+
+# Removes $1, written by write_dynamic, the link first: a link left to nothing
+# would fail Traefik's every read of the folder.
+remove_dynamic() {
+  rm -f "$1"
+  rm -f "${1%.yaml}.live"
+}
+
 # Replaces KEY=value in .env, or appends it. Writes through the file, never
 # replacing it: on a server .env is a link to shared/.env.
 env_set() {
@@ -126,18 +152,15 @@ api_access() {
   }
   # Docker 29 prints a missing gateway as "invalid IP", older ones as "":
   # keep addresses only. One bad range would make the router invalid.
-  _list="          - 127.0.0.1/32
-          - ::1/128"
+  _list=127.0.0.1/32,::1/128
   for _gw in $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}},{{.IPv6Gateway}},{{end}}' "$_id" | tr ',' '\n' | tr -d ' '); do
     case $_gw in
       *[!0-9a-f.:]* | '') ;;
-      *:*) _list="$_list
-          - $_gw/128" ;;
-      *.*) _list="$_list
-          - $_gw/32" ;;
+      *:*) _list="$_list,$_gw/128" ;;
+      *.*) _list="$_list,$_gw/32" ;;
     esac
   done
-  if write_if_changed "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
+  if write_dynamic "$dir/mnt/dynamic/devopsy-api.yaml" "# Written by 'devopsy deploy' and 'devopsy restart'.
 http:
   routers:
     devopsy-api:
@@ -154,13 +177,13 @@ http:
     devopsy-api-local:
       ipAllowList:
         sourceRange:
-$_list
+$(subnet_list "$_list" '          ')
 "; then
     echo "$(basename "$0"): API open to Traefik and the host only"
   fi
 }
 
-# The tunnel network's IPv4 subnets, comma separated: what its connectors'
+# The tunnel network's subnets, comma separated: what its connectors'
 # requests come from. Empty until the network exists (a first `up`
 # creates it); any other failure of Docker's fails, or Traefik would lose
 # the tunnel's trust over a daemon restarting.
@@ -171,7 +194,12 @@ tunnel_subnet() {
       *) die "could not read the tunnel network: $_out" ;;
     esac
   fi
-  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9.]+/[0-9]+$' | paste -sd, - || true
+  printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9a-f.:]+/[0-9]+$' | paste -sd, - || true
+}
+
+# Comma-separated subnets ($1) as YAML list items, indented by $2.
+subnet_list() {
+  printf '%s\n' "$1" | tr ',' '\n' | sed "/^\$/d; s/^/$2- /"
 }
 
 # Holding visitors through an app's stop, for the sites whose router names
@@ -211,7 +239,7 @@ $_probes"
       service: noop@internal
       middlewares: [hold-$_ep]"
   done
-  write_if_changed "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy': holding visitors through an app's stop.
+  write_dynamic "$dir/mnt/dynamic/hold.yaml" "# Written by 'devopsy deploy': holding visitors through an app's stop.
 http:
   middlewares:
     # What a site's router names: traefik.http.routers.<name>.middlewares=hold@file
@@ -257,6 +285,11 @@ $_probes$_catchall
 # X-Forwarded-Proto, so applications build https URLs. Nothing else is on
 # that network but Traefik and the connectors.
 #
+# It also takes requests from nowhere else (`tunnel-allow`, first on it, by
+# the connection's address, never a header): Traefik is on every project's
+# network, and a project's container there would skip Cloudflare's rules.
+# Traefik's own loopback stays in, for the hold's probes (hold_middleware).
+#
 # An entrypoint naming a missing middleware breaks every router: a
 # middleware's file is written before the env names it, and removed only
 # once the running Traefik no longer names it. Static settings need a
@@ -274,7 +307,7 @@ static_env() {
   # Traefik would take its host and proto. Not web, which only redirects:
   # its internal routers are built before the file provider loads, so
   # each start would log them failing.
-  write_if_changed "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': a visitor's Forwarded removed.
+  write_dynamic "$dir/mnt/dynamic/forwarded.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': a visitor's Forwarded removed.
 http:
   middlewares:
     forwarded:
@@ -283,7 +316,7 @@ http:
           Forwarded: \"\"
 " || true
   _websecure=forwarded@file
-  _tunnelmw=forwarded@file
+  _tunnelmw=tunnel-allow@file,forwarded@file
 
   # Proxies: configured and their middleware written (`devopsy proxies`).
   _proxies=false
@@ -303,10 +336,19 @@ http:
   # The tunnel: once its network exists.
   _tunnel=false
   _subnet=$(tunnel_subnet) || exit 1
+  write_dynamic "$dir/mnt/dynamic/tunnel-allow.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies': who may use the tunnel entrypoint.
+http:
+  middlewares:
+    tunnel-allow:
+      ipAllowList:
+        sourceRange:
+          - 127.0.0.1/32
+$(subnet_list "$_subnet" '          ')
+" || true
   if [ -n "$_subnet" ]; then
     _tunnel=true
     _plugin=true
-    write_if_changed "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies' from the tunnel network's subnet.
+    write_dynamic "$dir/mnt/dynamic/tunnel.yaml" "# Written by 'devopsy deploy' and 'devopsy proxies' from the tunnel network's subnet.
 http:
   middlewares:
     tunnel:
@@ -316,7 +358,7 @@ http:
             - name: tunnel
               header: CF-Connecting-IP
               trustedIPs:
-$(printf '%s\n' "$_subnet" | tr ',' '\n' | sed 's/^/                - /')
+$(subnet_list "$_subnet" '                ')
 " || true
     _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=$_subnet
 "
@@ -358,10 +400,10 @@ TRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true
         sed -n 's/^TRAEFIK_ENTRYPOINTS_[A-Z]*_HTTP_MIDDLEWARES=//p' | paste -sd, -)
     fi
     if [ "$_proxies" = false ]; then
-      case ",$_running," in *,proxies@file,*) ;; *) rm -f "$dir/mnt/dynamic/proxies.yaml" ;; esac
+      case ",$_running," in *,proxies@file,*) ;; *) remove_dynamic "$dir/mnt/dynamic/proxies.yaml" ;; esac
     fi
     if [ "$_tunnel" = false ]; then
-      case ",$_running," in *,tunnel@file,*) ;; *) rm -f "$dir/mnt/dynamic/tunnel.yaml" ;; esac
+      case ",$_running," in *,tunnel@file,*) ;; *) remove_dynamic "$dir/mnt/dynamic/tunnel.yaml" ;; esac
     fi
   fi
 }
