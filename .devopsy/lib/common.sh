@@ -377,7 +377,7 @@ $(subnet_list "$_subnet" '                ')
 
   # Routers naming no entrypoint: only the tunnel's on a server whose sites
   # are all tunneled, else web and websecure, so a tunnel opens no site
-  # that does not name it (PROXY_ENTRYPOINTS in the site templates).
+  # that does not name it (a router's entrypoints label).
   if [ "${PROXY_TUNNEL_ONLY:-}" = true ]; then
     _env="${_env}TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true
 "

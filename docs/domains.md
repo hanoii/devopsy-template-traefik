@@ -3,7 +3,7 @@
 ## Wildcard URLs
 
 With a base domain for the server, like `vm1.example.com`, every
-environment gets a URL beside its own domains, named after its compose
+environment can answer on a URL beside its own domains, named after its compose
 project: `whoami-prod.vm1.example.com`. Set the base domain once, in this
 Traefik's settings, as `PROXY_BASE_DOMAIN`. Traefik exports it to projects
 as `BASE_DOMAIN` with devopsy's labels ([Roles, exports and
@@ -20,34 +20,27 @@ the release's `devopsy-target.env`, unless the target sets
 `PROXY_BASE_DOMAIN` itself (empty for no automatic URL). A release fails
 while no proxy runs, unless the import ends in `?`.
 
-devopsy-cli knows nothing of URLs. The site templates compute their hosts
-in their `env` capability (`.devopsy/capabilities/env/compute`), from the compose
-project name (`COMPOSE_PROJECT_NAME`, which devopsy sets), the imported
-domain and the environment's `PROXY_DOMAINS`, and use the resulting rule
-in their labels:
+devopsy-cli knows nothing of URLs. The project's router rule lists the
+wildcard URL, its compose project name (`COMPOSE_PROJECT_NAME`, which
+devopsy sets) under the base domain, beside its own domains:
 
 ```yaml
 labels:
   - devopsy.import.PROXY_BASE_DOMAIN=proxy/BASE_DOMAIN
   - traefik.enable=true
-  - traefik.http.routers.${COMPOSE_PROJECT_NAME:-app}.rule=${SITE_HOST_RULE:-HostRegexp(`^app\.localhost$`)}
+  - traefik.http.routers.whoami-prod.rule=Host(`whoami-prod.vm1.example.com`) || Host(`example.org`)
 ```
 
-The fallback is a `HostRegexp` because Traefik requests no certificate for
-one. Otherwise an environment without hosts would log an ACME error for
-`app.localhost` on every attempt.
+How the project builds that rule for each environment is its own choice.
 
-`SITE_HOST_RULE` matches the wildcard host plus `PROXY_DOMAINS`, the
-environment's own domains. They are set in its `env` in `config.yaml` or
-in its `.env` (on a server, the target's `shared/.env`):
+A router with no host to match, such as a release with no base domain
+and no domains of its own, can match a `HostRegexp` instead. Traefik
+requests no certificate for a `HostRegexp`, while a `Host` it cannot get
+a certificate for logs an ACME error on every attempt.
 
-```dotenv
-PROXY_DOMAINS="example.org www.example.org"
-```
-
-Without a base domain, a released environment answers only on its
-`PROXY_DOMAINS`. Locally, its host is `<project>.localhost`, which
-browsers resolve to the local machine.
+Without a base domain, an environment answers only on the hosts its rule
+names. Locally, a rule can name a `*.localhost` host, which browsers
+resolve to the local machine.
 
 The DNS for wildcard URLs is one wildcard record, `*.vm1.example.com A
 <server IP>`. With `PROXY_BASE_DOMAIN` set, `deploy` also requests one

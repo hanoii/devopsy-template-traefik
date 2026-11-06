@@ -4,8 +4,8 @@ There are three resolvers, all Let's Encrypt. Their names give the CA
 (`le`), the ACME challenge and, for DNS-01, who answers it. Every router uses this server's
 default, `PROXY_CERTRESOLVER` in `.env` (`le-http01` when unset), unless
 it picks one with `traefik.http.routers.<name>.tls.certresolver=<resolver>`.
-The site templates leave the choice to the server unless their own
-`PROXY_CERTRESOLVER` names one.
+A router with `tls=true` or an empty `tls.certresolver=` gets no
+certificate.
 
 - `le-http01` uses HTTP-01 and is always available. It works for any
   domain that points at this server, with or without a CDN proxy like

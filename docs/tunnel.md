@@ -125,9 +125,10 @@ fails at the edge without a tunnel too.
 
 Without `PROXY_TUNNEL_ONLY`, routers that name no entrypoint stay on `web`
 and `websecure`, so a tunnel opens only the sites that ask for it. A site
-asks with `PROXY_ENTRYPOINTS=tunnel` in the site templates, and with
-`PROXY_CERTRESOLVER` unset, since a router with a resolver is a TLS router
-and never matches the tunnel's plain HTTP. Such a site is not served on
+asks by naming the entrypoint on its router,
+`traefik.http.routers.<name>.entrypoints=tunnel`. Its router has no
+`tls.certresolver` or `tls=true` label: either makes it a TLS router,
+which never matches the tunnel's plain HTTP. Such a site is not served on
 ports 80 and 443, even with a matching Host header and SNI. Port 80 only
 redirects to HTTPS, and 443 answers 404.
 
