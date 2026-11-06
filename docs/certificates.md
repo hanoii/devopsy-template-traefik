@@ -21,6 +21,36 @@ certificate.
 Both DNS-01 resolvers work with a CDN proxy on, before DNS points at this
 server, and for wildcard certificates.
 
+## HSTS
+
+Traefik sends no `Strict-Transport-Security` header unless a router asks
+for one. A site adds it with a `headers` middleware of its own, named on
+its router:
+
+```yaml
+labels:
+  - traefik.http.middlewares.myapp-hsts.headers.stsseconds=31536000
+  - traefik.http.routers.myapp.middlewares=hold@file,myapp-hsts
+```
+
+Once a browser has received the header, it goes straight to HTTPS for
+`stsseconds` (a year here) and skips plain HTTP, where the redirect could
+be intercepted. Its user can no longer click past a certificate error,
+for example after a failed renewal: the site is down for that browser
+until the certificate is fixed.
+
+Leave out `stsincludesubdomains` unless every host under the site's
+domains serves HTTPS: with it set, browsers refuse plain HTTP to all of
+them. `stspreload` requires `stsincludesubdomains`.
+
+Traefik adds the header only to responses over HTTPS. A tunneled site's
+requests reach Traefik over plain HTTP ([Behind a Cloudflare
+Tunnel](tunnel.md)), so Traefik never adds it for them. Use Cloudflare's
+own HSTS setting instead.
+
+Send it from one layer only, Traefik or the app. A browser uses only the
+first of two such headers and ignores the other.
+
 ## acme-dns
 
 [acme-dns](https://github.com/joohoi/acme-dns) is a small DNS server that

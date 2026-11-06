@@ -180,7 +180,7 @@ Projects that do not trust each other belong on separate servers.
 
 - [Running Traefik](docs/running.md): settings, upgrades, the dashboard,
   commands from your machine and customizing.
-- [Certificates](docs/certificates.md): the resolvers, acme-dns, a
+- [Certificates](docs/certificates.md): the resolvers, HSTS, acme-dns, a
   Cloudflare token, CNAME delegation, staging and production, and
   forgetting domains.
 - [Domains](docs/domains.md): wildcard URLs and the `domains` report.
