@@ -81,10 +81,11 @@ run() {
 }
 
 # The target as typed, used as is: vm1:prod, or an alias. Its server,
-# for the alias, only when the address names one.
+# for the alias, only when the address names one: before the last ':',
+# since a server may hold one (vm1:5369:prod, 2001:db8::1:prod).
 t=@$DEVOPSY_COMMAND_TARGET
 case $DEVOPSY_COMMAND_TARGET in
-  *:*) server=${DEVOPSY_COMMAND_TARGET%%:*} ;;
+  *:*) server=${DEVOPSY_COMMAND_TARGET%:*} ;;
   *) server= ;;
 esac
 
