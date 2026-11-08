@@ -13,7 +13,8 @@
 //   - From a catch-all router at priority 1 (Config.EntryPoint set): a request
 //     no router took. Held only when its host lost a router naming the
 //     middleware moments ago (Config.Memory); any other host gets Traefik's
-//     usual 404 at once.
+//     usual 404 at once, and so does a host whose containers are all
+//     removed (Config.Docker): nothing is left to bring its router back.
 //
 // A held request is answered by the plugin itself, never by calling next: it
 // probes the original URL through Traefik's own entrypoint every
@@ -25,7 +26,9 @@
 // Config.MaxWait it answers its page, 503.
 //
 // Which hosts have such a router, and on which entrypoints, comes from Traefik's API, read when Traefik builds
-// the middleware again, which it does on every change of its routers.
+// the middleware again, which it does on every change of its routers. Whether
+// a host that lost its router still has a container carrying it comes from
+// Docker's API, asked when a request for it comes.
 package hold
 
 import (
@@ -83,6 +86,11 @@ type Config struct {
 	// and entrypoints of the routers naming Middleware; catch-all
 	// instances only.
 	API string `json:"api,omitempty"`
+	// Docker is Docker's API, through a read-only proxy
+	// (http://dockerproxy:2375), asked whether any container, stopped
+	// ones included, still carries the router of a host that lost it;
+	// catch-all instances only.
+	Docker string `json:"docker,omitempty"`
 	// MaxWait bounds a hold (90s); Interval is the time between probes
 	// (1s); Memory is how long a host that lost its router is held (5m).
 	MaxWait  string `json:"maxWait,omitempty"`
@@ -107,6 +115,7 @@ type Hold struct {
 	interval   time.Duration
 	memory     time.Duration
 	page       string
+	docker     string
 }
 
 // prober sends probes to one of Traefik's entrypoints, whatever host the
@@ -172,7 +181,7 @@ func (p *prober) up(ctx context.Context, target *url.URL, visitor http.Header) b
 // New builds the middleware. Traefik calls it again whenever its routers
 // change: a catch-all instance reads them then.
 func New(_ context.Context, _ http.Handler, config *Config, name string) (http.Handler, error) {
-	h := &Hold{name: name, entryPoint: config.EntryPoint, probes: map[string]*prober{}, page: config.Page}
+	h := &Hold{name: name, entryPoint: config.EntryPoint, probes: map[string]*prober{}, page: config.Page, docker: config.Docker}
 	if h.page == "" {
 		h.page = Page
 	}
@@ -203,8 +212,8 @@ func New(_ context.Context, _ http.Handler, config *Config, name string) (http.H
 		if h.probes[h.entryPoint] == nil {
 			return nil, fmt.Errorf("%s: no probe for its entrypoint %s", name, h.entryPoint)
 		}
-		if config.API == "" || config.Middleware == "" {
-			return nil, fmt.Errorf("%s: a catch-all needs the api and the middleware", name)
+		if config.API == "" || config.Middleware == "" || config.Docker == "" {
+			return nil, fmt.Errorf("%s: a catch-all needs the api, docker and the middleware", name)
 		}
 		refresh(config.API, config.Middleware, h.memory)
 	}
@@ -212,8 +221,14 @@ func New(_ context.Context, _ http.Handler, config *Config, name string) (http.H
 }
 
 func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	// A probe that reached the hold: the site is still down.
+	// A probe that reached the hold: the site is still down, unless it
+	// is removed, when the probe gets the 404 a visitor will, so a
+	// visitor held on the 502 at its stop is sent back to the URL for it.
 	if req.Header.Get(Header) == "probe" {
+		if h.entryPoint != "" && h.removed(req.Context(), hostname(req.Host)) {
+			http.NotFound(rw, req)
+			return
+		}
 		rw.Header().Set(Header, "down")
 		rw.WriteHeader(http.StatusBadGateway)
 		return
@@ -249,13 +264,14 @@ func (h *Hold) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		host := hostname(req.Host)
+		// With `no`, an answer at once, without waiting for the reads.
+		var ok bool
 		if req.Header.Get(Header) == "no" {
-			// An answer at once, without waiting for the reads.
-			if !held(host, h.entryPoint, time.Now(), h.memory) {
-				http.NotFound(rw, req)
-				return
-			}
-		} else if !heldNow(req.Context(), host, h.entryPoint, h.memory) {
+			ok = held(host, h.entryPoint, time.Now(), h.memory)
+		} else {
+			ok = heldNow(req.Context(), host, h.entryPoint, h.memory)
+		}
+		if !ok || h.removed(req.Context(), host) {
 			http.NotFound(rw, req)
 			return
 		}
@@ -450,7 +466,7 @@ func hostname(host string) string {
 // instance.
 var (
 	mu      sync.Mutex
-	present map[string][]string // nil until the first read
+	present map[string]route // nil until the first read
 	gone    = map[string]goneHost{}
 	// The last probe of each URL held on, shared by its held requests.
 	probed = map[string]probeState{}
@@ -466,6 +482,8 @@ var (
 	readMemory              time.Duration
 	settling                bool
 	reads                   int
+	// Docker's API version, from its first answer (dockerVersion).
+	apiVersion string
 )
 
 // probeState: a probe of a URL running, or when the last one answered and
@@ -477,10 +495,23 @@ type probeState struct {
 	down    time.Time
 }
 
-// goneHost: when a host lost its routers, and their entrypoints.
+// route: the entrypoints of a host's routers naming the middleware, the
+// names of those the Docker provider has from labels, and whether another
+// provider has one, whose removal Docker cannot tell.
+type route struct {
+	eps     []string
+	routers []string
+	others  bool
+}
+
+// goneHost: when a host lost its routers, and what they were; when Docker
+// was last asked whether a container still carries one, and whether none
+// did.
 type goneHost struct {
-	at  time.Time
-	eps []string
+	at      time.Time
+	route   route
+	checked time.Time
+	removed bool
 }
 
 // Literal hosts only: a HostRegexp names none.
@@ -488,12 +519,12 @@ var hostRule = regexp.MustCompile("Host\\(\\s*[`\"]([^`\"]+)[`\"]\\s*\\)")
 
 // remember records the hosts routers have now: one that had a router at the
 // last read and has none now lost it now.
-func remember(hosts map[string][]string, now time.Time, memory time.Duration) {
+func remember(hosts map[string]route, now time.Time, memory time.Duration) {
 	mu.Lock()
 	defer mu.Unlock()
-	for host, eps := range present {
+	for host, r := range present {
 		if _, ok := hosts[host]; !ok {
-			gone[host] = goneHost{at: now, eps: eps}
+			gone[host] = goneHost{at: now, route: r}
 		}
 	}
 	for host, g := range gone {
@@ -511,7 +542,106 @@ func held(host, entryPoint string, now time.Time, memory time.Duration) bool {
 	mu.Lock()
 	defer mu.Unlock()
 	g, ok := gone[host]
-	return ok && now.Sub(g.at) <= memory && contains(g.eps, entryPoint)
+	return ok && now.Sub(g.at) <= memory && contains(g.route.eps, entryPoint)
+}
+
+// removed: host lost its routers and Docker has no container, stopped ones
+// included, carrying any of them, so nothing is left to bring one back (a
+// down, --destroy). Asked once an interval per host, shared; false when it
+// cannot tell (another provider's router, Docker unreachable). A recreate
+// is never removed: compose creates the new container before it removes the
+// old one.
+func (h *Hold) removed(ctx context.Context, host string) bool {
+	mu.Lock()
+	g, ok := gone[host]
+	if !ok || g.route.others || len(g.route.routers) == 0 {
+		mu.Unlock()
+		return false
+	}
+	if time.Since(g.checked) < h.interval {
+		mu.Unlock()
+		return g.removed
+	}
+	mu.Unlock()
+	none := true
+	for _, router := range g.route.routers {
+		n, err := carrying(ctx, h.docker, router)
+		if err != nil || n > 0 {
+			none = false
+			break
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Unless the host came back or went again meanwhile.
+	if now, ok := gone[host]; ok && now.at.Equal(g.at) {
+		// Never `now.checked, now.removed = ...`: Yaegi v0.16.1
+		// lost the answer through that multiple assignment.
+		now.checked = time.Now()
+		now.removed = none
+		gone[host] = now
+	}
+	return none
+}
+
+// dockerClient: a bare transport, never through a proxy set for Traefik.
+var dockerClient = &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{}}
+
+// carrying counts the containers, stopped ones included, whose labels make
+// the Docker provider's router: its middlewares label, which a router
+// naming the middleware has.
+func carrying(ctx context.Context, docker, router string) (int, error) {
+	version, err := dockerVersion(ctx, docker)
+	if err != nil {
+		return 0, err
+	}
+	filters, _ := json.Marshal(map[string][]string{"label": {"traefik.http.routers." + router + ".middlewares"}})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimSuffix(docker, "/")+"/v"+version+"/containers/json?all=1&filters="+url.QueryEscape(string(filters)), nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := dockerClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s: %s", docker, resp.Status)
+	}
+	var containers []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
+		return 0, err
+	}
+	return len(containers), nil
+}
+
+// dockerVersion is the API version Docker answers its ping with, asked
+// once: the proxy lets through only versioned paths.
+func dockerVersion(ctx context.Context, docker string) (string, error) {
+	mu.Lock()
+	v := apiVersion
+	mu.Unlock()
+	if v != "" {
+		return v, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, strings.TrimSuffix(docker, "/")+"/_ping", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := dockerClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	v = resp.Header.Get("Api-Version")
+	if resp.StatusCode != http.StatusOK || v == "" {
+		return "", fmt.Errorf("%s: ping: %s, version %q", docker, resp.Status, v)
+	}
+	mu.Lock()
+	apiVersion = v
+	mu.Unlock()
+	return v, nil
 }
 
 // settle waits, up to end, for the next read of the routers while reads
@@ -561,10 +691,10 @@ func heldNow(ctx context.Context, host, entryPoint string, memory time.Duration)
 func routedOn(host string) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	if eps := present[host]; eps != nil {
-		return eps
+	if r, ok := present[host]; ok {
+		return r.eps
 	}
-	return gone[host].eps
+	return gone[host].route.eps
 }
 
 // readDelays: the reads after a change, after the one at once, each after
@@ -626,9 +756,9 @@ func read() {
 
 // routerHosts lists every literal host in the rules of Traefik's HTTP routers
 // that name middleware, through the API's pages, with the entrypoints of
-// those routers in their order.
-func routerHosts(client *http.Client, api, middleware string) (map[string][]string, error) {
-	hosts := map[string][]string{}
+// those routers in their order and their names.
+func routerHosts(client *http.Client, api, middleware string) (map[string]route, error) {
+	hosts := map[string]route{}
 	// Not `for page := 1; ; {`: Yaegi v0.16.1 keeps a for statement's
 	// variable per iteration, so the body's `page = next` never reached
 	// the next one, and the loop read the first page forever.
@@ -639,6 +769,8 @@ func routerHosts(client *http.Client, api, middleware string) (map[string][]stri
 			return nil, err
 		}
 		var routers []struct {
+			Name        string   `json:"name"`
+			Provider    string   `json:"provider"`
 			Rule        string   `json:"rule"`
 			EntryPoints []string `json:"entryPoints"`
 			Middlewares []string `json:"middlewares"`
@@ -657,16 +789,23 @@ func routerHosts(client *http.Client, api, middleware string) (map[string][]stri
 			}
 			for _, m := range hostRule.FindAllStringSubmatch(r.Rule, -1) {
 				host := hostname(m[1])
-				eps := hosts[host]
-				if eps == nil {
-					eps = []string{}
+				hr := hosts[host]
+				if hr.eps == nil {
+					hr.eps = []string{}
 				}
 				for _, ep := range r.EntryPoints {
-					if !contains(eps, ep) {
-						eps = append(eps, ep)
+					if !contains(hr.eps, ep) {
+						hr.eps = append(hr.eps, ep)
 					}
 				}
-				hosts[host] = eps
+				if name := strings.TrimSuffix(r.Name, "@docker"); r.Provider == "docker" && name != r.Name {
+					if !contains(hr.routers, name) {
+						hr.routers = append(hr.routers, name)
+					}
+				} else {
+					hr.others = true
+				}
+				hosts[host] = hr
 			}
 		}
 		// The last page names the first as the next.

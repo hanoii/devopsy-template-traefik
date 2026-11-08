@@ -148,6 +148,38 @@ func TestHoldNot(t *testing.T) {
 	}
 }
 
+// A site removed (--destroy, a down) is held by neither way in, since nothing
+// is left to bring its router back: a visitor gets the 404 once Traefik's API
+// shows the router gone, and one held on the 502 at its stop is sent back to
+// the URL once the container is removed, there to get the 404.
+func TestHoldRemoved(t *testing.T) {
+	h := traefik(t)
+	h.site("removed", "removed.example.com", hold, "")
+	h.site("rmclosing", "rmclosing.example.com", append([]string{"services.<name>.loadbalancer.server.port=80"}, hold...), closing[0], closing[1:]...)
+
+	h.sh("/", nil, "docker rm -f removed >/dev/null")
+	h.unrouted("removed@docker")
+	// Within the reads due after a change of routers (settleWait).
+	if a := h.request("https://removed.example.com/"); a.Code != 404 || a.Time > 6 {
+		t.Errorf("removed, its router gone: %+v, want 404 within 6s", a)
+	}
+
+	// The 502 at the stop, then the container removed as a down does it,
+	// the time counted from its removal.
+	out := h.sh("/", nil, `docker kill -s TERM rmclosing >/dev/null && sleep 0.5
+		curl -sk -o /dev/null --max-time 120 --resolve rmclosing.example.com:443:127.0.0.1 -w '%{http_code} %{redirect_url}' https://rmclosing.example.com/ >/tmp/rmclosing &
+		docker wait rmclosing >/dev/null && docker rm rmclosing >/dev/null && start=$(date +%s); wait; echo "$(cat /tmp/rmclosing) $(( $(date +%s) - start ))"`)
+	var code, took int
+	var location string
+	if fmt.Sscan(out, &code, &location, &took); code != 307 || location != "https://rmclosing.example.com/" || took > 8 {
+		t.Errorf("removed at its stop: %q, want a 307 to the same URL within 8s of the removal", out)
+	}
+	h.unrouted("rmclosing@docker")
+	if a := h.request("https://rmclosing.example.com/"); a.Code != 404 || a.Time > 6 {
+		t.Errorf("removed at its stop, followed: %+v, want 404 within 6s", a)
+	}
+}
+
 // What a site answers passes the hold's errors middleware as it comes: a
 // streamed response in its pieces, a WebSocket's upgrade.
 func TestHoldPassesThrough(t *testing.T) {

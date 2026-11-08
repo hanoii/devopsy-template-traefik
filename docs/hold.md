@@ -37,6 +37,14 @@ minutes, which it reads from Traefik's API. Other hosts get the usual
 404, at once, or within a few seconds right after routers change, while
 Traefik's API catches up.
 
+A site whose containers are removed (`docker compose down`, devopsy's
+`--destroy`) is not held: once no container, stopped or not, carries its
+router's labels, which the hold asks Docker, its hosts get the 404 at
+once, and a visitor already held at its stop is redirected to it. A
+router from another provider than Docker's, such as Traefik's file
+provider, is held for the 5 minutes, since nothing tells the hold it was
+removed.
+
 ## The page after 90 seconds
 
 A visitor still waiting after 90 seconds gets a "back in a moment" page.
