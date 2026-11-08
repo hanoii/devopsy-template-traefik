@@ -213,10 +213,12 @@ subnet_list() {
 #   original status otherwise), or past the wait the page under it.
 # - The catch-alls on websecure and tunnel, at priority 1: a request no
 #   router took, held when its host lost a router naming hold@file
-#   moments ago (read from the API), else a 404 as Traefik's own.
+#   moments ago (read from the API) and a container still carries it
+#   (asked of Docker), else a 404 as Traefik's own.
 #
 # Probes go to Traefik's own entrypoints inside its container; the API is
-# open to 127.0.0.1 (api_access). The same on every server.
+# open to 127.0.0.1 (api_access); Docker's is dockerproxy's, as for Traefik's
+# provider.
 hold_middleware() {
   _probes='            websecure: https://127.0.0.1:443
             tunnel: http://127.0.0.1:8081'
@@ -229,6 +231,7 @@ hold_middleware() {
         hold:
           entryPoint: $_ep
           api: http://127.0.0.1:8080
+          docker: http://dockerproxy.${COMPOSE_PROJECT_NAME:?}_dockerproxy:2375
           probes:
 $_probes"
     _routers="$_routers

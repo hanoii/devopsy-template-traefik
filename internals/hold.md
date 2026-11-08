@@ -30,7 +30,12 @@ Holding a site's visitors through its app's stop, rather than a 502 or a 404, fo
 - The memory is a difference between reads (present before, absent now: gone), since the API shows a new configuration about when the constructor runs, sometimes a moment after.
 - A request for a host the last read had waits while those reads are due, up to 5 s (a host with only a path router pays it for its 404 right after a change).
 - Package-level state survives the rebuilds.
-- A host present is never held by the catch-all; one gone is held for 5 minutes, then gets the 404 again, so a removed environment does not say "back in a moment" for long.
+- A host present is never held by the catch-all; one gone is held for 5 minutes at most, then gets the 404 again, so an environment left stopped does not say "back in a moment" for long.
+- A host gone whose routers no container carries any more, stopped ones included (by the label `traefik.http.routers.<name>.middlewares`), gets the 404 at once (for example after a down or `--destroy`): nothing is left to bring one back.
+- A recreate is never taken for a removal, since compose creates the new container before it removes the old one.
+- A probe reaching the catch-all for a removed host gets that 404, so a visitor held on the 502 at its stop is sent back to the URL for it.
+- Docker is asked through `dockerproxy` (`Config.Docker`) once an interval per host, and only whether such a container exists: the API stays the truth about routers.
+- A host with a router of another provider than Docker's, or Docker out of reach, is held as a stop is, since nothing says it was removed.
 - The memory comes from neither polling nor Docker events: the API is the truth about routers, and events would redo the provider's decisions from labels.
 
 ## Stopped and paused containers

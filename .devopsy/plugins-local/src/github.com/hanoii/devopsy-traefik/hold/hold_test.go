@@ -2,6 +2,7 @@ package hold
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,7 @@ func newHold(t *testing.T, ep string, probe string, maxWait string) http.Handler
 		EntryPoint: ep,
 		Probes:     map[string]string{"websecure": probe},
 		API:        "http://127.0.0.1:1",
+		Docker:     "http://127.0.0.1:1",
 		Middleware: "hold@file",
 		MaxWait:    maxWait,
 		Interval:   "10ms",
@@ -72,7 +74,7 @@ func routed(t *testing.T) {
 	t.Helper()
 	reset()
 	t.Cleanup(reset)
-	remember(map[string][]string{"app.example.com": {"web", "websecure"}}, time.Now(), time.Minute)
+	remember(routes(map[string][]string{"app.example.com": {"web", "websecure"}}), time.Now(), time.Minute)
 }
 
 // fromErrors is the request Traefik's errors middleware makes to the hold.
@@ -243,11 +245,22 @@ func TestHoldVisitorGone(t *testing.T) {
 	}
 }
 
+// routes is a read of hosts on their entrypoints, by routers of another
+// provider than Docker's, so never removed.
+func routes(hosts map[string][]string) map[string]route {
+	m := map[string]route{}
+	for host, eps := range hosts {
+		m[host] = route{eps: eps, others: true}
+	}
+	return m
+}
+
 func reset() {
 	mu.Lock()
 	defer mu.Unlock()
 	present = nil
 	gone = map[string]goneHost{}
+	apiVersion = ""
 	probed = map[string]probeState{}
 	unseen = map[string]time.Time{}
 }
@@ -256,11 +269,11 @@ func TestMemory(t *testing.T) {
 	reset()
 	defer reset()
 	now := time.Now()
-	remember(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}, now, time.Minute)
+	remember(routes(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}), now, time.Minute)
 	if held("a.example.com", "websecure", now, time.Minute) {
 		t.Fatal("a held while routed")
 	}
-	remember(map[string][]string{"b.example.com": {"websecure"}}, now.Add(time.Second), time.Minute)
+	remember(routes(map[string][]string{"b.example.com": {"websecure"}}), now.Add(time.Second), time.Minute)
 	if !held("a.example.com", "websecure", now.Add(2*time.Second), time.Minute) {
 		t.Fatal("a not held once its router went")
 	}
@@ -273,11 +286,11 @@ func TestMemory(t *testing.T) {
 		t.Fatal("a held past memory")
 	}
 	// Back: not held, and gone again later counts from then.
-	remember(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}, now.Add(3*time.Second), time.Minute)
+	remember(routes(map[string][]string{"a.example.com": {"websecure"}, "b.example.com": {"websecure"}}), now.Add(3*time.Second), time.Minute)
 	if held("a.example.com", "websecure", now.Add(4*time.Second), time.Minute) {
 		t.Fatal("a held while routed again")
 	}
-	remember(map[string][]string{}, now.Add(10*time.Minute), time.Minute)
+	remember(routes(map[string][]string{}), now.Add(10*time.Minute), time.Minute)
 	if !held("a.example.com", "websecure", now.Add(10*time.Minute+time.Second), time.Minute) {
 		t.Fatal("a not held when gone again")
 	}
@@ -291,8 +304,8 @@ func TestCatchAll(t *testing.T) {
 	defer srv.Close()
 	h := newHold(t, "websecure", srv.URL, "10s")
 	now := time.Now()
-	remember(map[string][]string{"app.example.com": {"websecure"}}, now, time.Minute)
-	remember(map[string][]string{}, now, time.Minute)
+	remember(routes(map[string][]string{"app.example.com": {"websecure"}}), now, time.Minute)
+	remember(routes(map[string][]string{}), now, time.Minute)
 
 	// Never routed: Traefik's usual 404, no probe.
 	rec := httptest.NewRecorder()
@@ -311,14 +324,137 @@ func TestCatchAll(t *testing.T) {
 	}
 }
 
+// fakeDocker answers its ping with a version and lists, under that version
+// only, the containers carrying the labels in has, counting the lists.
+type fakeDocker struct {
+	mu    sync.Mutex
+	has   map[string]bool
+	lists int
+}
+
+func (d *fakeDocker) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	switch {
+	case req.Method == http.MethodHead && req.URL.Path == "/_ping":
+		rw.Header().Set("Api-Version", "1.52")
+	case req.URL.Path == "/v1.52/containers/json" && req.URL.Query().Get("all") == "1":
+		d.lists++
+		var f map[string][]string
+		if json.Unmarshal([]byte(req.URL.Query().Get("filters")), &f) != nil || len(f["label"]) != 1 {
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if d.has[f["label"][0]] {
+			_, _ = rw.Write([]byte(`[{"Id":"1"}]`))
+			return
+		}
+		_, _ = rw.Write([]byte(`[]`))
+	default:
+		rw.WriteHeader(http.StatusForbidden)
+	}
+}
+
+func (d *fakeDocker) set(label string, has bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.has[label] = has
+}
+
+// A host gone with no container left carrying its router (a down,
+// --destroy) gets the 404 at once, and so does a probe of it, which sends a
+// visitor held on the 502 at its stop back to the URL; while a container
+// still carries it (stopped, a recreate's), or another provider's router
+// names it, or Docker cannot tell, it is held.
+func TestCatchAllRemoved(t *testing.T) {
+	reset()
+	defer reset()
+	ep := &entrypoint{}
+	srv := httptest.NewServer(ep)
+	defer srv.Close()
+	docker := &fakeDocker{has: map[string]bool{"traefik.http.routers.app.middlewares": true}}
+	dsrv := httptest.NewServer(docker)
+	defer dsrv.Close()
+	catchAll := func(docker string) http.Handler {
+		h, err := New(context.Background(), nil, &Config{
+			EntryPoint: "websecure", Probes: map[string]string{"websecure": srv.URL},
+			API: "http://127.0.0.1:1", Docker: docker, Middleware: "hold@file",
+			MaxWait: "200ms", Interval: "10ms", Memory: "1m",
+		}, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	h := catchAll(dsrv.URL)
+	now := time.Now()
+	remember(map[string]route{
+		"app.example.com":  {eps: []string{"websecure"}, routers: []string{"app"}},
+		"file.example.com": {eps: []string{"websecure"}, others: true},
+	}, now, time.Minute)
+	remember(map[string]route{}, now, time.Minute)
+	serve := func(h http.Handler, host string, header string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "https://"+host+"/", nil)
+		if header != "" {
+			req.Header.Set(Header, header)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Its container stopped: held to the page, a probe told down.
+	if rec := serve(h, "app.example.com", ""); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stopped: %d", rec.Code)
+	}
+	if rec := serve(h, "app.example.com", "probe"); rec.Header().Get(Header) != "down" {
+		t.Fatalf("stopped, a probe: %d %v", rec.Code, rec.Header())
+	}
+
+	// Removed: the 404 for a visitor, one asking not to be held and a
+	// probe, past the interval the last answer is good for.
+	docker.set("traefik.http.routers.app.middlewares", false)
+	time.Sleep(20 * time.Millisecond)
+	for _, header := range []string{"", "no", "probe"} {
+		start := time.Now()
+		rec := serve(h, "app.example.com", header)
+		if rec.Code != http.StatusNotFound || rec.Header().Get(Header) != "" || time.Since(start) > 100*time.Millisecond {
+			t.Fatalf("removed, %q: %d %v in %s", header, rec.Code, rec.Header(), time.Since(start))
+		}
+	}
+	// One question an interval, shared.
+	lists := docker.lists
+	for i := 0; i < 5; i++ {
+		serve(h, "app.example.com", "")
+	}
+	if docker.lists != lists {
+		t.Fatalf("asked Docker %d more times within an interval", docker.lists-lists)
+	}
+
+	// Another provider's router: held, Docker never asked.
+	lists = docker.lists
+	if rec := serve(h, "file.example.com", "no"); rec.Code != http.StatusServiceUnavailable || docker.lists != lists {
+		t.Fatalf("another provider's: %d, %d lists", rec.Code, docker.lists-lists)
+	}
+
+	// Docker out of reach: held, as a stop is.
+	reset()
+	remember(map[string]route{"app.example.com": {eps: []string{"websecure"}, routers: []string{"app"}}}, now, time.Minute)
+	remember(map[string]route{}, now, time.Minute)
+	if rec := serve(catchAll("http://127.0.0.1:1"), "app.example.com", "no"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Docker out of reach: %d", rec.Code)
+	}
+}
+
 func TestRouterHosts(t *testing.T) {
 	pages := map[string]string{
-		"1": `[{"rule":"Host(` + "`a.example.com`) || Host(\\\"B.example.com.\\\")" + `)","entryPoints":["web","websecure"],"middlewares":["hold@file"]},
+		"1": `[{"name":"a@docker","provider":"docker","rule":"Host(` + "`a.example.com`) || Host(\\\"B.example.com.\\\")" + `)","entryPoints":["web","websecure"],"middlewares":["hold@file"]},
 			{"rule":"PathPrefix(` + "`/`" + `)","middlewares":["hold@file"]},
 			{"rule":"Host(` + "`d.example.com`" + `)","entryPoints":["websecure"]}]`,
 		"2": `[{"rule":"HostRegexp(` + "`^.+\\\\.example\\\\.com$`" + `)","middlewares":["hold@file"]},
-			{"rule":"Host( ` + "`c.example.com`" + ` ) && PathPrefix(` + "`/api`" + `)","entryPoints":["tunnel"],"middlewares":["auth@file","hold@file"]},
-			{"rule":"Host(` + "`c.example.com`" + `)","entryPoints":["websecure"],"middlewares":["hold@file"]}]`,
+			{"name":"c-api@docker","provider":"docker","rule":"Host( ` + "`c.example.com`" + ` ) && PathPrefix(` + "`/api`" + `)","entryPoints":["tunnel"],"middlewares":["auth@file","hold@file"]},
+			{"name":"c@docker","provider":"docker","rule":"Host(` + "`c.example.com`" + `)","entryPoints":["websecure"],"middlewares":["hold@file"]},
+			{"name":"e@file","provider":"file","rule":"Host(` + "`e.example.com`" + `)","entryPoints":["websecure"],"middlewares":["hold@file"]}]`,
 	}
 	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		page := req.URL.Query().Get("page")
@@ -334,13 +470,24 @@ func TestRouterHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// d's router does not ask to be held; c's two routers add up.
-	want := map[string]string{"a.example.com": "web websecure", "b.example.com": "web websecure", "c.example.com": "tunnel websecure"}
+	// d's router does not ask to be held; c's two routers add up; e's is
+	// another provider's, whose removal Docker cannot tell.
+	want := map[string]string{
+		"a.example.com": "web websecure | a",
+		"b.example.com": "web websecure | a",
+		"c.example.com": "tunnel websecure | c-api c",
+		"e.example.com": "websecure | others",
+	}
 	if len(hosts) != len(want) {
 		t.Fatalf("hosts: %v", hosts)
 	}
-	for host, eps := range want {
-		if got, ok := hosts[host]; !ok || strings.Join(got, " ") != eps {
+	for host, w := range want {
+		got, ok := hosts[host]
+		names := strings.Join(got.routers, " ")
+		if got.others {
+			names += "others"
+		}
+		if !ok || strings.Join(got.eps, " ")+" | "+names != w {
 			t.Fatalf("hosts: %v", hosts)
 		}
 	}
@@ -348,12 +495,13 @@ func TestRouterHosts(t *testing.T) {
 
 func TestNewChecks(t *testing.T) {
 	for name, c := range map[string]*Config{
-		"no probes":        {MaxWait: "1s", Interval: "1s", Memory: "1m"},
-		"bad probe":        {MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "127.0.0.1:443"}},
-		"bad wait":         {MaxWait: "soon", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
-		"zero interval":    {MaxWait: "1s", Interval: "0s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
-		"catch-all no api": {EntryPoint: "websecure", MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
-		"catch-all no ep":  {EntryPoint: "tunnel", API: "http://127.0.0.1:8080", MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
+		"no probes":           {MaxWait: "1s", Interval: "1s", Memory: "1m"},
+		"bad probe":           {MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "127.0.0.1:443"}},
+		"bad wait":            {MaxWait: "soon", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
+		"zero interval":       {MaxWait: "1s", Interval: "0s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
+		"catch-all no api":    {EntryPoint: "websecure", Docker: "http://127.0.0.1:2375", MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
+		"catch-all no docker": {EntryPoint: "websecure", API: "http://127.0.0.1:8080", MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
+		"catch-all no ep":     {EntryPoint: "tunnel", API: "http://127.0.0.1:8080", Docker: "http://127.0.0.1:2375", MaxWait: "1s", Interval: "1s", Memory: "1m", Probes: map[string]string{"websecure": "https://127.0.0.1:443"}},
 	} {
 		if _, err := New(context.Background(), nil, c, "test"); err == nil {
 			t.Fatalf("%s: no error", name)
@@ -390,7 +538,8 @@ func TestRefreshReadsEveryChange(t *testing.T) {
 	within("routed", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return present["a.example.com"] != nil
+		_, ok := present["a.example.com"]
+		return ok
 	})
 	apiMu.Lock()
 	routers = "[]"
@@ -422,7 +571,7 @@ func TestCatchAllSettling(t *testing.T) {
 	}))
 	defer api.Close()
 	build := func() http.Handler {
-		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL,
+		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL, Docker: "http://127.0.0.1:1",
 			Probes: map[string]string{"websecure": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
 		if err != nil {
 			t.Fatal(err)
@@ -479,8 +628,8 @@ func TestErrorsPathAfterRouterCameBack(t *testing.T) {
 	reset()
 	defer reset()
 	now := time.Now()
-	remember(map[string][]string{"app.example.com": {"websecure"}}, now, time.Minute)
-	remember(map[string][]string{}, now, time.Minute)
+	remember(routes(map[string][]string{"app.example.com": {"websecure"}}), now, time.Minute)
+	remember(routes(map[string][]string{}), now, time.Minute)
 	ep := &entrypoint{}
 	srv := httptest.NewServer(ep)
 	defer srv.Close()
@@ -519,14 +668,14 @@ func TestCatchAllOtherEntryPoint(t *testing.T) {
 	ep := &entrypoint{}
 	srv := httptest.NewServer(ep)
 	defer srv.Close()
-	h, err := New(context.Background(), nil, &Config{EntryPoint: "tunnel", Middleware: "hold@file", API: "http://127.0.0.1:1",
+	h, err := New(context.Background(), nil, &Config{EntryPoint: "tunnel", Middleware: "hold@file", API: "http://127.0.0.1:1", Docker: "http://127.0.0.1:1",
 		Probes: map[string]string{"tunnel": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	remember(map[string][]string{"app.example.com": {"websecure"}}, now, time.Minute)
-	remember(map[string][]string{}, now, time.Minute)
+	remember(routes(map[string][]string{"app.example.com": {"websecure"}}), now, time.Minute)
+	remember(routes(map[string][]string{}), now, time.Minute)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "http://app.example.com/", nil))
 	if rec.Code != http.StatusNotFound || len(ep.probes()) != 0 {
@@ -729,7 +878,7 @@ func TestCatchAllSettlingMany(t *testing.T) {
 	}))
 	defer api.Close()
 	build := func() http.Handler {
-		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL,
+		h, err := New(context.Background(), nil, &Config{EntryPoint: "websecure", Middleware: "hold@file", API: api.URL, Docker: "http://127.0.0.1:1",
 			Probes: map[string]string{"websecure": srv.URL}, MaxWait: "10s", Interval: "10ms", Memory: "1m"}, "test")
 		if err != nil {
 			t.Fatal(err)
