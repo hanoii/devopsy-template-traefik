@@ -1,9 +1,9 @@
 # Shared by commands/ and lib/'s scripts: sourced, never run. POSIX sh.
 #
-# Traefik and acme-dns run as 10001, which owns mnt/letsencrypt and
-# mnt/acmedns and everything in them, files mode 600: the deploy user
-# running these scripts cannot read them. Anything touching them runs in a
-# container as 10001 (in_traefik).
+# Traefik and acme-dns run as the environment's uid (DEVOPSY_UID), which
+# owns mnt/letsencrypt and mnt/acmedns and everything in them, files mode
+# 600: the deploy user running these scripts cannot read them. Anything
+# touching them runs in a container as that uid (in_traefik).
 # jq comes from the jq service, so the host needs neither jq nor curl.
 
 dir=${DEVOPSY_PROJECT_DIR:?run through devopsy}
@@ -71,7 +71,7 @@ quiet() {
 }
 
 # in_traefik SCRIPT [ARGS...]: runs a shell script in a one-off Traefik
-# container, as 10001 with Traefik's mounts (/letsencrypt, /dynamic), no
+# container, as Traefik's uid with its mounts (/letsencrypt, /dynamic), no
 # ports published. Works whether Traefik runs or not.
 in_traefik() {
   _script=$1
@@ -464,7 +464,7 @@ forget_edits() {
 # (deploy, restart, `forget --now`): Traefik reads its stores only at
 # startup and writes its own copy back on changes, so they are edited while
 # it is stopped. Stops it only when a store has something to forget. Each
-# edited store keeps a copy next to it (<file>.forget-<time>, 10001's).
+# edited store keeps a copy next to it (<file>.forget-<time>, Traefik's uid's).
 # Forgotten registrations also leave acme-dns's own database, by their
 # subdomain: acme-dns reads it on every request, so it keeps running.
 forget_apply() {

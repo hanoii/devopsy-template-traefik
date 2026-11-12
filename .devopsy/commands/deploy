@@ -3,7 +3,7 @@
 # Prepares the host side, then starts or updates every service:
 #
 # - Host-written directories in mnt/, owned by the deploy user. devopsy
-#   creates mnt/letsencrypt and mnt/acmedns and gives them to 10001
+#   creates mnt/letsencrypt and mnt/acmedns and gives them to Traefik's uid
 #   (devopsy.mnt.owner) before this runs.
 # - Values detected once and kept in .env, so a plain `devopsy up` works
 #   later: the Docker socket's group, and acme-dns's public IP.

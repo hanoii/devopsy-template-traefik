@@ -52,7 +52,7 @@ func (h host) isolated(name, hostname string) {
 func ownTraefik(t *testing.T) (host, string) {
 	t.Helper()
 	h, dir := project(t, "traefik", nil)
-	// Traefik's stores are 10001's: the next test's copy could not remove them.
+	// Traefik's stores are its uid's: the next test's copy could not remove them.
 	t.Cleanup(func() {
 		_, _ = h.shErr(dir, nil, `devopsy down -v --remove-orphans; docker run --rm -v "$PWD/.devopsy/mnt:/m" busybox:1.37 rm -rf /m/letsencrypt`)
 	})
