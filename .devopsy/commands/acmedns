@@ -26,7 +26,7 @@ echo "Port 53 (UDP and TCP) must be open to the Internet."
 echo "How it works: https://github.com/hanoii/devopsy-traefik#acme-dns"
 echo
 
-# 10001's file: read in a Traefik container.
+# Traefik's uid's file: read in a Traefik container.
 records=$(in_traefik 'cat /letsencrypt/acme-dns-accounts.json 2>/dev/null || echo "{}"' \
   | jq -r 'to_entries[] | "\(.key) \(.value.fulldomain)"' | sort -u)
 if [ -z "$records" ]; then

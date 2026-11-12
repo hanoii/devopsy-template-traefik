@@ -25,7 +25,7 @@ How Traefik gets, keeps and forgets certificates, and what answers its DNS-01 ch
 - lego loads acme-dns's registrations (`acme-dns-accounts.json`) once, so there is no command to register a domain ahead: it would restart Traefik per domain.
 - Every ACME file stays mode 600 (`umask 077`, `cp -p`, writes through the file, `mv`): Traefik skips a resolver whose store has any group or other permission, logging an error while the container stays healthy, and requests none of its certificates.
 - A store restored or copied with a wider mode is fixed with `chmod 600` in `in_traefik`.
-- devopsy makes `mnt/letsencrypt` and `mnt/acmedns` (mode 755, which shows only the files' names) and gives them and everything in them to 10001 before every release's run step (`devopsy.mnt.owner=user` on `traefik` and `acmedns`), so files moved in by hand are fixed too.
+- devopsy makes `mnt/letsencrypt` and `mnt/acmedns` (mode 755, which shows only the files' names) and gives them and everything in them to the environment's uid before every release's run step (`devopsy.mnt.owner=user` on `traefik` and `acmedns`), so files moved in by hand are fixed too.
 - No `init` service: Traefik, lego and acme-dns create their files with mode 600 as they need them.
 - `deploy` makes only the directories the host writes (`dynamic`, `proxies`), so they stay the deploy user's.
 - A fresh named volume tests none of this: Docker copies the image's directory owners into an empty volume at each mount, unless it is `nocopy`.
@@ -36,14 +36,14 @@ How Traefik gets, keeps and forgets certificates, and what answers its DNS-01 ch
 - A forget's first pass skips the stop when nothing matches, and acme-dns keeps running, since it reads its database on every request.
 - The stores are edited with no jq on the host or in Traefik's image: one Traefik container prints every store as one JSON object, the `jq` service turns it into tab-separated lines, and a second Traefik container writes them through the files.
 - Private keys travel only in pipes and shell variables, never to the host's disk.
-- acme-dns's database is edited by the `sqlite` service (Python's module from the official image, as 10001, no network), since acme-dns's image has no sqlite and its API cannot remove a registration.
+- acme-dns's database is edited by the `sqlite` service (Python's module from the official image, as the environment's uid, no network), since acme-dns's image has no sqlite and its API cannot remove a registration.
 
 ## acme-dns and DNS
 
 - acme-dns binds the public IP only (`PROXY_ACMEDNS_IP`, which `deploy` detects and saves into `.env`): systemd-resolved holds 127.0.0.53:53 on many cloud images, and Docker cannot publish 0.0.0.0:53 then.
 - `deploy` saves what it detects (`PROXY_ACMEDNS_IP`, `PROXY_DOCKER_GID`) into `.env`, so a plain `devopsy up` later interpolates the same compose file.
 - acme-dns's log level is `warn`, its word, never `warning`.
-- A registration failing with "no such table: records" (Traefik reports it as EOF) means `mnt/acmedns` is not 10001's.
+- A registration failing with "no such table: records" (Traefik reports it as EOF) means `mnt/acmedns` is not the environment's uid's.
 - On Cloudflare the acme-dns domain's nameserver is `ns-<acme-dns domain>`, an A record that is not proxied, since Cloudflare refuses NS and A records on one name.
 - `le-dns01-cloudflare` checks propagation through `PROXY_DNS_RESOLVERS`, the host's first (`127.0.0.11`, Docker's embedded DNS, on every network Traefik joins), then 1.1.1.1, lego asking the next on an error or an empty answer, then the zone's authoritative nameservers directly on port 53.
 - The authoritative nameservers are asked directly because lego looks the challenge name up (following CNAMEs) before writing the record, so a recursive resolver caches the NXDOMAIN until its negative TTL ends.

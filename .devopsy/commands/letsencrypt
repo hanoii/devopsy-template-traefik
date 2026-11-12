@@ -51,7 +51,7 @@ devopsy stop traefik
 
 env_set "$key" "$target"
 
-# Moved aside, not deleted, and never acme-dns-accounts.json. 10001's files:
+# Moved aside, not deleted, and never acme-dns-accounts.json. Traefik's uid's files:
 # moved in a Traefik container.
 suffix=$(name_of "$current" | cut -d' ' -f1).$(date +%Y%m%d%H%M%S)
 # shellcheck disable=SC2016

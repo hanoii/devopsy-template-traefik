@@ -29,7 +29,9 @@ func TestRelease(t *testing.T) {
 	// mnt's entries are Traefik's user's; a file put there by hand (as
 	// root) is given to it too, by the next activation (the --reload
 	// below).
-	if owners := h.sh(base, nil, `stat -c '%u:%g %n' shared/mnt/letsencrypt shared/mnt/acmedns`); strings.Count(owners, "10001:10001 ") != 2 {
+	// The uid the server gave the environment, which every service runs as.
+	uid := strings.TrimSpace(h.sh(base, nil, `docker inspect -f '{{.Config.User}}' traefik-prod-traefik-1`))
+	if owners := h.sh(base, nil, `stat -c '%u:%g %n' shared/mnt/letsencrypt shared/mnt/acmedns`); strings.Count(owners, uid+" ") != 2 {
 		t.Errorf("mnt's owners after a release:\n%s", owners)
 	}
 	if out, err := docker("exec", h.name, "touch", base+"/shared/mnt/letsencrypt/by-hand.json"); err != nil {
@@ -71,7 +73,7 @@ func TestRelease(t *testing.T) {
 	if env := h.sh(dir, nil, "devopsy "+target+" exec -T traefik env"); !strings.Contains(env, "READTIMEOUT=7s") {
 		t.Errorf("Traefik's environment after --reload:\n%s", env)
 	}
-	if owner := h.sh(base, nil, `stat -c '%u:%g' shared/mnt/letsencrypt/by-hand.json`); strings.TrimSpace(owner) != "10001:10001" {
+	if owner := h.sh(base, nil, `stat -c '%u:%g' shared/mnt/letsencrypt/by-hand.json`); strings.TrimSpace(owner) != uid {
 		t.Errorf("a file put in by hand: %s", owner)
 	}
 }

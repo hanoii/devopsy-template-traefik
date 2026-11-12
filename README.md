@@ -17,7 +17,8 @@ project on it, with automatic Let's Encrypt certificates. It is run with
   visitor's `Forwarded` header (RFC 7239), which Traefik itself would pass
   on, is dropped too, so an app that trusts Traefik as its reverse proxy
   cannot take a visitor's host or scheme from it.
-- Traefik and acme-dns run as UID 10001, like every devopsy project's
+- Traefik and acme-dns run as the environment's own uid
+  (`DEVOPSY_UID`), which devopsy gives no other environment's
   containers, never as the deploy user. They have no capabilities, a
   read-only root filesystem and `no-new-privileges`, and devopsy gives
   them their `mnt` directories (`devopsy.mnt.owner=user`, from their

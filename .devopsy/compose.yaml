@@ -96,7 +96,7 @@ services:
       - NO_PROXY=netproxy
       - DOCKER_CONFIG=/tmp
       - ATTACH_PROJECT=${COMPOSE_PROJECT_NAME}
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     read_only: true
     tmpfs:
       - /tmp
@@ -273,9 +273,11 @@ services:
       start_period: 30s
       start_interval: 1s
     # Hardening checklist, for every service here and the ones you add:
-    # - a fixed non-root UID, from its first process: 10001, which every
-    #   devopsy project's containers use, never the deploy user's (1000,
-    #   in the docker group);
+    # - the environment's own uid, DEVOPSY_UID, from its first process, which
+    #   devopsy gives every environment on a server and no other environment's
+    #   containers share, so an escape from a site reaches nothing of Traefik's
+    #   (its ACME stores, a DNS token) through /proc; never the deploy user's
+    #   (in the docker group) nor root;
     # - a read-only root filesystem, with tmpfs or a mnt entry for what must
     #   be written;
     # - cap_drop ALL, adding back only a capability a stated reason needs
@@ -284,7 +286,7 @@ services:
     # - no-new-privileges, so nothing gains privilege through setuid files;
     # - in images you build, no setuid binaries and no file capabilities
     #   the service does not need.
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     read_only: true
     cap_drop:
       - ALL
@@ -363,7 +365,7 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 1s
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     read_only: true
     tmpfs:
       - /tmp
@@ -386,7 +388,7 @@ services:
   jq:
     profiles: [tools]
     image: ghcr.io/jqlang/jq:1.8.1
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     network_mode: none
     read_only: true
     cap_drop:
@@ -400,7 +402,7 @@ services:
   sqlite:
     profiles: [tools]
     image: python:3.14-alpine
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     network_mode: none
     read_only: true
     cap_drop:
@@ -415,7 +417,7 @@ services:
   curl:
     profiles: [tools]
     image: curlimages/curl:8.15.0
-    user: "10001:10001"
+    user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
     network_mode: bridge
     read_only: true
     cap_drop:

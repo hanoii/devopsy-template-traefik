@@ -93,7 +93,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - The `traefik` network, the resolvers `le-http01`, `le-dns01-selfhosted` and `le-dns01-cloudflare`, the entrypoints `web`, `websecure` and `tunnel`, the `tunnel` network and `http://traefik.tunnel:8081`, and the labels `devopsy.role=proxy`, `devopsy.export.BASE_DOMAIN` and `traefik.docker.network` keep their names: other projects name them in their own compose files, released on their own schedule.
 - What a command writes at runtime goes in `mnt/` or `.env`: elsewhere in `.devopsy/` a file goes with the next release.
 - `.env` is written through it (`env_set`, `cat >`), never `mv` over it: on servers it is a link to `shared/.env`.
-- Containers run as 10001, never as the deploy user, who is in the docker group; scripts touch `mnt/letsencrypt` and `mnt/acmedns`, 10001's with files of mode 600, only through `in_traefik` (a one-off Traefik container as 10001).
+- Containers run as the environment's uid, never as the deploy user, who is in the docker group; scripts touch `mnt/letsencrypt` and `mnt/acmedns`, that uid's with files of mode 600, only through `in_traefik` (a one-off Traefik container as that uid).
 - The host needs no `jq`, `curl` or `sqlite`: they are the `tools` profile's services, and Traefik's own `wget` does the rest.
 - Traefik is configured with `TRAEFIK_*` variables in `compose.yaml`, never static config files, and what a server may change is a variable with a default in `.env.example`, set with `devopsy @<server>-traefik --vars`.
 - The template's settings are `PROXY_*`, a name meaning one fact on both sides of the proxy role (for example `PROXY_BASE_DOMAIN`, exported as `BASE_DOMAIN`): `DEVOPSY_*` are devopsy-cli's own, and Traefik reads `TRAEFIK_*` as its static configuration.
@@ -102,7 +102,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - The entrypoints' middleware lists have one writer, `static_env` (`lib/common.sh`, called by `deploy` and `proxies`), which composes `mnt/traefik.env` and restarts Traefik only when it changed: entrypoints are static configuration.
 - A middleware file is written before the env names it and removed only once the running Traefik no longer does: an entrypoint naming a missing middleware breaks every router.
 - Traefik never mounts the Docker socket, `dockerproxy` stays read-only and accepts only the `traefik` container, `netproxy` accepts only `attach`, they run unprivileged, and the dashboard stays on localhost.
-- Every service has a fixed non-root UID (10001; socket-proxy's 65534, in the socket's group), `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, a capability added back only for a stated reason (none today): a tool as root, even without capabilities, reads files the deploy user cannot.
+- Every service runs as the environment's uid (`user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"`, never a default; socket-proxy's 65534, in the socket's group), `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, a capability added back only for a stated reason (none today): a tool as root, even without capabilities, reads files the deploy user cannot, and a uid another project's containers share reaches Traefik's through `/proc`.
 - A tool whose image only works as root is the one exception to the non-root UID, said here with why.
 - A new service gets all four.
 - An image built here has no setuid binaries or file capabilities it does not need.
