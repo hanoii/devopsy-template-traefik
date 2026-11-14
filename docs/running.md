@@ -58,7 +58,8 @@ your proxy already leaves out:
 
 ## Dashboard
 
-The dashboard is published on `127.0.0.1:8080`. From your machine:
+The dashboard is published on `127.0.0.1:8080`. From the operator's
+machine (the laptop or CI job that runs devopsy):
 
 ```sh
 ssh -L 8080:127.0.0.1:8080 your-server
@@ -73,7 +74,7 @@ router with an IP allowlist of localhost and the gateways of Traefik's
 networks, which is where connections to the published port come from.
 Until the first `deploy` finishes, the API answers 404.
 
-## From your machine
+## From the operator's machine
 
 With the alias from [Setup](../README.md#setup), this template's commands
 (`proxies`, `acmedns`, `letsencrypt`, `deploy`, logs) run from any

@@ -40,7 +40,7 @@ proxies restarts it. Those are static settings, which `deploy` and
 
 `deploy`, which every release runs, fetches the URL ranges again.
 Cloudflare's ranges change rarely. To refresh them in between, schedule `devopsy
-@vm1-traefik proxies refresh` from CI or locally, or add a cron to the
+@vm1-traefik proxies refresh` from CI or a laptop, or add a cron to the
 deploy user's crontab on the server; the release lock keeps it out of a
 release. The cron below assumes the release root is the deploy user's
 home:

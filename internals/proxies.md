@@ -28,4 +28,4 @@ The `proxies` plugin and the forwarded headers: how a request from a trusted pro
 - A map index on the left of a multiple assignment stores nothing under Yaegi (`m[k], err = f()`), so assign through a plain variable.
 - Goroutines running the same `select` at once deadlock in it under Yaegi, never woken by its `time.After`, so a request's waits are `time.Sleep` then `ctx.Err()`, and only one reader goroutine selects.
 - An interpreted function with unnamed parameters panics when Go code calls it under Yaegi (`reflect.Set`), so name them (`_` counts).
-- To try a proxy locally, add one for Docker's gateway range (for example `192.168.0.0/16` on OrbStack) and send its header through a whoami.
+- To try a proxy without a target, add one for Docker's gateway range (for example `192.168.0.0/16` on OrbStack) and send its header through a whoami.

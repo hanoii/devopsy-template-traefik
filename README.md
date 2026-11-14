@@ -180,7 +180,7 @@ Projects that do not trust each other belong on separate servers.
 ## Documentation
 
 - [Running Traefik](docs/running.md): settings, upgrades, the dashboard,
-  commands from your machine and customizing.
+  commands from the operator's machine and customizing.
 - [Certificates](docs/certificates.md): the resolvers, HSTS, acme-dns, a
   Cloudflare token, CNAME delegation, staging and production, and
   forgetting domains.
