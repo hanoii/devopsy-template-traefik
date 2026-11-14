@@ -11,7 +11,7 @@
 # only through a Cloudflare Tunnel has no port here: only DNS and the
 # request through Cloudflare, and the tunnel's connectors are listed. Ends
 # each host with what to do next, and with the devopsy --probe line to
-# check the others from your machine.
+# check the others from the operator's machine.
 #
 #   --retry  ask Traefik for missing certificates again (lib/retry), then
 #            check again. The request is withdrawn once every certificate
@@ -209,4 +209,4 @@ fi
 # The same hosts from outside, from wherever devopsy-cli runs; tunneled ones
 # have no port to probe.
 probe=$(printf '%s\n' "$r" | jq -r '[.[] | select(.routed and .checked and (.tunnel | not)) | .name] | join(" ")')
-[ -z "$probe" ] || printf 'To check from your machine:\n  devopsy --probe --ip %s %s\n' "$ip" "$probe"
+[ -z "$probe" ] || printf "To check from the operator's machine:\n  devopsy --probe --ip %s %s\n" "$ip" "$probe"
