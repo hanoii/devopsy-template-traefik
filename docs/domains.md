@@ -39,8 +39,8 @@ requests no certificate for a `HostRegexp`, while a `Host` it cannot get
 a certificate for logs an ACME error on every attempt.
 
 Without a base domain, an environment answers only on the hosts its rule
-names. Without a target, a rule can name a `*.localhost` host, which browsers
-resolve to the local machine.
+names. Without a target, a rule can name a `*.localhost` host, which
+browsers resolve to the local machine.
 
 The DNS for wildcard URLs is one wildcard record, `*.vm1.example.com A
 <server IP>`. With `PROXY_BASE_DOMAIN` set, `deploy` also requests one
