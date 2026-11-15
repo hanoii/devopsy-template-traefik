@@ -89,6 +89,8 @@ func TestStaticEnv(t *testing.T) {
 	const hold = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_HOLD_MODULENAME=github.com/hanoii/devopsy-traefik/hold\n"
 	const proxies = "TRAEFIK_EXPERIMENTAL_LOCALPLUGINS_PROXIES_MODULENAME=github.com/hanoii/devopsy-traefik/proxies\n"
 	const both = "TRAEFIK_ENTRYPOINTS_WEB_ASDEFAULT=true\nTRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true\n"
+	// The hosts' daemon.json pools are private ranges: nothing beyond them.
+	const noProxy = "PROXY_NO_PROXY=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,acmedns.staticenv_acmedns,dockerproxy.staticenv_dockerproxy,fd00::/8\n"
 	for _, c := range []struct {
 		name  string
 		setup string
@@ -97,34 +99,34 @@ func TestStaticEnv(t *testing.T) {
 	}{
 		{"nothing", "", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both + noProxy},
 		{"tunnel only", "", map[string]string{"PROXY_TUNNEL_ONLY": "true"}, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true\n"},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_ASDEFAULT=true\n" + noProxy},
 		{"proxies", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
 			echo 'cloudflare' >.devopsy/mnt/proxies/proxies.conf && echo '198.51.100.0/24' >.devopsy/mnt/proxies/forwarded-ips`, nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_FORWARDEDHEADERS_TRUSTEDIPS=198.51.100.0/24\n" +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file,proxies@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + proxies + hold + both + noProxy},
 		{"proxies commented out", `mkdir -p .devopsy/mnt/proxies && echo 'x' >.devopsy/mnt/dynamic/proxies.yaml &&
 			printf '# cloudflare\n\n' >.devopsy/mnt/proxies/proxies.conf`, nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file\n" + hold + both + noProxy},
 		{"tunnel", "docker network create --subnet 10.99.0.0/24 tunnel >/dev/null", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.99.0.0/24\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both + noProxy},
 		// Made again on another subnet: the trust follows it.
 		{"tunnel again", "docker network rm tunnel >/dev/null && docker network create --subnet 10.98.0.0/24 tunnel >/dev/null", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.98.0.0/24\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both + noProxy},
 		// A connector may reach Traefik over IPv6: the allow list and the trust have it too.
 		{"tunnel on IPv6", "docker network rm tunnel >/dev/null && docker network create --ipv6 --subnet 10.97.0.0/24 --subnet fd00:97::/64 tunnel >/dev/null", nil, head +
 			"TRAEFIK_ENTRYPOINTS_WEBSECURE_HTTP_MIDDLEWARES=forwarded@file\n" +
 			"TRAEFIK_ENTRYPOINTS_TUNNEL_FORWARDEDHEADERS_TRUSTEDIPS=10.97.0.0/24,fd00:97::/64\n" +
-			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both},
+			"TRAEFIK_ENTRYPOINTS_TUNNEL_HTTP_MIDDLEWARES=tunnel-allow@file,forwarded@file,tunnel@file\n" + proxies + hold + both + noProxy},
 	} {
 		h.sh(dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
 		if c.setup != "" {
@@ -153,6 +155,14 @@ func TestStaticEnv(t *testing.T) {
 		if got := strings.Join(allow, ","); got != want {
 			t.Errorf("%s: tunnel-allow.yaml has %s, want %s", c.name, got, want)
 		}
+	}
+
+	// A pool outside the private ranges joins them, once.
+	h.sh(dir, nil, `rm -rf .devopsy/mnt && mkdir -p .devopsy/mnt/dynamic`)
+	h.sh(dir, nil, `devopsy t 'docker() { case $1 in info) echo "100.64.0.0/16 172.16.0.0/12 " ;; *) command docker "$@" ;; esac; }; static_env --no-restart'`)
+	if got, want := h.sh(dir, nil, "grep ^PROXY_NO_PROXY= .devopsy/mnt/traefik.env"),
+		"PROXY_NO_PROXY=10.0.0.0/8,100.64.0.0/16,172.16.0.0/12,192.168.0.0/16,acmedns.staticenv_acmedns,dockerproxy.staticenv_dockerproxy,fd00::/8\n"; got != want {
+		t.Errorf("a pool of its own: %s, want %s", got, want)
 	}
 
 	// Docker failing (not a missing network) fails it, and the trust it had

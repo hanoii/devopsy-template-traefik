@@ -341,16 +341,37 @@ func TestTunnelSubnetMadeAgain(t *testing.T) {
 	}
 }
 
-// Behind an HTTP proxy Docker hands every container the client's settings, and what
-// docs/running.md says to list is all it takes: attach needs nothing listed, and with
-// the socket proxy's name and Docker's address pools in noProxy Traefik sees a site
-// and reaches it.
+// Behind an HTTP proxy Docker hands every container the client's settings, and the
+// operator lists nothing for Traefik: its entrypoint appends what it reaches directly
+// to their list, in both cases, so Traefik sees a site and reaches it while the
+// operator's proxy and exceptions stay; attach needs nothing listed; and a deploy
+// behind the proxy recreates nothing.
 func TestBehindAProxy(t *testing.T) {
 	h, dir := ownTraefik(t)
-	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":"dockerproxy.traefik_dockerproxy,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"}}}' >/tmp/proxied/config.json`)
+	h.sh("/", nil, `mkdir -p /tmp/proxied && printf '%s\n' '{"proxies":{"default":{"httpProxy":"http://127.0.0.1:9","httpsProxy":"http://127.0.0.1:9","noProxy":"localhost"}}}' >/tmp/proxied/config.json`)
 	proxied := map[string]string{"DOCKER_CONFIG": "/tmp/proxied"}
 	h.sh(dir, proxied, "devopsy up -d --wait --force-recreate --no-deps attach")
 	h.sh(dir, proxied, "devopsy up -d --wait --force-recreate --no-deps traefik")
 	h.isolated("px-iso", "px-iso.example.com")
 	h.waitFor("the site", func() bool { return h.request("https://px-iso.example.com/").Code == 200 })
+
+	ours := "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,acmedns.traefik_acmedns,dockerproxy.traefik_dockerproxy,fd00::/8"
+	env := h.sh(dir, nil, `devopsy exec -T traefik sh -c "tr '\\0' '\\n' </proc/1/environ"`)
+	for _, want := range []string{"HTTP_PROXY=http://127.0.0.1:9", "NO_PROXY=localhost," + ours, "no_proxy=localhost," + ours} {
+		if !strings.Contains(env, want+"\n") {
+			t.Errorf("Traefik's environment has no %s:\n%s", want, env)
+		}
+	}
+	attach := h.sh("/", nil, `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' traefik-attach-1`)
+	for _, want := range []string{"NO_PROXY=netproxy\n", "no_proxy=netproxy\n"} {
+		if !strings.Contains(attach, want) {
+			t.Errorf("attach's environment has no %s:\n%s", want, attach)
+		}
+	}
+
+	before := h.sh("/", nil, "docker inspect -f '{{.Id}}' traefik-traefik-1")
+	h.sh(dir, proxied, "devopsy deploy")
+	if after := h.sh("/", nil, "docker inspect -f '{{.Id}}' traefik-traefik-1"); after != before {
+		t.Errorf("a deploy behind the proxy recreated Traefik")
+	}
 }
