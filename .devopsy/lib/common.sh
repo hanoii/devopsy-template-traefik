@@ -197,6 +197,20 @@ tunnel_subnet() {
   printf '%s\n' "$_out" | tr ',' '\n' | grep -E '^[0-9a-f.:]+/[0-9]+$' | paste -sd, - || true
 }
 
+# What Traefik reaches directly behind an HTTP proxy, comma separated
+# (PROXY_NO_PROXY, which compose.yaml's entrypoint appends to the list
+# Docker gives it): its own services by their scoped names, the private
+# ranges and Docker's address pools, where every site's container is.
+# Sorted, so the file changes only with them. A failure of Docker's fails,
+# or a release would drop the pools.
+no_proxy_list() {
+  _pools=$(docker info --format '{{range .DefaultAddressPools}}{{.Base}} {{end}}' 2>&1) ||
+    die "could not read Docker's address pools: $_pools"
+  # shellcheck disable=SC2086 # the pools, one word each
+  printf '%s\n' "dockerproxy.${COMPOSE_PROJECT_NAME:?}_dockerproxy" "acmedns.${COMPOSE_PROJECT_NAME}_acmedns" \
+    10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fd00::/8 $_pools | LC_ALL=C sort -u | paste -sd, -
+}
+
 # Comma-separated subnets ($1) as YAML list items, indented by $2.
 subnet_list() {
   printf '%s\n' "$1" | tr ',' '\n' | sed "/^\$/d; s/^/$2- /"
@@ -279,7 +293,8 @@ $_probes$_catchall
 # mnt/traefik.env (compose.yaml's env_file): the entrypoints' middlewares
 # (a visitor's Forwarded removed on websecure and tunnel, then `devopsy
 # proxies` on websecure and the tunnel's on tunnel), the local plugins,
-# the forwarded-headers trust, and the default entrypoints. One writer,
+# the forwarded-headers trust, the default entrypoints, and what Traefik
+# reaches directly behind an HTTP proxy (no_proxy_list). One writer,
 # called by deploy and proxies.
 #
 # The tunnel entrypoint trusts its network's subnet, read from Docker: its
@@ -389,6 +404,10 @@ $(subnet_list "$_subnet" '                ')
 TRAEFIK_ENTRYPOINTS_WEBSECURE_ASDEFAULT=true
 "
   fi
+
+  _noproxy=$(no_proxy_list) || exit 1
+  _env="${_env}PROXY_NO_PROXY=$_noproxy
+"
 
   if write_if_changed "$dir/mnt/traefik.env" "$_env" && [ "$_restart" = true ]; then
     echo "$(basename "$0"): restarting Traefik for its new static settings"

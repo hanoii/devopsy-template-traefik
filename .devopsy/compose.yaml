@@ -92,8 +92,11 @@ services:
       - devopsy.attach=${PROXY_ATTACH_SUM:-}
     environment:
       - DOCKER_HOST=tcp://netproxy:2375
-      # Behind an HTTP proxy, Docker hands every container its settings.
+      # Behind an HTTP proxy, Docker hands every container its settings:
+      # netproxy is all attach reaches. Both cases, since Go will read
+      # no_proxy first.
       - NO_PROXY=netproxy
+      - no_proxy=netproxy
       - DOCKER_CONFIG=/tmp
       - ATTACH_PROJECT=${COMPOSE_PROJECT_NAME}
     user: "${DEVOPSY_UID:?}:${DEVOPSY_UID:?}"
@@ -114,6 +117,20 @@ services:
   traefik:
     restart: unless-stopped
     image: traefik:v3.7
+    # Behind an HTTP proxy, Docker hands Traefik the operator's proxy
+    # settings, which Go follows for every request it makes: what Traefik
+    # reaches directly (PROXY_NO_PROXY, mnt/traefik.env, from no_proxy_list
+    # in lib/common.sh) is appended to the operator's list at start, in both
+    # cases (Go reads NO_PROXY first today, no_proxy first in its coming
+    # releases), then the image's own entrypoint runs. In compose's
+    # environment it would replace the operator's list, which keeps their
+    # exceptions.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'l=$${NO_PROXY:-$${no_proxy:-}}; l=$${l:+$$l,}$${PROXY_NO_PROXY:-}; export NO_PROXY="$${l%,}" no_proxy="$${l%,}"; exec /entrypoint.sh "$$@"'
+      - sh
+    command: [traefik]
     # For devopsy (devopsy-cli's docs/roles.md): this is the
     # host's proxy, and projects importing proxy/BASE_DOMAIN get the
     # server's base domain (empty: none) in each release.

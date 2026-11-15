@@ -46,15 +46,23 @@ exactly.
 ## Behind an HTTP proxy
 
 Docker gives every container the proxy settings in the deploy user's
-`~/.docker/config.json`. Traefik needs these listed in its `noProxy`, with what
-your proxy already leaves out:
+`~/.docker/config.json`, and a container's requests to another one go through
+the proxy unless its `noProxy` names that container
+([devopsy-cli's servers doc](https://github.com/hanoii/devopsy-cli/blob/main/docs/servers.md#behind-an-http-proxy)).
+Traefik adds what it reaches directly to that list when it starts, so nothing
+needs listing for it:
 
-- `dockerproxy.<compose project>_dockerproxy` (for example
-  `dockerproxy.traefik-prod_dockerproxy`), or Traefik sees no containers and
-  every site answers 404;
-- Docker's address pools (for example `172.16.0.0/12`), or Traefik sends its
-  requests for sites to the proxy;
-- `acmedns.<compose project>_acmedns`, when acme-dns runs.
+- its socket proxy and acme-dns, by their names
+  (`dockerproxy.<compose project>_dockerproxy`,
+  `acmedns.<compose project>_acmedns`);
+- the private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `fd00::/8`) and Docker's address pools (`default-address-pools` in
+  `daemon.json`), where the sites' containers are.
+
+Traefik makes none of its own requests to a private address through the proxy:
+ACME, Cloudflare's API and the plugins are public. A site on a network with
+addresses of its own outside those ranges (its own `ipam`) needs them in
+`noProxy`.
 
 ## Dashboard
 
