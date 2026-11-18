@@ -1,0 +1,78 @@
+#!/bin/sh
+# The status capability (devopsy-cli's docs/capabilities.md): what
+# `devopsy --status` adds after the containers, with the project's
+# environment loaded. One fact per line, `<level>\t<key>\t<value>`, its
+# level info, highlight (shown in bold) or warning (which makes --status
+# exit 3), then a command to copy when there is one; devopsy aligns and
+# colors them.
+#
+# Only what the server knows, from the settings, mnt/ and Docker, so it
+# stays quick: DNS, the routes and the certificates as the network sees
+# them are `domains`'s, which the last fact offers.
+set -eu
+. "$DEVOPSY_PROJECT_DIR/lib/common.sh"
+
+# fact <level> <key> <value> [<fix>]
+fact() {
+  printf '%s\t%s\t%s' "$1" "$2" "$3"
+  [ $# -lt 4 ] || printf '\t%s' "$4"
+  echo
+}
+
+tunnel_only=false
+[ "${PROXY_TUNNEL_ONLY:-}" != true ] || tunnel_only=true
+
+domain=${PROXY_BASE_DOMAIN:-}
+if [ -n "$domain" ]; then
+  fact highlight urls "<project>-<environment>.$domain"
+else
+  fact info urls "no wildcard URLs, sites answer on their own domains only"
+fi
+
+# Through a tunnel only, no router asks Let's Encrypt for a certificate.
+if [ "$tunnel_only" = true ]; then
+  fact info certificates "at Cloudflare's edge, sites only through the tunnel"
+else
+  sites="sites ${PROXY_CERTRESOLVER:-le-http01} by default"
+  if [ -z "$domain" ]; then
+    fact info certificates "$sites"
+  elif [ "$(wildcard_resolver)" = none ]; then
+    fact info certificates "$sites, wildcard URLs one each through le-http01"
+  else
+    fact info certificates "$sites, wildcard URLs one *.$domain through $(wildcard_resolver)"
+  fi
+  case $(le_environment "${PROXY_LE_ACME_CASERVER:-}") in
+    staging) fact info letsencrypt "staging, test certificates browsers warn about" "devopsy letsencrypt production" ;;
+    *) fact info letsencrypt "$(le_environment "${PROXY_LE_ACME_CASERVER:-}")" ;;
+  esac
+fi
+
+# The connectors, one line each, and a warning when none is connected:
+# what is left of a tunnel that the server can tell.
+c=$(connectors)
+if [ -n "$c" ]; then
+  printf '%s\n' "$c" | while IFS='	' read -r project service health; do
+    fact info tunnel "$project $service, $health"
+  done
+  if ! printf '%s\n' "$c" | awk -F '\t' '$3 == "healthy" { ok = 1 } END { exit !ok }'; then
+    fact warning tunnel "no connector is connected: check its token, that outbound port 7844 (UDP or TCP) is open, and its logs"
+  fi
+elif [ "$tunnel_only" = true ]; then
+  fact warning tunnel "no connector: release devopsy-template-cloudflared to this server, an instance per Cloudflare account"
+fi
+
+case ",${COMPOSE_PROFILES:-}," in
+  *,acmedns,*) fact info acme-dns "${PROXY_ACMEDNS_DOMAIN:-}" "devopsy acmedns" ;;
+esac
+
+names=
+if [ -f "$dir/mnt/proxies/proxies.conf" ]; then
+  names=$(grep -v '^[[:space:]]*\(#\|$\)' "$dir/mnt/proxies/proxies.conf" | awk '{ print $1 }' | paste -sd ' ' - || true)
+fi
+fact info proxies "${names:-none}" "devopsy proxies"
+
+if [ -s "$forget_list" ]; then
+  fact info forget "queued for the next deploy or restart: $(sort -u "$forget_list" | paste -sd ' ' -)" "devopsy forget"
+fi
+
+fact info domains "DNS, routes and certificates, checked against the network" "devopsy domains"

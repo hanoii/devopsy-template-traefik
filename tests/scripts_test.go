@@ -50,6 +50,62 @@ func TestCheckSettings(t *testing.T) {
 	}
 }
 
+// The status capability shows what the server knows of its setup, and
+// warns of what is left on its side: a tunnel without a connected
+// connector.
+func TestStatus(t *testing.T) {
+	h, dir := project(t, "status", nil)
+	status := func(env map[string]string, warns bool, want []string, not ...string) {
+		t.Helper()
+		out, err := h.shErr(dir, env, "devopsy --status")
+		// A warning, and only a warning, makes --status exit 3.
+		if warns != (err != nil) {
+			t.Errorf("%v: warns %v, exit: %v\n%s", env, warns, err, out)
+		}
+		for _, w := range want {
+			if !strings.Contains(out, w) {
+				t.Errorf("%v: want %q in:\n%s", env, w, out)
+			}
+		}
+		for _, n := range not {
+			if strings.Contains(out, n) {
+				t.Errorf("%v: %q in:\n%s", env, n, out)
+			}
+		}
+	}
+	// Direct, no base domain: staging, offered production.
+	status(nil, false, []string{
+		"no wildcard URLs", "sites le-http01 by default", "staging, test certificates", "$ devopsy letsencrypt production",
+		"proxies       none", "$ devopsy domains",
+	}, "tunnel", "acme-dns", "forget")
+	// A wildcard through Cloudflare, on production, acme-dns, a proxy and
+	// a forget queued.
+	h.sh(dir, nil, `mkdir -p .devopsy/mnt/proxies && printf 'old.example.com\n' >.devopsy/mnt/forget.pending &&
+		printf '# proxies\ncloudflare CF-Connecting-IP 192.0.2.0/24\n' >.devopsy/mnt/proxies/proxies.conf`)
+	status(map[string]string{
+		"PROXY_BASE_DOMAIN": "vm1.example.com", "PROXY_CLOUDFLARE_DNS_API_TOKEN": "x",
+		"PROXY_LE_ACME_CASERVER": "https://acme-v02.api.letsencrypt.org/directory",
+		"COMPOSE_PROFILES":       "acmedns", "PROXY_ACMEDNS_DOMAIN": "acme.vm1.example.com",
+	}, false, []string{
+		"<project>-<environment>.vm1.example.com", "one *.vm1.example.com through le-dns01-selfhosted", "letsencrypt   production",
+		"acme.vm1.example.com", "$ devopsy acmedns", "proxies       cloudflare", "queued for the next deploy or restart: old.example.com",
+	}, "staging")
+	h.sh(dir, nil, `rm .devopsy/mnt/forget.pending .devopsy/mnt/proxies/proxies.conf`)
+	// Through a tunnel only: no Let's Encrypt, and a warning until a
+	// connector is connected.
+	tunnel := map[string]string{"PROXY_TUNNEL_ONLY": "true", "PROXY_WILDCARD_CERTRESOLVER": "none"}
+	status(tunnel, true, []string{"at Cloudflare's edge", "no connector: release devopsy-template-cloudflared"}, "letsencrypt")
+	t.Cleanup(func() { _, _ = h.shErr("/", nil, `docker rm -f status-connector; docker network rm tunnel`) })
+	h.sh("/", nil, `docker network create tunnel >/dev/null &&
+		docker run -d --name status-connector --network tunnel -l com.docker.compose.project=cloudflared-own-prod -l com.docker.compose.service=cloudflared \
+			--health-cmd true --health-interval 1s busybox:1.37 sleep 100000 >/dev/null`)
+	h.waitFor("the connector healthy", func() bool {
+		out, _ := h.shErr("/", nil, `docker inspect -f '{{.State.Health.Status}}' status-connector`)
+		return strings.TrimSpace(out) == "healthy"
+	})
+	status(tunnel, false, []string{"cloudflared-own-prod cloudflared, healthy"}, "no connector")
+}
+
 // env_set writes through .env, a link to shared/.env on a server, and
 // replaces a key's line in place.
 func TestEnvSet(t *testing.T) {

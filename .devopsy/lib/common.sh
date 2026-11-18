@@ -61,6 +61,48 @@ check_settings() {
   esac
 }
 
+# wildcard_resolver: the public wildcard's resolver, auto resolved:
+# le-dns01-selfhosted when acme-dns is set up, else le-dns01-cloudflare
+# with a token, else none.
+wildcard_resolver() {
+  _r=${PROXY_WILDCARD_CERTRESOLVER:-auto}
+  if [ "$_r" = auto ]; then
+    case ",${COMPOSE_PROFILES:-}," in
+      *,acmedns,*) _r=le-dns01-selfhosted ;;
+      *) _r=none ;;
+    esac
+    if [ "$_r" = none ] && [ -n "${PROXY_CLOUDFLARE_DNS_API_TOKEN:-}" ]; then
+      _r=le-dns01-cloudflare
+    fi
+  fi
+  echo "$_r"
+}
+
+# Let's Encrypt's CA servers; unset is staging (compose.yaml's default).
+le_production=https://acme-v02.api.letsencrypt.org/directory
+le_staging=https://acme-staging-v02.api.letsencrypt.org/directory
+# le_environment [<CA server>]: production, staging or custom (<url>).
+le_environment() {
+  case ${1:-} in
+    "$le_production") echo production ;;
+    "$le_staging" | '') echo staging ;;
+    *) echo "custom ($1)" ;;
+  esac
+}
+
+# connectors: the tunnel network's connectors (devopsy-template-
+# cloudflared's containers), compose project, service and health, one per
+# line. The template's healthcheck is `cloudflared tunnel ready`: healthy
+# once connected to Cloudflare.
+connectors() {
+  # shellcheck disable=SC2016
+  _ids=$(docker network inspect -f '{{range $id, $c := .Containers}}{{$id}} {{end}}' tunnel 2>/dev/null) || return 0
+  [ -n "$_ids" ] || return 0
+  # shellcheck disable=SC2086,SC2016
+  docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}	{{index .Config.Labels "com.docker.compose.service"}}	{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $_ids |
+    awk -F '\t' -v self="${COMPOSE_PROJECT_NAME:-}" '$1 != self' | sort
+}
+
 # Runs devopsy, showing its messages (the compose notice, container
 # creation) only when it fails. stdout passes through.
 quiet() {

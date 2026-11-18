@@ -14,46 +14,36 @@
 set -eu
 . "$DEVOPSY_PROJECT_DIR/lib/common.sh"
 
-production=https://acme-v02.api.letsencrypt.org/directory
-staging=https://acme-staging-v02.api.letsencrypt.org/directory
 key=PROXY_LE_ACME_CASERVER
-
-name_of() {
-  case "$1" in
-    "$production") echo production ;;
-    "$staging" | '') echo staging ;;
-    *) echo "custom ($1)" ;;
-  esac
-}
 
 current=${PROXY_LE_ACME_CASERVER:-}
 
 case "${1:-}" in
   '')
-    echo "Let's Encrypt: $(name_of "$current")"
+    echo "Let's Encrypt: $(le_environment "$current")"
     exit 0
     ;;
-  production) target=$production ;;
-  staging) target=$staging ;;
+  production) target=$le_production ;;
+  staging) target=$le_staging ;;
   *)
     echo "Usage: devopsy letsencrypt [production|staging]" >&2
     exit 1
     ;;
 esac
 
-if [ "$(name_of "$current")" = "$1" ]; then
+if [ "$(le_environment "$current")" = "$1" ]; then
   echo "Already on $1."
   exit 0
 fi
 
-echo "Switching Let's Encrypt from $(name_of "$current") to $1. Traefik restarts."
+echo "Switching Let's Encrypt from $(le_environment "$current") to $1. Traefik restarts."
 devopsy stop traefik
 
 env_set "$key" "$target"
 
 # Moved aside, not deleted, and never acme-dns-accounts.json. Traefik's uid's files:
 # moved in a Traefik container.
-suffix=$(name_of "$current" | cut -d' ' -f1).$(date +%Y%m%d%H%M%S)
+suffix=$(le_environment "$current" | cut -d' ' -f1).$(date +%Y%m%d%H%M%S)
 # shellcheck disable=SC2016
 in_traefik '
   for f in acme-le-http01.json acme-le-dns01-selfhosted.json acme-le-dns01-cloudflare.json; do

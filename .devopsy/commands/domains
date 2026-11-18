@@ -147,18 +147,6 @@ reports() {
 show() { printf '%s\n' "$1" | jq -r "$text_filter"; }
 pending() { printf '%s\n' "$1" | jq -r '.[] | select(.routed and (.valid | not) and (.tunnel | not)) | .host'; }
 
-# The tunnel network's connectors (devopsy-template-cloudflared's
-# containers): compose project, service and health, one per line. The
-# template's healthcheck is `cloudflared tunnel ready`: healthy once
-# connected to Cloudflare.
-connectors() {
-  # shellcheck disable=SC2016
-  ids=$(docker network inspect -f '{{range $id, $c := .Containers}}{{$id}} {{end}}' tunnel 2>/dev/null) || return 0
-  [ -n "$ids" ] || return 0
-  # shellcheck disable=SC2086,SC2016
-  docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}	{{index .Config.Labels "com.docker.compose.service"}}	{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $ids |
-    awk -F '\t' -v self="${COMPOSE_PROJECT_NAME:-}" '$1 != self' | sort
-}
 # show_connectors REPORTS: the connectors, and what to do when none is
 # ready, when a host is tunneled or a connector runs.
 show_connectors() {

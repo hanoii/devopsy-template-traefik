@@ -81,7 +81,8 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 
 - `.devopsy/` is all a release uploads: `config.yaml` (`project: traefik`, its one environment `prod`, the release steps), `compose.yaml` (Traefik, `dockerproxy`, `attach` and `netproxy`, acme-dns in the `acmedns` profile, `jq`, `curl` and `sqlite` in the `tools` profile, for scripts only) and `.env.example` (what a server sets in its `shared/.env`).
 - `.devopsy/commands/` are POSIX `sh`, each with a `## Description:` line; `setup` is the only one run on the operator's machine (`## Run: local`, `## Needs: target`), and `check` is a release's prepare step.
-- `.devopsy/lib/common.sh` is sourced by the commands and lib's scripts; `lib/facts`, `lib/retry` and `lib/domains/` serve `domains`; `lib/attach` is the `attach` service.
+- `.devopsy/capabilities/status/show` is devopsy's status capability, the template's facts under `--status`, read from the settings, `mnt/` and Docker only, with no request beyond the server: `--status` waits on it, and the network's view is `domains`'s.
+- `.devopsy/lib/common.sh` is sourced by the commands, lib's scripts and `show`; `lib/facts`, `lib/retry` and `lib/domains/` serve `domains`; `lib/attach` is the `attach` service.
 - `.devopsy/mnt/` (on servers `shared/mnt`, never uploaded) holds the ACME stores, acme-dns's database, Traefik's file provider (`mnt/dynamic/`), the proxies' list, `mnt/traefik.env` (the static settings) and `mnt/forget.pending`.
 - A file in `mnt/dynamic/` is written with `write_dynamic` and removed with `remove_dynamic`: a rename over a name Traefik lists can lose that file's routers until its next read.
 - `.devopsy/plugins-local/` holds the local Traefik plugins, `proxies` and `hold`, run by Yaegi: standard library only.
@@ -123,7 +124,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 ## Checks
 
 ```sh
-cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* lib/facts lib/retry lib/attach lib/common.sh
+cd .devopsy && docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -s sh -x commands/* capabilities/status/show lib/facts lib/retry lib/attach lib/common.sh
 ```
 
 Plugins: `go test` in each plugin's directory, then the same tests under Traefik's interpreter, from `.devopsy/plugins-local`:

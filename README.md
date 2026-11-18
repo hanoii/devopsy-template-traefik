@@ -76,6 +76,13 @@ is a devopsy command, printed before it runs. Run `setup` again to change
 a setting, like the wildcard's resolver. The rest of this section does the
 same by hand.
 
+Later, `devopsy @vm1-traefik --status` shows what the server has: the
+wildcard URLs, the resolvers, Let's Encrypt's environment, the tunnel's
+connectors, acme-dns and the trusted proxies. It warns while a
+tunnel-only server has no connected connector, and offers the command for
+each next step, `domains` for DNS, routes and certificates as the network
+sees them.
+
 Its one environment, `prod`, is the same on every server: `devopsy
 @<server>:prod` from your checkout (`traefik/prod` under the server's
 release root, compose project `traefik-prod`). Add an alias per server to

@@ -332,7 +332,6 @@ if [ "$choice" != 5 ]; then
   setting "$email_var" "$email"
 
   ca_var=PROXY_LE_ACME_CASERVER
-  production_ca=https://acme-v02.api.letsencrypt.org/directory
   case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
   say "Certificates come from Let's Encrypt: production, trusted by browsers, or
 staging, test certificates browsers warn about, for trying things out
@@ -349,7 +348,7 @@ without production's rate limits."
     if [ "$letsencrypt" = staging ]; then
       unsetting "$ca_var"
     else
-      setting "$ca_var" "$production_ca"
+      setting "$ca_var" "$le_production"
     fi
     letsencrypt=
   fi
