@@ -46,6 +46,10 @@ check_settings() {
     '' | true | false) ;;
     *) die "PROXY_TUNNEL_ONLY must be true, false or unset: $PROXY_TUNNEL_ONLY" ;;
   esac
+  # Every resolver registers with this email. Through a tunnel only, no
+  # router asks for a certificate, so none is needed.
+  [ -n "${PROXY_LE_ACME_EMAIL:-}" ] || [ "${PROXY_TUNNEL_ONLY:-}" = true ] ||
+    die "set PROXY_LE_ACME_EMAIL, Let's Encrypt's account email (devopsy setup)"
   case ",${COMPOSE_PROFILES:-}," in
     *,acmedns,*)
       [ -n "${PROXY_ACMEDNS_DOMAIN:-}" ] || die "COMPOSE_PROFILES has acmedns: set PROXY_ACMEDNS_DOMAIN in .env" ;;

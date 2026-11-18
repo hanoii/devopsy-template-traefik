@@ -59,9 +59,10 @@ Debian. Then, from your checkout:
 devopsy @vm1:prod setup   # vm1: the server's SSH destination
 ```
 
-`setup` asks for the settings: an email, wildcard URLs and their
-certificates or a Cloudflare Tunnel, the resolver sites use by default,
-and Cloudflare's proxy. Then it:
+`setup` asks for the settings: wildcard URLs and their certificates or a
+Cloudflare Tunnel, the resolver sites use by default, Let's Encrypt's
+email and environment (not through a tunnel only), and Cloudflare's
+proxy. Then it:
 
 1. writes them with `--vars`;
 2. releases;

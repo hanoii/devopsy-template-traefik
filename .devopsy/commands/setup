@@ -155,35 +155,6 @@ is_ipv4() {
   printf '%s\n' "$1" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}'
 }
 
-say "Let's Encrypt's account email, for expiry notices."
-email=
-while [ -z "$email" ]; do
-  email=$(ask "Email" "$(current "$email_var")")
-done
-setting "$email_var" "$email"
-
-ca_var=PROXY_LE_ACME_CASERVER
-production_ca=https://acme-v02.api.letsencrypt.org/directory
-case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
-say "Certificates come from Let's Encrypt: production, trusted by browsers, or
-staging, test certificates browsers warn about, for trying things out
-without production's rate limits."
-if confirm "Production? (n: staging)" "$d"; then
-  letsencrypt=production
-else
-  letsencrypt=staging
-fi
-# A server not released yet starts on the right one; a released one
-# switches after the release (letsencrypt moves the old certificates aside).
-if [ -z "$released" ]; then
-  if [ "$letsencrypt" = staging ]; then
-    unsetting "$ca_var"
-  else
-    setting "$ca_var" "$production_ca"
-  fi
-  letsencrypt=
-fi
-
 profiles=$(current COMPOSE_PROFILES)
 # Without acmedns; added back below when chosen.
 profiles=$(printf '%s' "$profiles" | tr ',' '\n' | grep -vx acmedns | paste -sd, - || true)
@@ -346,6 +317,42 @@ A site can still name its own (the site templates' PROXY_CERTRESOLVER)."
   fi
 else
   unsetting PROXY_CERTRESOLVER
+fi
+
+# Let's Encrypt's account and environment, only when certificates come
+# from it: through a tunnel only, Cloudflare's edge holds them and no
+# router asks for one. What the server has stays, for a later change.
+letsencrypt=
+if [ "$choice" != 5 ]; then
+  say "Let's Encrypt's account email."
+  email=
+  while [ -z "$email" ]; do
+    email=$(ask "Email" "$(current "$email_var")")
+  done
+  setting "$email_var" "$email"
+
+  ca_var=PROXY_LE_ACME_CASERVER
+  production_ca=https://acme-v02.api.letsencrypt.org/directory
+  case $(current "$ca_var") in *staging*) d=n ;; *) d=y ;; esac
+  say "Certificates come from Let's Encrypt: production, trusted by browsers, or
+staging, test certificates browsers warn about, for trying things out
+without production's rate limits."
+  if confirm "Production? (n: staging)" "$d"; then
+    letsencrypt=production
+  else
+    letsencrypt=staging
+  fi
+  # A server not released yet starts on the right one; a released one
+  # switches after the release (letsencrypt moves the old certificates
+  # aside).
+  if [ -z "$released" ]; then
+    if [ "$letsencrypt" = staging ]; then
+      unsetting "$ca_var"
+    else
+      setting "$ca_var" "$production_ca"
+    fi
+    letsencrypt=
+  fi
 fi
 
 # Through a tunnel, visitors' IPs come from the connectors, built in.

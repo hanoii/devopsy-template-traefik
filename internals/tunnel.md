@@ -17,4 +17,5 @@ Traefik's end of Cloudflare Tunnel; the connectors are devopsy-template-cloudfla
 - `check_settings` refuses a `PROXY_TUNNEL_ONLY` other than `true`, `false` or unset, since a typo would leave every site on the open ports.
 - A tunnel-only server keeps 80 and 443 published on loopback (`setup` sets `PROXY_HTTP_PORT=127.0.0.1:80` and `PROXY_HTTPS_PORT=127.0.0.1:443`), its provider's firewall closing them too, since compose cannot leave a `ports:` entry empty.
 - On a tunnel-only server `setup` sets `PROXY_WILDCARD_CERTRESOLVER=none`, and nothing checks the wildcard's resolver: a certificate requested there is unused, not harmful.
+- `PROXY_LE_ACME_EMAIL` is required by `check_settings` unless `PROXY_TUNNEL_ONLY=true`, never by compose, and `setup` asks for it and for production or staging only off a tunnel: Traefik starts its resolvers without an email.
 - `setup` prints the Cloudflare side, with its values, and calls no API: the tunnel, its route, the DNS record and the zone's settings stay the operator's, in the account that owns them.

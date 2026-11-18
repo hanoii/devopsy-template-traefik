@@ -49,6 +49,10 @@ then prints the Cloudflare steps with the values filled in. It sets:
   covers only one level below the zone ([Wildcard URLs one level
   deeper](#wildcard-urls-one-level-deeper)).
 
+It asks for no Let's Encrypt email and no production or staging choice:
+no router asks for a certificate, and `PROXY_LE_ACME_EMAIL` is required
+only without `PROXY_TUNNEL_ONLY=true`.
+
 In the Cloudflare account that holds the zone:
 
 1. In Networking > Tunnels, create a tunnel (cloudflared) and copy its
