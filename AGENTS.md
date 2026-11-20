@@ -29,6 +29,7 @@ devopsy-template-traefik is the Traefik reverse proxy for a devopsy server, run 
 - A fix's test is run against the code before the fix, and the summary says it failed there.
 - Unit tests first; an end-to-end test only for what needs a real system (for example Docker, sshd, the network, a terminal or timing).
 - One test per behavior: extend the test that covers it before adding another, and never test one thing at both levels.
+- A test checks a behavior by what it does or returns (for example an exit code, a file, a call logged, a parsed result), and words only where the words are what it checks: a check that words are absent passes whatever is said once they change.
 - The suites stay fast, locally and in CI, since every change waits on them: a new test runs in parallel with the others where it can, polls rather than sleeps, and reuses the setups that exist.
 - A test made faster checks the same things, never fewer: a speed-up that drops a case or an assertion is a regression.
 - A check or a refusal is only for a mistake any release can make, a setting a tool would otherwise take without a word; none is added for one upgrade only (for example a refusal of an old name after a rename): an upgrade's own steps cover those, and old names left over are ignored.
